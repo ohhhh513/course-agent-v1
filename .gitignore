@@ -45,6 +45,7 @@ backend/app/data/vector/
 assets/resources/data-structures-1-9/
 assets/resources/covers/
 assets/resources/uploads/*
+assets/resources/data-structures-1-9
 !assets/resources/uploads/.gitkeep
 
 # ---------- 日志 ----------
