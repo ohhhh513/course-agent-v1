@@ -91,7 +91,7 @@ course-agent/
 
 ### 环境要求
 
-- **Python 3.12**（一键脚本默认读取 `C:\Users\CQYDDD\.local\bin\python3.12.exe`，其他机器请编辑 `start.bat` 顶部 `PYTHON` 变量）
+- **Python 3.11**（`start.bat` 自动探测：依次尝试 `python3.11`、`py -3.11`、PATH 中的 `python`（需为 3.11.x），无需手动配置路径）
 - 数据库：默认 SQLite，无需额外安装
 
 ### 一键启动（Windows）

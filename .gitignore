@@ -26,6 +26,7 @@ ENV/
 !.env.example
 *.key
 *.pem
+/.workbuddy
 
 # ---------- 数据库 ----------
 backend/app/data/*.db

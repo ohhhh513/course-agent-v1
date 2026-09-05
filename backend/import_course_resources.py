@@ -2,7 +2,7 @@
 将课程资源（位于项目内的 assets/resources/data-structures-1-9/）导入系统，
 并把知识图谱扩展为 9 章结构（匹配严蔚敏《数据结构》体系），同时完成资源挂靠。
 
-执行: cd backend && python3.12 import_course_resources.py
+执行: cd backend && python3.11 import_course_resources.py
 说明: SOURCE_DIR / TARGET_DIR 均相对项目根目录解析，不再写死本机绝对路径。
 """
 import os
@@ -330,10 +330,12 @@ def import_resources(cur, con):
         chapter_name = CHAPTER_NAMES[chapter]
 
         # 复制文件到目标目录，保持子目录结构
+        # （资源已在目标位置时跳过复制，避免 SameFileError，保证脚本可重复执行）
         rel = src.relative_to(SOURCE_DIR)
         dest = TARGET_DIR / rel
         dest.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(src, dest)
+        if src.resolve() != dest.resolve():
+            shutil.copy2(src, dest)
 
         # URL 使用正斜杠
         url = "/assets/resources/data-structures-1-9/" + "/".join(rel.parts)
