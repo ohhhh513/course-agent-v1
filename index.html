@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>登录 · 课程智能体系统</title>
+<link rel="stylesheet" href="assets/css/base.css">
+<link rel="stylesheet" href="assets/css/app.css">
+</head>
+<body>
+
+<div class="auth-page">
+  <!-- 左侧品牌展示 -->
+  <aside class="auth-aside">
+    <div class="auth-aside__brand">
+      <div class="brand-logo">智</div>
+      <h1>课程智能体系统</h1>
+      <p>三大图谱驱动 · 学情全周期监测与动态管理 · AI 赋能精准教学</p>
+    </div>
+    <div class="row" style="gap:8px;flex-wrap:wrap">
+      <span class="badge badge--brand">知识图谱</span>
+      <span class="badge badge--info">问题图谱</span>
+      <span class="badge badge--accent">目标图谱</span>
+    </div>
+    <ul class="auth-aside__feats" id="authFeats"></ul>
+    <div class="auth-aside__copy">前端原型 v1.0 · 演示数据 · 后端就绪即直连</div>
+  </aside>
+
+  <!-- 右侧登录表单 -->
+  <main class="auth-main">
+    <div class="auth-card">
+      <h2>登录</h2>
+      <p class="auth-sub">使用账号密码登录您的账户</p>
+
+      <div class="seg" id="roleSeg">
+        <button type="button" class="seg__item is-active" data-role="student">学生</button>
+        <button type="button" class="seg__item" data-role="teacher">教师</button>
+      </div>
+
+      <form id="loginForm" novalidate>
+        <div class="field">
+          <label>账号 <span class="req">*</span></label>
+          <input class="input" id="username" placeholder="用户名 / 手机号 / 邮箱" autocomplete="username">
+        </div>
+        <div class="field">
+          <label>密码 <span class="req">*</span></label>
+          <input class="input" id="password" type="password" placeholder="请输入密码" autocomplete="current-password">
+        </div>
+        <div class="auth-row"><a href="forgot.html">忘记密码？</a></div>
+        <div class="auth-error" id="loginErr"></div>
+        <button class="btn btn--primary btn--block" id="loginBtn" type="submit">登录</button>
+      </form>
+
+      <div class="auth-demo" id="demoHint">演示账号：<b>student</b> / 123456（学生）· <b>teacher</b> / 123456（教师）</div>
+    </div>
+  </main>
+</div>
+
+<script src="assets/js/common.js"></script>
+<script src="assets/js/api.js"></script>
+<script src="assets/js/auth.js"></script>
+<script>
+  Theme.init();
+  Auth.init();
+  // 左侧特性列表（图中 SVG 需 JS 渲染）
+  U.$('#authFeats').innerHTML = [
+    ['book',  '沉浸式学习导航与可追溯 AI 答疑'],
+    ['grid',  '班级学情热力图与共性薄弱点定位'],
+    ['route', 'AI 自动归因与干预策略推荐'],
+    ['file',  '一键生成可分享的学情分析报告']
+  ].map(([n, t]) => '<li>' + icon(n) + t + '</li>').join('');
+
+  // 角色切换（支持 ?role=teacher 预选）
+  let role = (new URLSearchParams(location.search).get('role') === 'teacher') ? 'teacher' : 'student';
+  const seg = U.$('#roleSeg');
+  seg.querySelectorAll('.seg__item').forEach(btn => {
+    btn.classList.toggle('is-active', btn.dataset.role === role);
+    btn.addEventListener('click', () => {
+      seg.querySelectorAll('.seg__item').forEach(b => b.classList.remove('is-active'));
+      btn.classList.add('is-active');
+      role = btn.dataset.role;
+    });
+  });
+
+  const form = U.$('#loginForm');
+  const errEl = U.$('#loginErr');
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    errEl.textContent = '';
+    const username = U.$('#username').value.trim();
+    const password = U.$('#password').value;
+    if (!username || !password) { errEl.textContent = '请输入账号和密码'; return; }
+    const btn = U.$('#loginBtn');
+    btn.disabled = true; btn.textContent = '登录中…';
+    try {
+      await Auth.login({ username, password, role });
+      location.href = (role === 'teacher') ? 'teacher.html' : 'student.html';
+    } catch (err) {
+      errEl.textContent = (err && err.message) || '登录失败，请重试';
+      btn.disabled = false; btn.textContent = '登录';
+    }
+  });
+</script>
+</body>
+</html>

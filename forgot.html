@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>找回密码 · 课程智能体系统</title>
+<link rel="stylesheet" href="assets/css/base.css">
+<link rel="stylesheet" href="assets/css/app.css">
+</head>
+<body>
+
+<div class="auth-page">
+  <!-- 左侧品牌展示 -->
+  <aside class="auth-aside">
+    <div class="auth-aside__brand">
+      <div class="brand-logo">智</div>
+      <h1>课程智能体系统</h1>
+      <p>三大图谱驱动 · 学情全周期监测与动态管理 · AI 赋能精准教学</p>
+    </div>
+    <div class="row" style="gap:8px;flex-wrap:wrap">
+      <span class="badge badge--brand">知识图谱</span>
+      <span class="badge badge--info">问题图谱</span>
+      <span class="badge badge--accent">目标图谱</span>
+    </div>
+    <ul class="auth-aside__feats" id="authFeats"></ul>
+    <div class="auth-aside__copy">前端原型 v1.0 · 演示数据 · 后端就绪即直连</div>
+  </aside>
+
+  <!-- 右侧找回密码表单 -->
+  <main class="auth-main">
+    <div class="auth-card">
+      <h2>找回密码</h2>
+      <p class="auth-sub">验证账号后重置您的登录密码</p>
+
+      <form id="resetForm" novalidate>
+        <div class="field">
+          <label>账号 <span class="req">*</span></label>
+          <input class="input" id="username" placeholder="请输入注册时使用的用户名" autocomplete="username">
+        </div>
+        <div class="field">
+          <label>新密码 <span class="req">*</span></label>
+          <input class="input" id="password" type="password" placeholder="至少 6 位" autocomplete="new-password">
+        </div>
+        <div class="field">
+          <label>确认新密码 <span class="req">*</span></label>
+          <input class="input" id="confirm" type="password" placeholder="再次输入新密码" autocomplete="new-password">
+        </div>
+        <div class="auth-error" id="resetErr"></div>
+        <button class="btn btn--primary btn--block" id="resetBtn" type="submit">重置密码</button>
+      </form>
+
+      <div class="auth-foot">记起密码了？<a href="index.html">返回登录</a></div>
+    </div>
+  </main>
+</div>
+
+<script src="assets/js/common.js"></script>
+<script src="assets/js/api.js"></script>
+<script src="assets/js/auth.js"></script>
+<script>
+  Theme.init();
+  Auth.init();
+  // 左侧特性列表（图中 SVG 需 JS 渲染）
+  U.$('#authFeats').innerHTML = [
+    ['book',  '沉浸式学习导航与可追溯 AI 答疑'],
+    ['grid',  '班级学情热力图与共性薄弱点定位'],
+    ['route', 'AI 自动归因与干预策略推荐'],
+    ['file',  '一键生成可分享的学情分析报告']
+  ].map(([n, t]) => '<li>' + icon(n) + t + '</li>').join('');
+
+  const form = U.$('#resetForm');
+  const errEl = U.$('#resetErr');
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    errEl.textContent = '';
+    const username = U.$('#username').value.trim();
+    const password = U.$('#password').value;
+    const confirm = U.$('#confirm').value;
+
+    if (!username) return void (errEl.textContent = '请输入账号');
+    if (password.length < 6) return void (errEl.textContent = '新密码至少 6 位');
+    if (password !== confirm) return void (errEl.textContent = '两次输入的密码不一致');
+
+    const btn = U.$('#resetBtn');
+    btn.disabled = true; btn.textContent = '重置中…';
+    try {
+      await Auth.resetPassword({ username, password });
+      Toast.ok('密码已重置', '请使用新密码登录');
+      setTimeout(() => { location.href = 'index.html'; }, 1100);
+    } catch (err) {
+      errEl.textContent = (err && err.message) || '重置失败，请重试';
+      btn.disabled = false; btn.textContent = '重置密码';
+    }
+  });
+</script>
+</body>
+</html>

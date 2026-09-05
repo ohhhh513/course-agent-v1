@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>课程智能体系统 · 产品介绍</title>
+<link rel="stylesheet" href="assets/css/base.css">
+<link rel="stylesheet" href="assets/css/app.css">
+</head>
+<body>
+
+<div class="login-page">
+  <div class="login-nav">
+    <div class="login-nav__brand">课程智能体系统</div>
+    <span class="spacer"></span>
+    <a class="btn btn--primary btn--sm" href="index.html">登录</a>
+  </div>
+
+  <div class="login-wrap">
+
+    <div class="login-hd">
+      <div class="brand-logo">智</div>
+      <h1>课程智能体系统</h1>
+      <p>三大图谱驱动 · 学情全周期监测与动态管理 · AI 赋能精准教学</p>
+      <div class="row">
+        <span class="badge badge--brand">知识图谱</span>
+        <span class="badge badge--info">问题图谱</span>
+        <span class="badge badge--accent">目标图谱</span>
+        <span class="badge badge--outline">《数据结构与算法》· 2026 春季学期</span>
+      </div>
+    </div>
+
+    <div class="role-grid">
+      <a class="role" data-role="student" href="index.html?role=student">
+        <div class="role__ico" id="ico-stu"></div>
+        <h3>学生端 · 学习中心</h3>
+        <p>进入沉浸式虚拟学习环境，通过三大图谱自主导航学习，随时向 AI 助教发起可溯源答疑，接收薄弱点靶向练习与预警干预。</p>
+        <div class="role__feats">
+          <span class="badge">学习驾驶舱</span>
+          <span class="badge">三图谱导航</span>
+          <span class="badge">AI 智能答疑</span>
+          <span class="badge">智能练习</span>
+          <span class="badge">我的学情</span>
+          <span class="badge">预警中心</span>
+        </div>
+        <div class="divider"></div>
+        <div class="row fz-12 t-dim">
+          <span class="avatar avatar--sm">陈</span>
+          <span>陈思远 · 计算机 2301 班</span>
+          <span class="spacer"></span>
+          <span class="row t-brand fw-6">进入 <span id="arr1"></span></span>
+        </div>
+      </a>
+
+      <a class="role role--teacher" data-role="teacher" href="index.html?role=teacher">
+        <div class="role__ico" id="ico-tea"></div>
+        <h3>教师端 · 教学中心</h3>
+        <p>实时掌握班级与个体学情，热力图定位共性薄弱点，AI 自动归因并推荐干预策略，基于教材/课件/视频自助出题，一键生成学情报告。</p>
+        <div class="role__feats">
+          <span class="badge">教学驾驶舱</span>
+          <span class="badge">学情热力图</span>
+          <span class="badge">归因分析</span>
+          <span class="badge">AI 出题</span>
+          <span class="badge">教学干预</span>
+          <span class="badge">学情报告</span>
+        </div>
+        <div class="divider"></div>
+        <div class="row fz-12 t-dim">
+          <span class="avatar avatar--sm" style="background:linear-gradient(135deg,#06b6d4,#0284c7)">李</span>
+          <span>李文博 副教授 · 计算机学院</span>
+          <span class="spacer"></span>
+          <span class="row t-brand fw-6">进入 <span id="arr2"></span></span>
+        </div>
+      </a>
+    </div>
+
+    <div class="login-ft">
+      <div class="row">
+        <span>前端原型 v1.0</span>
+        <span>·</span>
+        <span>接口契约见 <code class="mono">docs/接口文档.md</code></span>
+        <span>·</span>
+      </div>
+      <p style="margin-top:8px">数据均为演示用 Mock 数据，接口层已按 RESTful 契约封装，后端就绪后将 <code class="mono">API.config.mode</code> 改为 <code class="mono">'http'</code> 即可直连。</p>
+    </div>
+
+  </div>
+</div>
+
+<script src="assets/js/common.js"></script>
+<script src="assets/js/auth.js"></script>
+<script>
+  Theme.init();
+  Auth.init();
+  U.$('#ico-stu').innerHTML = icon('book');
+  U.$('#ico-tea').innerHTML = icon('users');
+  U.$('#arr1').innerHTML = icon('arrowRight');
+  U.$('#arr2').innerHTML = icon('arrowRight');
+  U.$$('.role').forEach(a => a.addEventListener('click', (e) => {
+    e.preventDefault();
+    Auth.enter(a.dataset.role);
+  }));
+</script>
+</body>
+</html>

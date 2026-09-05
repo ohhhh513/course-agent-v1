@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>教师端 · 课程智能体系统</title>
+<link rel="stylesheet" href="assets/css/base.css">
+<link rel="stylesheet" href="assets/css/app.css">
+</head>
+<body>
+<div class="app">
+
+  <!-- ============ 侧边栏 ============ -->
+  <aside class="sidebar">
+    <div class="sidebar__brand">
+      <div class="brand-logo">智</div>
+      <div class="brand-text"><b>课程智能体</b><span>数据结构与算法</span></div>
+    </div>
+
+    <nav class="sidebar__nav">
+      <div class="nav-group">
+        <div class="nav-group__label">教学概览</div>
+        <button class="nav-item" data-view="dashboard" data-icon="home"><span class="nav-item__text">教学驾驶舱</span></button>
+        <button class="nav-item" data-view="monitor" data-icon="grid"><span class="nav-item__text">学情监测看板</span></button>
+      </div>
+      <div class="nav-group">
+        <div class="nav-group__label">精准分析</div>
+        <button class="nav-item" data-view="analysis" data-icon="flask"><span class="nav-item__text">归因与错题分析</span></button>
+        <button class="nav-item" data-view="question" data-icon="sparkle"><span class="nav-item__text">AI 出题与题库</span></button>
+      </div>
+      <div class="nav-group">
+        <div class="nav-group__label">干预与产出</div>
+        <button class="nav-item" data-view="intervention" data-icon="route"><span class="nav-item__text">教学干预与策略</span><span class="nav-item__badge" id="navIvBadge"></span></button>
+        <button class="nav-item" data-view="report" data-icon="file"><span class="nav-item__text">学情分析报告</span></button>
+      </div>
+      <div class="nav-group">
+        <div class="nav-group__label">课程资源</div>
+        <button class="nav-item" data-view="resource" data-icon="folder"><span class="nav-item__text">资源管理</span></button>
+      </div>
+    </nav>
+
+    <div class="sidebar__foot">
+      <button class="user-chip">
+        <span class="avatar" id="tbAvatar">李</span>
+        <span class="user-chip__info"><b id="tbUserName">李文博</b><span id="tbUid">计算机科学与技术学院</span></span>
+      </button>
+    </div>
+  </aside>
+
+  <!-- ============ 主区 ============ -->
+  <div class="main">
+    <header class="topbar">
+      <div class="topbar__title">
+        <h1 id="pageTitle">教学驾驶舱</h1>
+      </div>
+      <div class="topbar__actions">
+        <select class="select select--sm" id="classSel" title="切换授课班级"></select>
+        <span class="badge badge--outline nowrap" id="updateTag"></span>
+        <button class="btn btn--ghost btn--icon" id="logoutBtn"></button>
+      </div>
+    </header>
+
+    <main class="content">
+      <section class="view" id="view-dashboard"></section>
+      <section class="view" id="view-monitor"></section>
+      <section class="view" id="view-analysis"></section>
+      <section class="view" id="view-question"></section>
+      <section class="view" id="view-intervention"></section>
+      <section class="view" id="view-report"></section>
+      <section class="view" id="view-resource"></section>
+    </main>
+  </div>
+</div>
+
+<script src="assets/js/vendor/echarts.min.js"></script>
+<script src="assets/js/common.js"></script>
+<script src="assets/js/charts.js"></script>
+<script src="assets/js/api.js"></script>
+    <script src="assets/js/auth.js"></script>
+    <script src="assets/js/teacher/app.js"></script>
+    <script src="assets/js/teacher/views/dash.js"></script>
+    <script src="assets/js/teacher/views/monitor.js"></script>
+    <script src="assets/js/teacher/views/analysis.js"></script>
+    <script src="assets/js/teacher/views/question.js"></script>
+    <script src="assets/js/teacher/views/intervention.js"></script>
+    <script src="assets/js/teacher/views/report.js"></script>
+    <script src="assets/js/teacher/views/resource.js"></script>
+    <script src="assets/js/teacher/start.js"></script>
+</body>
+</html>

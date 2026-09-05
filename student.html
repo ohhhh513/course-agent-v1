@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>学生端 · 课程智能体系统</title>
+<link rel="stylesheet" href="assets/css/base.css">
+<link rel="stylesheet" href="assets/css/app.css">
+</head>
+<body>
+<div class="app">
+
+  <!-- ============ 侧边栏 ============ -->
+  <aside class="sidebar">
+    <div class="sidebar__brand">
+      <div class="brand-logo">智</div>
+      <div class="brand-text"><b>课程智能体</b><span>数据结构与算法</span></div>
+    </div>
+
+    <nav class="sidebar__nav">
+      <div class="nav-group">
+        <div class="nav-group__label">学习中心</div>
+        <button class="nav-item" data-view="dashboard" data-icon="home"><span class="nav-item__text">学习驾驶舱</span></button>
+        <button class="nav-item" data-view="graph" data-icon="network"><span class="nav-item__text">课程图谱导航</span></button>
+        <button class="nav-item" data-view="resource" data-icon="folder"><span class="nav-item__text">学习资源中心</span></button>
+        <button class="nav-item" data-view="ai" data-icon="bot"><span class="nav-item__text">AI 智能答疑</span></button>
+        <button class="nav-item" data-view="practice" data-icon="pencil"><span class="nav-item__text">智能练习</span></button>
+      </div>
+      <div class="nav-group">
+        <div class="nav-group__label">学情中心</div>
+        <button class="nav-item" data-view="mastery" data-icon="chart"><span class="nav-item__text">我的学情</span></button>
+        <button class="nav-item" data-view="alerts" data-icon="bell"><span class="nav-item__text">预警与提醒</span><span class="nav-item__badge" id="alertBadge" style="display:none">0</span></button>
+      </div>
+    </nav>
+
+    <div class="sidebar__foot">
+      <button class="user-chip">
+        <span class="avatar" id="tbAvatar">陈</span>
+        <span class="user-chip__info"><b id="tbUserName">陈思远</b><span id="tbUid">计算机 2301 班</span></span>
+      </button>
+    </div>
+  </aside>
+
+  <!-- ============ 主区 ============ -->
+  <div class="main">
+    <header class="topbar">
+      <div class="topbar__title">
+        <h1 id="pageTitle">学习驾驶舱</h1>
+      </div>
+      <div class="topbar__actions">
+        <span class="badge badge--outline nowrap" id="updateTag"></span>
+        <button class="btn btn--ghost btn--icon" id="msgBtn"></button>
+        <button class="btn btn--ghost btn--icon" id="logoutBtn"></button>
+      </div>
+    </header>
+
+    <main class="content">
+      <section class="view" id="view-dashboard"></section>
+      <section class="view" id="view-graph"></section>
+      <section class="view" id="view-resource"></section>
+      <section class="view" id="view-ai"></section>
+      <section class="view" id="view-practice"></section>
+      <section class="view" id="view-mastery"></section>
+      <section class="view" id="view-alerts"></section>
+    </main>
+  </div>
+</div>
+
+<script src="assets/js/vendor/echarts.min.js"></script>
+<script src="assets/js/common.js"></script>
+<script src="assets/js/charts.js"></script>
+<script src="assets/js/api.js"></script>
+    <script src="assets/js/auth.js"></script>
+    <script src="assets/js/student/app.js"></script>
+    <script src="assets/js/student/views/dashboard.js"></script>
+    <script src="assets/js/student/views/graph.js"></script>
+    <script src="assets/js/student/views/resource.js"></script>
+    <script src="assets/js/student/views/chat.js"></script>
+    <script src="assets/js/student/views/practice.js"></script>
+    <script src="assets/js/student/views/mastery.js"></script>
+    <script src="assets/js/student/views/alerts.js"></script>
+    <script src="assets/js/student/start.js"></script>
+</body>
+</html>
