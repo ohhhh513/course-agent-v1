@@ -4,7 +4,7 @@
 不读取任何预置 JSON 快照。每个用户看到的都是自己的真实学习数据。
 """
 import json
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from collections import defaultdict
 from fastapi import APIRouter, Depends, Query, HTTPException
 from sqlalchemy import func, desc
@@ -21,6 +21,18 @@ from ..schemas.common import ok, fail, list_response
 from ..utils import loads
 
 router = APIRouter(prefix="/api/v1/student", tags=["学生端"])
+
+# 东八区（中国），无夏令时；数据库存的是 UTC，展示前统一转成本地时间
+_CN_TZ = timezone(timedelta(hours=8))
+
+
+def _to_local(dt: datetime | None) -> datetime | None:
+    """把库中 naive UTC 时间转成东八区 naive 本地时间。"""
+    if not dt:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(_CN_TZ).replace(tzinfo=None)
 
 
 def _duration_to_seconds(s: str) -> int:
@@ -221,6 +233,7 @@ def student_dashboard(
             "title": f"完成 {ar.kp_id or '未知'} 相关题目",
             "meta": f"{'正确' if ar.is_correct else '错误'}",
             "time": _fmt_time(ar.created_at),
+            "time_sort": ar.created_at,
             "level": "ok" if ar.is_correct else "warn",
         })
     for ps in db.query(PracticeSession).filter(PracticeSession.user_id == uid).order_by(desc(PracticeSession.created_at)).limit(2).all():
@@ -229,6 +242,7 @@ def student_dashboard(
             "title": f"{ps.mode}练习",
             "meta": f"{ps.correct}/{ps.total} 正确 · {ps.duration_seconds//60}分钟",
             "time": _fmt_time(ps.created_at),
+            "time_sort": ps.created_at,
             "level": "ok" if ps.accuracy and ps.accuracy >= 70 else "warn",
         })
     recent.sort(key=lambda x: x.get("time_sort", datetime.min), reverse=True)
@@ -309,16 +323,18 @@ def _calc_max_streak(date_set: set) -> int:
 def _fmt_time(dt: datetime) -> str:
     if not dt:
         return ""
-    now = datetime.now()
-    delta = now - dt
-    if delta.days == 0:
-        return f"今天 {dt.strftime('%H:%M')}"
-    elif delta.days == 1:
-        return f"昨天 {dt.strftime('%H:%M')}"
-    elif delta.days < 7:
-        return f"{delta.days} 天前"
+    local = _to_local(dt)
+    now = datetime.now(_CN_TZ).replace(tzinfo=None)
+    today = now.date()
+    d = local.date()
+    if d == today:
+        return f"今天 {local.strftime('%H:%M')}"
+    elif d == today - timedelta(days=1):
+        return f"昨天 {local.strftime('%H:%M')}"
+    elif (today - d).days < 7:
+        return f"{(today - d).days} 天前"
     else:
-        return dt.strftime("%m-%d %H:%M")
+        return local.strftime("%m-%d %H:%M")
 
 
 # =============================================================================
