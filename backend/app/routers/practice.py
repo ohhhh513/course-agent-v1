@@ -11,6 +11,7 @@ from typing import Optional, List
 from ..database import get_db
 from ..models.practice import PracticeSession, AnswerRecord
 from ..models.question import Question
+from ..models.graph import GraphNode
 from ..models.user import User
 from ..models.intervention import TeacherClassDashboard
 from ..models.course import Resource
@@ -20,6 +21,28 @@ from ..utils import loads
 from sqlalchemy import func
 
 router = APIRouter(prefix="/api/v1/practice", tags=["智能练习"])
+
+
+def _expand_kp_ids(db: Session, kp_ids: list[str]) -> set[str]:
+    """把细粒度知识点扩展到同章节的其它知识点。
+
+    课后题库（KHD）按“章代表知识点”挂载，细分知识点（如 KP02 时间复杂度）题量很少，
+    直接按其 kp_id 组卷往往只有一两道；这里按章节扩到同章其它知识点，凑足同主题题量。
+    """
+    kp_ids = [k for k in kp_ids if k]
+    if not kp_ids:
+        return set()
+    kps = set(kp_ids)
+    rows = db.query(GraphNode).filter(
+        GraphNode.graph_type == "knowledge", GraphNode.id.in_(kp_ids)
+    ).all()
+    chapters = {r.chapter for r in rows if r.chapter}
+    if chapters:
+        extra = db.query(GraphNode.id).filter(
+            GraphNode.graph_type == "knowledge", GraphNode.chapter.in_(chapters)
+        ).all()
+        kps |= {r[0] for r in extra}
+    return kps
 
 
 def _figure_of(q: Question):
@@ -113,7 +136,11 @@ def create_session(
     """创建练习会话（组卷）"""
     q = db.query(Question).filter(Question.status == "published")
     if req.kpIds:
-        q = q.filter(Question.kp_id.in_(req.kpIds))
+        expanded = _expand_kp_ids(db, req.kpIds)
+        if expanded:
+            q = q.filter(Question.kp_id.in_(expanded))
+        else:
+            print(f"[practice] 未识别 kpIds={req.kpIds}，回退为全库", flush=True)
     if req.difficulty:
         q = q.filter(Question.difficulty == req.difficulty)
     # 简单随机抽样（真实环境按 mode 智能组卷）

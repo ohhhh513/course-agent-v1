@@ -31,6 +31,8 @@
       const box = U.$('#pBody');
       API.practice.modes().then(ms => {
         API.student.dashboard().then(d => {
+          // 记住薄弱知识点 kpId，供「薄弱点强化」/「靶向强化出题」按知识点组卷
+          this._weakKpIds = (d.weakPoints || []).map(w => w.kpId).filter(Boolean);
           box.innerHTML = `
           <div class="callout callout--brand" style="margin-bottom:16px">
             ${icon('sparkle')}
@@ -63,30 +65,32 @@
                   <div class="todo__ico todo__ico--${w.level}">${icon('target')}</div>
                   <div class="todo__main"><b>${U.esc(w.name)}</b>
                     <span>掌握率 ${w.masteryRate}% · 建议 ${Math.ceil((60 - w.masteryRate) / 5)} 组靶向练习</span></div>
-                  <button class="btn btn--sm btn--outline" data-weak-start>出题</button>
+                  <button class="btn btn--sm btn--outline" data-weak-start data-weak-kp="${U.esc(w.kpId)}">出题</button>
                 </div>`).join('')}
             </div>
           </div>`;
 
         U.$$('#modeGrid .card[data-mode]', box).forEach(c => c.addEventListener('click', () => {
           if (this.activeMode === c.dataset.mode) { this.collapsePanel(); return; }
-          this.expandPanel(c.dataset.mode, ms, c);
+          const kpIds = c.dataset.mode === 'weak' ? this._weakKpIds : undefined;
+          this.expandPanel(c.dataset.mode, ms, c, kpIds);
         }));
         U.$$('[data-weak-start]', box).forEach(b => b.addEventListener('click', e => {
           e.stopPropagation();
-          this.expandPanel('weak', ms, box.querySelector('#modeGrid .card[data-mode="weak"]'));
+          const kp = b.dataset.weakKp;
+          this.expandPanel('weak', ms, box.querySelector('#modeGrid .card[data-mode="weak"]'), kp ? [kp] : undefined);
         }));
         });
       });
     },
 
     /* --- 内联展开 / 收起 --- */
-    expandPanel(mode, ms, cardEl) {
+    expandPanel(mode, ms, cardEl, kpIds) {
       this.activeMode = mode;
       U.$$('#modeGrid .card[data-mode]').forEach(c => c.classList.toggle('is-active', c === cardEl));
       const panel = U.$('#modePanel');
       if (panel) panel.hidden = false;
-      this.start(mode, ms);
+      this.start(mode, ms, kpIds);
     },
     collapsePanel() {
       clearInterval(this._timer);
@@ -118,11 +122,14 @@
     },
 
     /* --- 开始练习 --- */
-    start(mode, ms) {
+    start(mode, ms, kpIds) {
       const m = (ms || []).find(x => x.key === mode);
       // 记录进入练习时的 tab，退出时按此恢复到对应列表
       this._startTab = this.tab;
-      API.practice.create({ mode, count: m ? m.count : 10 }).then(s => {
+      this._lastKpIds = (kpIds && kpIds.length) ? kpIds : undefined;
+      const body = { mode, count: m ? m.count : 10 };
+      if (this._lastKpIds) body.kpIds = this._lastKpIds;
+      API.practice.create(body).then(s => {
         this.mode = mode; this.qs = s.questions; this.idx = 0; this.answers = {};
         this.sessionId = s.sessionId;  // 保存真实 sessionId，后续 submit/finish 要用
         this.state = 'quiz';
@@ -378,7 +385,7 @@
           { horizontal: true, showLabel: true, labelFmt: '{c} 题' });
       }
 
-      U.$('#againBtn').addEventListener('click', () => API.practice.modes().then(ms => this.start(this.mode || 'weak', ms)));
+      U.$('#againBtn').addEventListener('click', () => API.practice.modes().then(ms => this.start(this.mode || 'weak', ms, this._lastKpIds)));
       U.$('#toWrong').addEventListener('click', () => {
         U.$$('#pTabs button').forEach(x => x.classList.toggle('is-active', x.dataset.t === 'wrong'));
         this.renderWrong();
