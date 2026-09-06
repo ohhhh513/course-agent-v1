@@ -39,6 +39,7 @@ backend/app/data/*.sqlite3
 
 # ---------- 向量库 / AI 索引（由 P1 生成，不入仓库） ----------
 backend/app/data/vector/
+backend/app/data/st/*.db
 *.faiss
 *.index
 
@@ -60,6 +61,7 @@ logs/
 backend/tests/results/
 backend/tests/*.png
 !backend/tests/e2e_smoke.js
+backend/data/.pytest-tmp-*/
 
 # ---------- 编辑器 / 系统 ----------
 .vscode/
