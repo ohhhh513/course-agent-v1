@@ -125,7 +125,7 @@
               <button class="path__chapter" type="button" aria-expanded="true">
                 <div class="path__ch-row1">
                   <i class="path__caret" aria-hidden="true">▾</i>
-                  <span class="path__chapter-name">${U.esc(g.name)}</span>
+                  <span class="path__chapter-name">${U.esc(CHAPTER_NAMES[g.name] || g.name)}</span>
                   <span class="path__chapter-count">${items.length} 个知识点</span>
                   <span class="spacer"></span>
                   <span class="path__chapter-meta">${summary}</span>
@@ -261,7 +261,7 @@
         const g = groups.find(x => x.name === this._activeChapter);
         if (g) {
           row2 = `<div class="chips-popup" data-chapter="${U.esc(g.name)}">
-            <div class="chips-popup__hint">${U.esc(g.name)} · ${g.items.length} 个知识点 <button class="chips-popup__close" type="button" title="收起">✕</button></div>
+            <div class="chips-popup__hint">${U.esc(CHAPTER_NAMES[g.name] || g.name)} · ${g.items.length} 个知识点 <button class="chips-popup__close" type="button" title="收起">✕</button></div>
             <div class="chips-popup__row">${g.items.map(p =>
               `<button class="chip chip--kp ${chipIsActive(p.kpId) ? 'is-active' : ''}" data-mode="kp" data-kp-id="${U.esc(p.kpId)}">${U.esc(p.name)}</button>`
             ).join('')}</div>
