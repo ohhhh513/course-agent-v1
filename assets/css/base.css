@@ -416,6 +416,11 @@ a.badge--outline:hover { border-color: var(--brand-400); color: var(--brand-300)
 .bar > i.is-fair { background: linear-gradient(90deg, var(--warn), #fbbf24); }
 .bar > i.is-weak { background: linear-gradient(90deg, var(--lv-weak), #fb923c); }
 .bar > i.is-none { background: var(--lv-none); }
+/* 教师驾驶舱：班级共性薄弱知识点排行专用四段色阶 */
+.bar > i.is-dash-red { background: linear-gradient(90deg, #dc2626, #f87171); }
+.bar > i.is-dash-brown { background: linear-gradient(90deg, #92400e, #c08457); }
+.bar > i.is-dash-light-green { background: linear-gradient(90deg, #65a30d, #a3e635); }
+.bar > i.is-dash-green { background: linear-gradient(90deg, var(--ok), #4ade80); }
 .bar--stack { display: flex; }
 .bar--stack > i { border-radius: 0; }
 
@@ -577,6 +582,10 @@ a.badge--outline:hover { border-color: var(--brand-400); color: var(--brand-300)
 .t-ok { color: var(--ok); }
 .t-warn { color: var(--warn); }
 .t-danger { color: var(--danger); }
+.t-dash-red { color: #dc2626; }
+.t-dash-brown { color: #92400e; }
+.t-dash-light-green { color: #65a30d; }
+.t-dash-green { color: var(--ok); }
 .t-brand { color: var(--brand-400); }
 .fz-11 { font-size: 11.5px; }
 .fz-12 { font-size: 12.5px; }

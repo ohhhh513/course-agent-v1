@@ -176,33 +176,52 @@ def teacher_dashboard(
     # 合并活跃学生
     active_user_ids = active_from_session | active_from_answer
 
-    # kp 聚合（给 kpRanking 用）
-    # 每个学生每个知识点的掌握率（无学习记录视为 0），分母统一为全班人数 n，
-    # 避免「未达标人数 / 学习过人数」与班级总人数口径不一致导致「数量对不上」。
-    kp_stu = defaultdict(dict)  # kp_id -> {user_id: (mastery, status)}
-    for r in all_lp:
-        kp_stu[r.kp_id][r.user_id] = (r.mastery or 0, r.status)
-
     kp_id_name = {n.id: n.name for n in db.query(GraphNode).filter(GraphNode.graph_type == "knowledge").all()}
 
-    # kpRanking 前端期望: [{ name, mastery, weakCount, students }]
+    # kpRanking：只统计实际练习过该知识点题目的学生。
+    # 先计算「学生 × 知识点」正确率，再对参与过该知识点练习的学生做非加权平均；
+    # 没有任何答题记录的知识点不进入排行，避免未练习学生被当成 0 分拉低结果。
+    kp_answer_rows = db.query(
+        AnswerRecord.kp_id,
+        AnswerRecord.user_id,
+        func.count(AnswerRecord.id).label("total"),
+        func.sum(AnswerRecord.is_correct).label("correct"),
+    ).filter(
+        AnswerRecord.user_id.in_(student_ids),
+        AnswerRecord.kp_id.isnot(None),
+        AnswerRecord.kp_id != "",
+    ).group_by(
+        AnswerRecord.kp_id,
+        AnswerRecord.user_id,
+    ).all()
+
+    kp_students = defaultdict(list)  # kp_id -> [{mastery, total}]
+    for row in kp_answer_rows:
+        total = int(row.total or 0)
+        if total <= 0:
+            continue
+        correct = int(row.correct or 0)
+        kp_students[row.kp_id].append({
+            "mastery": correct / total * 100,
+            "total": total,
+        })
+
+    # 前端期望: [{ name, mastery, weakCount, students }]
     kp_ranking = []
-    for kp_id, stu_map in kp_stu.items():
-        # 全班每人该知识点掌握率（未学习者记为 0，也即未达标）
-        rows = [stu_map.get(sid, (0, "todo")) for sid in student_ids]
-        masteries = [m for m, _ in rows]
-        done_cnt = sum(1 for _, s in rows if s == "done")
-        weak_cnt = sum(1 for m in masteries if m < 60)   # 未达标：全班掌握率 < 60（含未学习）
-        avg_m = round(sum(masteries) / len(masteries), 1) if masteries else 0
+    for kp_id, student_rows in kp_students.items():
+        masteries = [row["mastery"] for row in student_rows]
+        weak_cnt = sum(1 for mastery in masteries if mastery < 60)
+        active_students = len(student_rows)
+        avg_m = round(sum(masteries) / active_students, 1) if active_students else 0
         kp_ranking.append({
             "kpId": kp_id,
             "kpName": kp_id_name.get(kp_id, kp_id),
             "name": kp_id_name.get(kp_id, kp_id),          # 前端取 k.name
-            "completionRate": round(done_cnt / n * 100, 1) if n else 0,
+            "completionRate": round(active_students / n * 100, 1) if n else 0,
             "avgMastery": avg_m,
-            "mastery": avg_m,                                # 前端取 k.mastery（全班均值）
-            "weakCount": weak_cnt,                          # 前端取 k.weakCount（全班未达标人数）
-            "students": n,                                  # 前端取 k.students（全班人数，与 donut 一致）
+            "mastery": avg_m,                                # 前端取 k.mastery（练习学生平均掌握率）
+            "weakCount": weak_cnt,                          # 前端取 k.weakCount（练习学生中未达标人数）
+            "students": active_students,                    # 前端取 k.students（实际练习学生数）
         })
     kp_ranking.sort(key=lambda x: x["mastery"])  # 低的在前面
     kp_ranking = kp_ranking[:5]                    # Top 5
