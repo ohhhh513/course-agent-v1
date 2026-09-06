@@ -682,6 +682,23 @@
 }
 @keyframes gen-progress-blink { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
 @media (max-width: 500px) { .gen-config-settings { grid-template-columns: 1fr; } }
+
+/* ---------- 题库管理滚动区域 ---------- */
+.bank-table-scroll {
+  max-height: calc(100vh - 225px); overflow: auto;
+  scrollbar-width: thin; scrollbar-color: var(--brand-300) var(--surface-3);
+}
+.bank-table-scroll::-webkit-scrollbar { width: 6px; height: 6px; }
+.bank-table-scroll::-webkit-scrollbar-track { background: var(--surface-3); border-radius: var(--r-full); }
+.bank-table-scroll::-webkit-scrollbar-thumb { background: var(--brand-300); border-radius: var(--r-full); }
+.bank-stem-scroll {
+  max-width: 280px; max-height: 3.2em; overflow-y: auto;
+  line-height: 1.6; white-space: normal; overflow-wrap: anywhere;
+  scrollbar-width: thin; scrollbar-color: var(--brand-300) var(--surface-3);
+}
+.bank-stem-scroll::-webkit-scrollbar { width: 5px; }
+.bank-stem-scroll::-webkit-scrollbar-track { background: var(--surface-3); border-radius: var(--r-full); }
+.bank-stem-scroll::-webkit-scrollbar-thumb { background: var(--brand-300); border-radius: var(--r-full); }
 .upload {
   border: 1.5px dashed var(--border); border-radius: var(--r-md);
   padding: 22px 16px; text-align: center; cursor: pointer;

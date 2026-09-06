@@ -257,7 +257,7 @@
             <button data-s="approved">已审</button><button data-s="published">已发布</button><button data-s="archived">归档</button></div>
           <button class="btn btn--sm btn--primary" id="bankImport">${icon('upload')} 批量导入</button>
         </div>
-        <div class="card__body card__body--flush"><div class="tbl-wrap"><table class="tbl" id="bankTbl"></table></div></div>
+        <div class="card__body card__body--flush"><div class="tbl-wrap bank-table-scroll"><table class="tbl" id="bankTbl"></table></div></div>
       </div>`;
 
       U.$$('#bankSeg button', box).forEach(b => b.addEventListener('click', () => {
@@ -406,7 +406,7 @@
             const [lbl, bd] = stMap[q.status] || ['—', 'badge--outline'];
             return `<tr>
               <td class="mono fz-12">${q.qId}</td>
-              <td class="clamp-2" style="max-width:280px">${U.esc(q.stem)}</td>
+              <td><div class="bank-stem-scroll">${U.esc(q.stem)}</div></td>
               <td>${q.type}</td><td>${U.esc(q.kp)}</td>
               <td>${U.stars(q.difficulty)}</td>
               <td class="t-right num ${q.correctRate === null ? 't-dim' : (q.correctRate < 60 ? 't-danger' : '')}">${q.correctRate === null ? '—' : q.correctRate + '%'}</td>
