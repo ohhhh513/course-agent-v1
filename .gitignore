@@ -39,6 +39,7 @@ backend/app/data/*.sqlite3
 
 # ---------- 向量库 / AI 索引（由 P1 生成，不入仓库） ----------
 backend/app/data/vector/
+backend/app/data/st/*.db
 *.faiss
 *.index
 
@@ -48,6 +49,8 @@ assets/resources/covers/
 assets/resources/uploads/*
 assets/resources/data-structures-1-9
 !assets/resources/uploads/.gitkeep
+# 课程资源实际存放目录（项目根，由 main.py 静态挂载到 /assets/resources）
+resources/
 
 # ---------- 日志 ----------
 *.log
@@ -58,6 +61,7 @@ logs/
 backend/tests/results/
 backend/tests/*.png
 !backend/tests/e2e_smoke.js
+backend/data/.pytest-tmp-*/
 
 # ---------- 编辑器 / 系统 ----------
 .vscode/

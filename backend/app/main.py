@@ -102,6 +102,12 @@ def health():
 import os
 frontend_dir = str(settings.FRONTEND_DIR.resolve())
 if os.path.exists(os.path.join(frontend_dir, "index.html")):
+    # 课程资源（视频/教材/课件/封面）实际位于项目根 resources/ 下（体积大约 1.6GB，不入 Git）。
+    # 将其挂载到 /assets/resources，与数据库中的 /assets/resources/... 访问路径保持一致。
+    resources_dir = os.path.join(frontend_dir, "resources")
+    if os.path.isdir(resources_dir):
+        # 注意：需先于 /assets 挂载，避免被其抢先匹配
+        app.mount("/assets/resources", StaticFiles(directory=resources_dir), name="resources")
     # 挂载根路径下的静态文件（会匹配 index.html、student.html 等）
     # 注意：这是为了方便开发联调，正式部署建议前后端分离
     app.mount("/assets", StaticFiles(directory=os.path.join(frontend_dir, "assets")), name="assets")

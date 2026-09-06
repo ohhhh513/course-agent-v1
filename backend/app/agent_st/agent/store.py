@@ -7,6 +7,7 @@ from pathlib import Path
 
 from app.agent_st.agent.config import get_settings
 from app.agent_st.rag.validate import next_question_id, validate_question
+from app.utils import fmt_dt
 
 
 class AgentStore:
@@ -132,7 +133,7 @@ class AgentStore:
                 out.append({
                     "draft_id": row.draft_id,
                     "status": row.status,
-                    "created_at": row.created_at.strftime("%Y-%m-%d %H:%M:%S") if row.created_at else "",
+                    "created_at": fmt_dt(row.created_at, "%Y-%m-%d %H:%M:%S"),
                     "errors": json.loads(row.errors_json or "[]"),
                     "id": payload.get("id"),
                     "chapter": payload.get("chapter"),

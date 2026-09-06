@@ -5,7 +5,7 @@
 import json
 import re
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from collections import defaultdict
 from fastapi import APIRouter, Depends, Query, Body, Form, UploadFile, File, HTTPException
 from sqlalchemy.orm import Session
@@ -24,10 +24,7 @@ from ..middleware.auth import get_current_user
 from ..schemas.common import ok, fail, list_response
 from ..utils import (
     loads,
-    format_china_time,
-    china_now,
-    china_day_bounds_utc,
-    utc_now_naive,
+    fmt_dt,
 )
 from ..media_utils import (
     BASE_DIR, UPLOADS_DIR, COVERS_DIR, mp4_duration, pdf_pages, pptx_pages,
@@ -36,6 +33,30 @@ from ..media_utils import (
 from ..routers.practice import _calc_question_stats
 
 router = APIRouter(prefix="/api/v1/teacher", tags=["教师端"])
+
+# 教师端时间处理：数据库保存 naive UTC，接口展示和日期统计使用中国标准时间。
+_CN_TZ = timezone(timedelta(hours=8))
+
+
+def format_china_time(dt, fmt: str = "%Y-%m-%d %H:%M") -> str:
+    return fmt_dt(dt, fmt)
+
+
+def utc_now_naive() -> datetime:
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def china_now() -> datetime:
+    return datetime.now(_CN_TZ).replace(tzinfo=None)
+
+
+def china_day_bounds_utc(day) -> tuple[datetime, datetime]:
+    local_start = datetime.combine(day, datetime.min.time()).replace(tzinfo=_CN_TZ)
+    local_end = datetime.combine(day, datetime.max.time()).replace(tzinfo=_CN_TZ)
+    return (
+        local_start.astimezone(timezone.utc).replace(tzinfo=None),
+        local_end.astimezone(timezone.utc).replace(tzinfo=None),
+    )
 
 
 # ------- Pydantic 请求体 -------

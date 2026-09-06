@@ -31,6 +31,8 @@
       const box = U.$('#pBody');
       API.practice.modes().then(ms => {
         API.student.dashboard().then(d => {
+          // 记住薄弱知识点 kpId，供「薄弱点强化」/「靶向强化出题」按知识点组卷
+          this._weakKpIds = (d.weakPoints || []).map(w => w.kpId).filter(Boolean);
           box.innerHTML = `
           <div class="callout callout--brand" style="margin-bottom:16px">
             ${icon('sparkle')}
@@ -63,30 +65,32 @@
                   <div class="todo__ico todo__ico--${w.level}">${icon('target')}</div>
                   <div class="todo__main"><b>${U.esc(w.name)}</b>
                     <span>掌握率 ${w.masteryRate}% · 建议 ${Math.ceil((60 - w.masteryRate) / 5)} 组靶向练习</span></div>
-                  <button class="btn btn--sm btn--outline" data-weak-start>出题</button>
+                  <button class="btn btn--sm btn--outline" data-weak-start data-weak-kp="${U.esc(w.kpId)}">出题</button>
                 </div>`).join('')}
             </div>
           </div>`;
 
         U.$$('#modeGrid .card[data-mode]', box).forEach(c => c.addEventListener('click', () => {
           if (this.activeMode === c.dataset.mode) { this.collapsePanel(); return; }
-          this.expandPanel(c.dataset.mode, ms, c);
+          const opts = c.dataset.mode === 'weak' ? { kpIds: this._weakKpIds } : undefined;
+          this.expandPanel(c.dataset.mode, ms, c, opts);
         }));
         U.$$('[data-weak-start]', box).forEach(b => b.addEventListener('click', e => {
           e.stopPropagation();
-          this.expandPanel('weak', ms, box.querySelector('#modeGrid .card[data-mode="weak"]'));
+          const kp = b.dataset.weakKp;
+          this.expandPanel('weak', ms, box.querySelector('#modeGrid .card[data-mode="weak"]'), kp ? { kpIds: [kp] } : undefined);
         }));
         });
       });
     },
 
     /* --- 内联展开 / 收起 --- */
-    expandPanel(mode, ms, cardEl) {
+    expandPanel(mode, ms, cardEl, opts) {
       this.activeMode = mode;
       U.$$('#modeGrid .card[data-mode]').forEach(c => c.classList.toggle('is-active', c === cardEl));
       const panel = U.$('#modePanel');
       if (panel) panel.hidden = false;
-      this.start(mode, ms);
+      this.start(mode, ms, opts);
     },
     collapsePanel() {
       clearInterval(this._timer);
@@ -118,11 +122,16 @@
     },
 
     /* --- 开始练习 --- */
-    start(mode, ms) {
+    start(mode, ms, opts) {
       const m = (ms || []).find(x => x.key === mode);
       // 记录进入练习时的 tab，退出时按此恢复到对应列表
       this._startTab = this.tab;
-      API.practice.create({ mode, count: m ? m.count : 10 }).then(s => {
+      this._lastKpIds = (opts && opts.kpIds && opts.kpIds.length) ? opts.kpIds : undefined;
+      this._lastQIds = (opts && opts.qIds && opts.qIds.length) ? opts.qIds : undefined;
+      const body = { mode, count: (opts && opts.count) || (m ? m.count : 10) };
+      if (this._lastKpIds) body.kpIds = this._lastKpIds;
+      if (this._lastQIds) body.qIds = this._lastQIds;
+      API.practice.create(body).then(s => {
         this.mode = mode; this.qs = s.questions; this.idx = 0; this.answers = {};
         this.sessionId = s.sessionId;  // 保存真实 sessionId，后续 submit/finish 要用
         this.state = 'quiz';
@@ -323,6 +332,8 @@
           <div class="stat__hint">已回写目标图谱达成度</div></div>
       </div>
 
+      ${(r.masteredCount > 0) ? `<div class="callout" style="margin-bottom:16px">${icon('checkCircle')}<div><b>${r.masteredCount} 道答对题目已自动标记为「已掌握」</b><span class="fz-12 t-dim" style="margin-left:6px">可到错题本「已掌握」查看</span></div></div>` : ''}
+
       <div class="grid g-21" style="margin-bottom:16px">
         <div class="card">
           <div class="card__head"><h3>${icon('trend')} 薄弱点变化对比</h3><span class="spacer"></span>
@@ -378,7 +389,7 @@
           { horizontal: true, showLabel: true, labelFmt: '{c} 题' });
       }
 
-      U.$('#againBtn').addEventListener('click', () => API.practice.modes().then(ms => this.start(this.mode || 'weak', ms)));
+      U.$('#againBtn').addEventListener('click', () => API.practice.modes().then(ms => this.start(this.mode || 'weak', ms, { kpIds: this._lastKpIds, qIds: this._lastQIds })));
       U.$('#toWrong').addEventListener('click', () => {
         U.$$('#pTabs button').forEach(x => x.classList.toggle('is-active', x.dataset.t === 'wrong'));
         this.renderWrong();
@@ -431,8 +442,19 @@
         </div>`;
 
         U.$$('#wFilter button').forEach(b => b.addEventListener('click', () => this.renderWrong(b.dataset.f)));
-        U.$('#wPractice').addEventListener('click', () => API.practice.modes().then(ms => this.start('wrong', ms)));
-        U.$$('[data-redo]').forEach(b => b.addEventListener('click', () => API.practice.modes().then(ms => this.start('wrong', ms))));
+        U.$('#wPractice').addEventListener('click', () => {
+          // 一键重练：只重练当前 tab（待攻克/已掌握/全部）下显示的那些题
+          const qIds = r.list.map(w => w.qId);
+          if (!qIds.length) { Toast.error('当前分类下没有可重练的题目'); return; }
+          API.practice.modes().then(ms => this.start('wrong', ms, { qIds, count: qIds.length }));
+        });
+        U.$$('[data-redo]').forEach(b => b.addEventListener('click', e => {
+          e.stopPropagation();
+          API.practice.modes().then(ms => {
+            // 重做本题：只组卷这一个错题
+            this.start('wrong', ms, { qIds: [b.dataset.redo] });
+          });
+        }));
         U.$$('[data-mastered]').forEach(b => b.addEventListener('click', () => {
           API.practice.removeWrong({ qId: b.dataset.mastered }).then(() => {
             Toast.ok('已标记为掌握', '该题移出待攻克列表');
@@ -525,7 +547,7 @@
               Practice.mountQFigure(ov, d.figure);
               U.$('#wdRedo', ov).addEventListener('click', () => {
                 close();
-                API.practice.modes().then(ms => Practice.start('wrong', ms));
+                API.practice.modes().then(ms => Practice.start('wrong', ms, { qIds: [qId] }));
               });
               U.$('#wdMastered', ov).addEventListener('click', () => {
                 API.practice.removeWrong({ qId }).then(() => {

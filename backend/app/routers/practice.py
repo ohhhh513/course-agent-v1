@@ -11,15 +11,38 @@ from typing import Optional, List
 from ..database import get_db
 from ..models.practice import PracticeSession, AnswerRecord
 from ..models.question import Question
+from ..models.graph import GraphNode
 from ..models.user import User
 from ..models.intervention import TeacherClassDashboard
 from ..models.course import Resource
 from ..middleware.auth import get_current_user
 from ..schemas.common import ok, fail, list_response
-from ..utils import loads
+from ..utils import loads, fmt_dt
 from sqlalchemy import func
 
 router = APIRouter(prefix="/api/v1/practice", tags=["智能练习"])
+
+
+def _expand_kp_ids(db: Session, kp_ids: list[str]) -> set[str]:
+    """把细粒度知识点扩展到同章节的其它知识点。
+
+    课后题库（KHD）按“章代表知识点”挂载，细分知识点（如 KP02 时间复杂度）题量很少，
+    直接按其 kp_id 组卷往往只有一两道；这里按章节扩到同章其它知识点，凑足同主题题量。
+    """
+    kp_ids = [k for k in kp_ids if k]
+    if not kp_ids:
+        return set()
+    kps = set(kp_ids)
+    rows = db.query(GraphNode).filter(
+        GraphNode.graph_type == "knowledge", GraphNode.id.in_(kp_ids)
+    ).all()
+    chapters = {r.chapter for r in rows if r.chapter}
+    if chapters:
+        extra = db.query(GraphNode.id).filter(
+            GraphNode.graph_type == "knowledge", GraphNode.chapter.in_(chapters)
+        ).all()
+        kps |= {r[0] for r in extra}
+    return kps
 
 
 def _figure_of(q: Question):
@@ -62,6 +85,7 @@ def _mastery_delta(correct: bool, difficulty: int, score: int) -> float:
 class CreateSessionReq(BaseModel):
     mode: str = "weak"
     kpIds: Optional[List[str]] = None
+    qIds: Optional[List[str]] = None
     count: int = 10
     difficulty: Optional[int] = None
 
@@ -112,8 +136,23 @@ def create_session(
 ):
     """创建练习会话（组卷）"""
     q = db.query(Question).filter(Question.status == "published")
-    if req.kpIds:
-        q = q.filter(Question.kp_id.in_(req.kpIds))
+    if req.qIds:
+        # 重做指定题目（错题本“重做本题”）
+        q = q.filter(Question.q_id.in_(req.qIds))
+    elif req.kpIds:
+        expanded = _expand_kp_ids(db, req.kpIds)
+        if expanded:
+            q = q.filter(Question.kp_id.in_(expanded))
+        else:
+            print(f"[practice] 未识别 kpIds={req.kpIds}，回退为全库", flush=True)
+    elif req.mode == "wrong":
+        # 错题重练：只抽该用户错过的题
+        wrong_q_ids = [r[0] for r in db.query(AnswerRecord.q_id).filter(
+            AnswerRecord.user_id == user.user_id,
+            AnswerRecord.is_correct == 0,
+        ).distinct().all()]
+        if wrong_q_ids:
+            q = q.filter(Question.q_id.in_(wrong_q_ids))
     if req.difficulty:
         q = q.filter(Question.difficulty == req.difficulty)
     # 简单随机抽样（真实环境按 mode 智能组卷）
@@ -312,6 +351,19 @@ def finish_session(
         if r.is_correct:
             score_gain += q_score_map.get(r.q_id, 5)
 
+    # 错题重练：答对的题自动标记为已掌握（进入错题本“已掌握”列表）
+    mastered_count = 0
+    if session.mode == "wrong":
+        correct_qids = {r.q_id for r in records if r.is_correct == 1}
+        for qid in correct_qids:
+            res = db.query(AnswerRecord).filter(
+                AnswerRecord.user_id == user.user_id,
+                AnswerRecord.q_id == qid,
+                AnswerRecord.is_correct == 0,
+            ).update({"mastered": True})
+            if res:
+                mastered_count += 1
+
     db.commit()
 
     return ok({
@@ -325,6 +377,7 @@ def finish_session(
         "scoreGain": round(score_gain, 1),
         "kpChanges": kp_changes,
         "errorTypes": [{"type": t, "count": c} for t, c in err_map.items()],
+        "masteredCount": mastered_count,
         "nextSuggestion": "建议先回顾错题对应的知识点，再进行薄弱点强化。",
     })
 
@@ -351,30 +404,42 @@ def wrong_book(
         q = q.filter(AnswerRecord.error_type == errorType)
     records = q.order_by(AnswerRecord.created_at.desc()).all()
 
-    # 聚合错题
+    # 按题目聚合；records 已按时间倒序，首条即最近一次作答
     wrong_map = {}
     for r in records:
         if r.q_id not in wrong_map:
-            wrong_map[r.q_id] = {"wrongCount": 0, "lastTime": r.created_at}
+            wrong_map[r.q_id] = {
+                "wrongCount": 0, "lastTime": r.created_at,
+                # 最近一次错题的状态决定该题归属“待攻克/已掌握”
+                "mastered": bool(r.mastered),
+                "myAnswer": r.my_answer, "errorType": r.error_type,
+            }
         wrong_map[r.q_id]["wrongCount"] += 1
         if r.created_at > wrong_map[r.q_id]["lastTime"]:
             wrong_map[r.q_id]["lastTime"] = r.created_at
 
-    # 查询题目详情
+    # 状态过滤：'true' 已掌握 / 'false' 待攻克 / 'all'|None 全部
+    filter_flag = None
+    if mastered in ("true", "false"):
+        filter_flag = mastered == "true"
+
     if wrong_map:
         q_ids = list(wrong_map.keys())
         questions = db.query(Question).filter(Question.q_id.in_(q_ids)).all()
         items = []
         for q in questions:
             w = wrong_map[q.q_id]
+            if filter_flag is not None and w["mastered"] != filter_flag:
+                continue
             items.append({
-                "qId": q.q_id, "stem": q.stem, "myAnswer": "", "answer": q.answer,
+                "qId": q.q_id, "stem": q.stem, "myAnswer": w["myAnswer"],
+                "answer": q.answer,
                 "wrongCount": w["wrongCount"],
-                "errorType": q.error_type,
+                "errorType": w["errorType"],
                 "kp": q.kp_id, "kpId": q.kp_id,
                 "difficulty": q.difficulty,
-                "lastTime": w["lastTime"].strftime("%m-%d %H:%M") if w["lastTime"] else "",
-                "mastered": False,  # 简化
+                "lastTime": fmt_dt(w["lastTime"], "%m-%d %H:%M"),
+                "mastered": w["mastered"],
             })
     else:
         items = []
@@ -436,11 +501,11 @@ def remove_wrong(
     db: Session = Depends(get_db),
     user=Depends(get_current_user),
 ):
-    """移出错题本（标记掌握）"""
+    """标记已掌握：把该题的错题记录置为 mastered=True（保留历史，不再移出）"""
     db.query(AnswerRecord).filter(
         AnswerRecord.user_id == user.user_id,
         AnswerRecord.q_id == q_id,
         AnswerRecord.is_correct == 0,
-    ).delete()
+    ).update({"mastered": True})
     db.commit()
-    return ok({"qId": q_id, "removed": True})
+    return ok({"qId": q_id, "mastered": True})

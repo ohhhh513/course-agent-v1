@@ -21,8 +21,9 @@ except Exception:  # pragma: no cover
 
 # 相对定位：本文件位于 backend/app/media_utils.py，向上两级为项目根（course-agent）
 BASE_DIR = Path(__file__).resolve().parents[2]
-COVERS_DIR = BASE_DIR / "assets" / "resources" / "covers"
-UPLOADS_DIR = BASE_DIR / "assets" / "resources" / "uploads"
+# 课程资源统一放项目根 resources/（与静态挂载 /assets/resources 对应）
+COVERS_DIR = BASE_DIR / "resources" / "covers"
+UPLOADS_DIR = BASE_DIR / "resources" / "uploads"
 
 LABEL = {"video": "教学视频", "doc": "教材文献", "ppt": "课堂PPT", "quiz": "题库"}
 TYPE_BG = {

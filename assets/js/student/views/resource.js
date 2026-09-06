@@ -22,10 +22,12 @@
 
   const ResourceView = {
     filter: 'all', keyword: '',
-    // 过滤模式: 'all' | 'kp' | 'other'
+    // 过滤模式: 'all' | 'chapter' | 'kp' | 'other'
     currentMode: 'all',
     currentKpId: '',
     currentKpName: '',
+    // 当前按章节过滤时的章名（仅 currentMode === 'chapter' 时有效）
+    currentChapter: '',
     _pendingKp: '',
     _allPaths: [],
     // 当前展开知识点的章节名（null 表示未展开）
@@ -123,7 +125,7 @@
               <button class="path__chapter" type="button" aria-expanded="true">
                 <div class="path__ch-row1">
                   <i class="path__caret" aria-hidden="true">▾</i>
-                  <span class="path__chapter-name">${U.esc(g.name)}</span>
+                  <span class="path__chapter-name">${U.esc(CHAPTER_NAMES[g.name] || g.name)}</span>
                   <span class="path__chapter-count">${items.length} 个知识点</span>
                   <span class="spacer"></span>
                   <span class="path__chapter-meta">${summary}</span>
@@ -205,6 +207,8 @@
             // 搜索时清掉筛选模式
             this.currentMode = 'all';
             this.currentKpId = ''; this.currentKpName = '';
+            this.currentChapter = '';
+            this._activeChapter = null;
             this.renderKpChips(); this.syncPathSelection();
           }
           this.load();
@@ -238,14 +242,11 @@
       // 默认行：全部 + 章节标签 + 课外教材
       const allActive = this.currentMode === 'all' && !this.keyword;
       const otherActive = this.currentMode === 'other';
-      // 当前选中知识点所属章节（左侧 path 点击时同步高亮右侧章节标签）
-      const activeKp = this.currentMode === 'kp' ? this._allPaths.find(p => p.kpId === this.currentKpId) : null;
-      const activeKpChapter = activeKp ? activeKp.chapter : null;
-
       const row1 = [
         `<button class="chip ${allActive ? 'is-active' : ''}" data-mode="all">全部</button>`,
         ...groups.map(g => {
-          const chActive = this._activeChapter === g.name || activeKpChapter === g.name;
+          // 章标签高亮只由「当前展开的章节」决定，避免与知识点过滤互相叠加
+          const chActive = this._activeChapter === g.name;
           const chName = CHAPTER_NAMES[g.name] || g.name;
           return `<button class="chip chip--chapter ${chActive ? 'is-active' : ''}" data-mode="chapter" data-chapter="${U.esc(g.name)}" title="${g.items.length} 个知识点">
             ${U.esc(chName)}
@@ -260,7 +261,7 @@
         const g = groups.find(x => x.name === this._activeChapter);
         if (g) {
           row2 = `<div class="chips-popup" data-chapter="${U.esc(g.name)}">
-            <div class="chips-popup__hint">${U.esc(g.name)} · ${g.items.length} 个知识点 <button class="chips-popup__close" type="button" title="收起">✕</button></div>
+            <div class="chips-popup__hint">${U.esc(CHAPTER_NAMES[g.name] || g.name)} · ${g.items.length} 个知识点 <button class="chips-popup__close" type="button" title="收起">✕</button></div>
             <div class="chips-popup__row">${g.items.map(p =>
               `<button class="chip chip--kp ${chipIsActive(p.kpId) ? 'is-active' : ''}" data-mode="kp" data-kp-id="${U.esc(p.kpId)}">${U.esc(p.name)}</button>`
             ).join('')}</div>
@@ -273,8 +274,24 @@
       // 事件：章节 chip 点击 → 切换展开
       U.$$('.chip--chapter', box).forEach(c => c.addEventListener('click', () => {
         const ch = c.dataset.chapter;
-        this._activeChapter = this._activeChapter === ch ? null : ch;
-        this.renderKpChips();
+        if (this._activeChapter === ch) {
+          // 再次点击已选中的章节 → 收起弹层并回到「全部」
+          this._activeChapter = null;
+          this.selectMode('all');
+        } else {
+          // 选中所点击章节：作为唯一选中项，展开其知识点并仅展示该章资源
+          this._activeChapter = ch;
+          this.currentChapter = ch;
+          this.currentMode = 'chapter';
+          this.currentKpId = '';
+          this.currentKpName = '';
+          this.keyword = '';
+          const input = U.$('#resSearch');
+          if (input) input.value = '';
+          this.renderKpChips();
+          this.syncPathSelection();
+          this.load();
+        }
       }));
 
       // 事件：popup 关闭按钮
@@ -308,6 +325,7 @@
       this.currentMode = kpId ? 'kp' : 'all';
       this.currentKpId = kpId || '';
       this.currentKpName = kpName || '';
+      this.currentChapter = '';
       this.keyword = '';
       const input = U.$('#resSearch');
       if (input) input.value = '';
@@ -328,6 +346,8 @@
       this.currentMode = mode;
       this.currentKpId = '';
       this.currentKpName = '';
+      this.currentChapter = '';
+      this._activeChapter = null;
       this.keyword = '';
       const input = U.$('#resSearch');
       if (input) input.value = '';
@@ -355,7 +375,7 @@
 
     load() {
       // 资源中心目前按单页大列表展示（后端默认 size=20，本地资源 30 条会截断）
-      const params = { type: this.filter, page: 1, size: 100 };
+      const params = { type: this.filter, page: 1, size: 200 };
       if (this.currentMode === 'kp') {
         params.kpId = this.currentKpId;
       } else if (this.currentMode === 'other') {
@@ -367,31 +387,44 @@
         const box = U.$('#resGrid');
         if (!box) return;
 
+        // 章节过滤当前无后端参数，改在前端按资源所属章节过滤（资源 kp 形如「第2章 线性表」）
+        let items = r.list;
+        if (this.currentMode === 'chapter' && this.currentChapter) {
+          const ch = this.currentChapter;
+          items = (r.list || []).filter(x => (x.kp || '').startsWith(ch));
+        }
+
         let emptyHtml;
-        if (!r.list.length && this.currentMode === 'kp') {
+        if (!items.length && this.currentMode === 'kp') {
           emptyHtml = `<div style="text-align:center;padding:30px">
             <div style="font-size:36px;margin-bottom:8px">📭</div>
             <p class="fz-14 fw-6">「${U.esc(this.currentKpName)}」暂未挂载学习资源</p>
             <p class="fz-12 t-dim" style="margin-top:4px">该知识点可能暂无上传资源，尝试切换其他知识点</p>
             <button class="btn btn--sm btn--outline" id="clearKpFilter" style="margin-top:10px">查看全部资源</button>
           </div>`;
-        } else if (!r.list.length && this.currentMode === 'other') {
+        } else if (!items.length && this.currentMode === 'chapter') {
+          emptyHtml = `<div style="text-align:center;padding:30px">
+            <div style="font-size:36px;margin-bottom:8px">📭</div>
+            <p class="fz-14 fw-6">「${U.esc(this.currentChapter)}」暂未匹配到资源</p>
+            <button class="btn btn--sm btn--outline" id="clearKpFilter" style="margin-top:10px">查看全部资源</button>
+          </div>`;
+        } else if (!items.length && this.currentMode === 'other') {
           emptyHtml = `<div style="text-align:center;padding:30px">
             <div style="font-size:36px;margin-bottom:8px">📚</div>
             <p class="fz-14 fw-6">暂未收集到课外教材类资源</p>
             <button class="btn btn--sm btn--outline" id="clearKpFilter" style="margin-top:10px">查看全部资源</button>
           </div>`;
-        } else if (!r.list.length) {
+        } else if (!items.length) {
           emptyHtml = R.empty('没有匹配的资源', '试试更换搜索条件', 'search2');
         }
 
-        box.innerHTML = r.list.length ? r.list.map(R.res).join('') : emptyHtml;
+        box.innerHTML = items.length ? items.map(R.res).join('') : emptyHtml;
 
         const clearBtn = U.$('#clearKpFilter');
         if (clearBtn) clearBtn.addEventListener('click', () => this.selectMode('all'));
 
         U.$$('.res', box).forEach(c => c.addEventListener('click', () => {
-          const res = r.list.find(x => x.resId === c.dataset.res);
+          const res = items.find(x => x.resId === c.dataset.res);
           if (!res || !res.url) {
             Modal.open({ title: '资源不可用', body: '<p class="t-dim">该资源暂无文件，请联系教师上传。</p>', footer: '<button class="btn" data-close>关闭</button>' });
             return;
@@ -583,4 +616,7 @@
     }
   };
 
-Router.register('resource', { title: '学习资源中心', mount: () => ResourceView.render() });
+  // 暴露到全局：课程图谱的「挂载资源」点击会通过 window.ResourceView.openResource 打开资源
+  window.ResourceView = ResourceView;
+
+  Router.register('resource', { title: '学习资源中心', mount: () => ResourceView.render() });
