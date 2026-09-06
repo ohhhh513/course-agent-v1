@@ -22,7 +22,7 @@ from ..models.graph import LearningPath, GraphNode
 from ..models.course import Resource, ResourceProgress
 from ..middleware.auth import get_current_user
 from ..schemas.common import ok, fail, list_response
-from ..utils import loads
+from ..utils import loads, fmt_dt
 from ..media_utils import (
     BASE_DIR, UPLOADS_DIR, COVERS_DIR, mp4_duration, pdf_pages, pptx_pages,
     guess_type, parse_chapter, parse_title, save_upload_file, generate_cover,
@@ -212,7 +212,7 @@ def teacher_dashboard(
                 "type": "alert", "level": level,
                 "text": f"新增预警：{stu_name} · {kp_name}",
                 "meta": a.title or a.type or a.desc or "未处理",
-                "time": (a.created_at or datetime.now()).strftime("%H:%M"),
+                "time": fmt_dt(a.created_at, "%H:%M") if a.created_at else datetime.now().strftime("%H:%M"),
             })
     # 再加最近的答题事件
     recent_ans = db.query(AnswerRecord).filter(
@@ -226,7 +226,7 @@ def teacher_dashboard(
             "level": "ok" if ar.is_correct else "warn",
             "text": f"{stu_name} 提交了「{kp_name}」相关题目",
             "meta": "回答正确" if ar.is_correct else "回答错误",
-            "time": (ar.created_at or datetime.now()).strftime("%H:%M"),
+            "time": fmt_dt(ar.created_at, "%H:%M") if ar.created_at else datetime.now().strftime("%H:%M"),
         })
     # 按 time 字符串降序取前 6
     live.sort(key=lambda x: x["time"], reverse=True)
@@ -692,7 +692,7 @@ def teacher_alerts(
             "kpId": a.kp_id or "",
             "detail": loads(a.detail_json) or {},
             "trendData": trend_data,
-            "createdAt": a.created_at.strftime("%Y-%m-%d %H:%M") if a.created_at else "",
+            "createdAt": fmt_dt(a.created_at),
             "status": "open" if a.status in ("read", "pending") else a.status,
             "note": a.note or "",
         }
@@ -754,7 +754,7 @@ def send_message(
     )
     db.add(msg)
     db.commit()
-    return ok({"msgId": msg.msg_id, "to": req.userId, "sentAt": msg.created_at.strftime("%Y-%m-%dT%H:%M:%S")})
+    return ok({"msgId": msg.msg_id, "to": req.userId, "sentAt": fmt_dt(msg.created_at, "%Y-%m-%dT%H:%M:%S")})
 
 
 # ========== /analysis/* 错题归因（动态计算） ==========

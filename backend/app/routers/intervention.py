@@ -20,7 +20,7 @@ from ..models.graph import LearningPath, GraphNode
 from ..models.practice import AnswerRecord
 from ..middleware.auth import get_current_user
 from ..schemas.common import ok, list_response
-from ..utils import loads
+from ..utils import loads, fmt_dt
 
 intervention_router = APIRouter(prefix="/api/v1/intervention", tags=["教学干预"])
 report_router = APIRouter(prefix="/api/v1/report", tags=["学情报告"])
@@ -256,12 +256,12 @@ def confirm_intervention(
         db.commit()
         return ok({
             "ivId": new_iv.iv_id, "status": "running",
-            "pushedAt": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%S"),
+            "pushedAt": fmt_dt(datetime.utcnow(), "%Y-%m-%dT%H:%M:%S"),
         })
 
     iv = db.query(Intervention).filter(Intervention.iv_id == iv_id).first()
     if not iv:
-        return ok({"ivId": iv_id, "status": "running", "pushedAt": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%S")})
+        return ok({"ivId": iv_id, "status": "running", "pushedAt": fmt_dt(datetime.utcnow(), "%Y-%m-%dT%H:%M:%S")})
     iv.status = "running"
     iv.confirmed_at = datetime.utcnow()
     if req.steps:
@@ -269,7 +269,7 @@ def confirm_intervention(
     db.commit()
     return ok({
         "ivId": iv_id, "status": "running",
-        "pushedAt": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%S"),
+        "pushedAt": fmt_dt(datetime.utcnow(), "%Y-%m-%dT%H:%M:%S"),
     })
 
 
@@ -431,12 +431,12 @@ def report_list(
         detail = loads(r.detail_json) or {}
         meta = detail.get("meta") or {}
         sections = detail.get("sections") or []
-        start = meta.get("startDate") or (r.created_at.strftime("%Y-%m-%d") if r.created_at else "")
+        start = meta.get("startDate") or fmt_dt(r.created_at, "%Y-%m-%d")
         end = meta.get("endDate") or start
         period = f"{start} ~ {end}" if start or end else ""
         items.append({
             "reportId": r.report_id, "title": r.title, "status": r.status,
-            "createdAt": r.created_at.strftime("%Y-%m-%d") if r.created_at else "",
+            "createdAt": fmt_dt(r.created_at, "%Y-%m-%d"),
             "scope": meta.get("chapter") or "全课程",
             "period": period,
             "creator": meta.get("generator") or "系统",

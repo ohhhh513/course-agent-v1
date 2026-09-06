@@ -18,7 +18,7 @@ from ..models.practice import AnswerRecord, PracticeSession
 from ..models.checkin import StudyCheckin
 from ..middleware.auth import get_current_user
 from ..schemas.common import ok, fail, list_response
-from ..utils import loads
+from ..utils import loads, fmt_dt
 
 router = APIRouter(prefix="/api/v1/student", tags=["学生端"])
 
@@ -918,7 +918,7 @@ def student_alerts(
             "kpId": a.kp_id, "kp": a.kp_name,
             "detail": loads(a.detail_json) or {},
             "suggestions": loads(a.suggestions_json) or [],
-            "createdAt": a.created_at.strftime("%Y-%m-%d %H:%M") if a.created_at else "",
+            "createdAt": fmt_dt(a.created_at),
             "status": a.status,
         }
 
@@ -959,7 +959,7 @@ def student_messages(
         {
             "msgId": m.msg_id, "from": m.from_user, "fromName": m.from_name,
             "title": m.title, "content": m.content,
-            "time": m.created_at.strftime("%Y-%m-%d %H:%M") if m.created_at else "",
+            "time": fmt_dt(m.created_at),
             "read": bool(m.read),
         }
         for m in rows

@@ -17,7 +17,7 @@ from ..models.intervention import TeacherClassDashboard
 from ..models.course import Resource
 from ..middleware.auth import get_current_user
 from ..schemas.common import ok, fail, list_response
-from ..utils import loads
+from ..utils import loads, fmt_dt
 from sqlalchemy import func
 
 router = APIRouter(prefix="/api/v1/practice", tags=["智能练习"])
@@ -438,7 +438,7 @@ def wrong_book(
                 "errorType": w["errorType"],
                 "kp": q.kp_id, "kpId": q.kp_id,
                 "difficulty": q.difficulty,
-                "lastTime": w["lastTime"].strftime("%m-%d %H:%M") if w["lastTime"] else "",
+                "lastTime": fmt_dt(w["lastTime"], "%m-%d %H:%M"),
                 "mastered": w["mastered"],
             })
     else:

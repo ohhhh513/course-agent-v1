@@ -17,7 +17,7 @@ from ..models.ai import ChatSession, ChatMessage
 from ..models.intervention import TeacherClassDashboard
 from ..middleware.auth import get_current_user
 from ..schemas.common import ok
-from ..utils import loads
+from ..utils import loads, fmt_dt
 from ..agent_st.agent.runtime import run_turn
 from ..agent_st.persistence import ChatMessage as STChatMessage
 
@@ -61,7 +61,7 @@ def ai_sessions(
     items = [
         {
             "sessionId": s.session_id, "title": s.title,
-            "time": s.updated_at.strftime("%m-%d %H:%M") if s.updated_at else "",
+            "time": fmt_dt(s.updated_at, "%m-%d %H:%M"),
             "rounds": s.rounds, "kp": s.kp_name,
         }
         for s in rows
