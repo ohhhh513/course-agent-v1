@@ -891,3 +891,12 @@
   min-height: 320px;
   overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable;
 }
+
+/* ---------- 我的学情：知识点学习完成矩阵独立滚动 ---------- */
+/* 表头 .mx-head 保持固定，矩阵行在 #matrixBox 内向下滚动，
+   鼠标停在此区域滚动时不影响表格头和页面其余部分。 */
+#view-mastery #matrixBox {
+  max-height: calc(100vh - var(--topbar-h) - 300px);
+  min-height: 340px;
+  overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable;
+}
