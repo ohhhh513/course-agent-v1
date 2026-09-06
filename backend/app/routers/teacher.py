@@ -5,7 +5,7 @@
 import json
 import re
 import uuid
-from datetime import datetime, date, timedelta
+from datetime import datetime, timedelta
 from collections import defaultdict
 from fastapi import APIRouter, Depends, Query, Body, Form, UploadFile, File, HTTPException
 from sqlalchemy.orm import Session
@@ -22,7 +22,13 @@ from ..models.graph import LearningPath, GraphNode
 from ..models.course import Resource, ResourceProgress
 from ..middleware.auth import get_current_user
 from ..schemas.common import ok, fail, list_response
-from ..utils import loads
+from ..utils import (
+    loads,
+    format_china_time,
+    china_now,
+    china_day_bounds_utc,
+    utc_now_naive,
+)
 from ..media_utils import (
     BASE_DIR, UPLOADS_DIR, COVERS_DIR, mp4_duration, pdf_pages, pptx_pages,
     guess_type, parse_chapter, parse_title, save_upload_file, generate_cover,
@@ -146,13 +152,14 @@ def teacher_dashboard(
 
     # 今日活跃学生数 + 提交次数
     # 活跃 = 今日有 PracticeSession 提交 或 今日有 AnswerRecord 答题
-    today = date.today()
-    today_start = datetime.combine(today, datetime.min.time())
+    today = china_now().date()
+    today_start, today_end = china_day_bounds_utc(today)
 
     # PracticeSession 提交
     today_sessions = db.query(PracticeSession).filter(
         PracticeSession.user_id.in_(student_ids),
         PracticeSession.finished_at >= today_start,
+        PracticeSession.finished_at <= today_end,
     ).all()
     active_from_session = set(p.user_id for p in today_sessions)
     submit_today = len(today_sessions)
@@ -161,6 +168,7 @@ def teacher_dashboard(
     today_answers = db.query(AnswerRecord).filter(
         AnswerRecord.user_id.in_(student_ids),
         AnswerRecord.created_at >= today_start,
+        AnswerRecord.created_at <= today_end,
     ).all()
     active_from_answer = set(a.user_id for a in today_answers)
     submit_today += len(today_answers)
@@ -212,7 +220,8 @@ def teacher_dashboard(
                 "type": "alert", "level": level,
                 "text": f"新增预警：{stu_name} · {kp_name}",
                 "meta": a.title or a.type or a.desc or "未处理",
-                "time": (a.created_at or datetime.now()).strftime("%H:%M"),
+                "time": format_china_time(a.created_at, "%H:%M") or china_now().strftime("%H:%M"),
+                "_time_sort": a.created_at or datetime.min,
             })
     # 再加最近的答题事件
     recent_ans = db.query(AnswerRecord).filter(
@@ -226,11 +235,14 @@ def teacher_dashboard(
             "level": "ok" if ar.is_correct else "warn",
             "text": f"{stu_name} 提交了「{kp_name}」相关题目",
             "meta": "回答正确" if ar.is_correct else "回答错误",
-            "time": (ar.created_at or datetime.now()).strftime("%H:%M"),
+            "time": format_china_time(ar.created_at, "%H:%M") or china_now().strftime("%H:%M"),
+            "_time_sort": ar.created_at or datetime.min,
         })
-    # 按 time 字符串降序取前 6
-    live.sort(key=lambda x: x["time"], reverse=True)
+    # 按数据库中的 UTC 时间排序，展示时再转换为中国时间。
+    live.sort(key=lambda x: x.get("_time_sort", datetime.min), reverse=True)
     live = live[:6]
+    for item in live:
+        item.pop("_time_sort", None)
 
     # ==== todos：前端期望 [{ level, type, title, desc, action, target }] ====
     todos = []
@@ -284,7 +296,7 @@ def teacher_dashboard(
             "alertRatio": alert_ratio,                    # 对齐前端
             "activeToday": len(active_user_ids),          # 今日活跃学生数
             "submitToday": submit_today,                  # 今日提交次数
-            "updatedAt": datetime.now().strftime("%Y-%m-%d %H:%M"),
+            "updatedAt": china_now().strftime("%Y-%m-%d %H:%M"),
         },
         "kpRanking": kp_ranking,
         "liveFeed": live,
@@ -338,12 +350,12 @@ def students(
 
     def _fmt_last(ts):
         if not ts: return "无活动"
-        delta = (datetime.utcnow() - ts).total_seconds()
+        delta = (utc_now_naive() - ts).total_seconds()
         if delta < 60: return "刚刚"
         if delta < 3600: return f"{int(delta // 60)} 分钟前"
         if delta < 86400: return f"{int(delta // 3600)} 小时前"
         if delta < 7 * 86400: return f"{int(delta // 86400)} 天前"
-        return ts.strftime("%m-%d")
+        return format_china_time(ts, "%m-%d")
 
     items = []
     for s in students:
@@ -579,20 +591,20 @@ def student_profile(
     _hour_counts = [0] * 24
     for a in ans_rows:
         if a.created_at:
-            _hour_counts[a.created_at.hour] += 1
+            local_hour = format_china_time(a.created_at, "%H")
+            _hour_counts[int(local_hour)] += 1
     study_time_dist = {
         "xAxis": [b[0] for b in _buckets],
         "data": [sum(_hour_counts[b[1]:b[2]]) for b in _buckets],
     }
 
     # activityTrend：近 14 天
-    today = date.today()
+    today = china_now().date()
     act_x, act_min, act_q = [], [], []
     total_minutes = 0
     for offset in range(13, -1, -1):
         d = today - timedelta(days=offset)
-        day_start = datetime.combine(d, datetime.min.time())
-        day_end = datetime.combine(d, datetime.max.time())
+        day_start, day_end = china_day_bounds_utc(d)
         day_ps = [p for p in db.query(PracticeSession).filter(PracticeSession.user_id == user_id).all()
                   if p.finished_at and day_start <= p.finished_at <= day_end]
         mins = sum(p.duration_seconds or 0 for p in day_ps) // 60
@@ -692,7 +704,7 @@ def teacher_alerts(
             "kpId": a.kp_id or "",
             "detail": loads(a.detail_json) or {},
             "trendData": trend_data,
-            "createdAt": a.created_at.strftime("%Y-%m-%d %H:%M") if a.created_at else "",
+            "createdAt": format_china_time(a.created_at, "%Y-%m-%d %H:%M"),
             "status": "open" if a.status in ("read", "pending") else a.status,
             "note": a.note or "",
         }
@@ -721,7 +733,7 @@ def review_alert(
     alert.status = "ignored" if req.action == "ignore" else "reviewed"
     if req.note:
         alert.note = req.note
-    alert.reviewed_at = datetime.utcnow()
+    alert.reviewed_at = utc_now_naive()
     db.commit()
     return ok({"alertId": alert_id, "status": alert.status, "note": alert.note or ""})
 
@@ -754,7 +766,7 @@ def send_message(
     )
     db.add(msg)
     db.commit()
-    return ok({"msgId": msg.msg_id, "to": req.userId, "sentAt": msg.created_at.strftime("%Y-%m-%dT%H:%M:%S")})
+    return ok({"msgId": msg.msg_id, "to": req.userId, "sentAt": format_china_time(msg.created_at, "%Y-%m-%dT%H:%M:%S")})
 
 
 # ========== /analysis/* 错题归因（动态计算） ==========
@@ -783,8 +795,8 @@ def analysis_errors(
         lp_kps = [r[0] for r in db.query(LearningPath.kp_id).filter(
             LearningPath.user_id.in_(student_ids), LearningPath.chapter == chapter).distinct().all()]
         if lp_kps: q = q.filter(AnswerRecord.kp_id.in_(lp_kps))
-    if timeRange == "7d": q = q.filter(AnswerRecord.created_at >= datetime.utcnow() - timedelta(days=7))
-    elif timeRange == "30d": q = q.filter(AnswerRecord.created_at >= datetime.utcnow() - timedelta(days=30))
+    if timeRange == "7d": q = q.filter(AnswerRecord.created_at >= utc_now_naive() - timedelta(days=7))
+    elif timeRange == "30d": q = q.filter(AnswerRecord.created_at >= utc_now_naive() - timedelta(days=30))
 
     rows = q.all()
     total = len(rows)
