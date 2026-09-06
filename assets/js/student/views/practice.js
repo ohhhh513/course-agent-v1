@@ -131,6 +131,29 @@
       });
     },
 
+    /**
+     * 图题渲染（源自课后题库/智能出题的 figure 规格）
+     * figureMode 优先级：options_graph → graph（含 adjacency_matrix）→ has_image 纯文本提示
+     * 绘制由 assets/js/st/ds-figure.js 的 DsFigure 完成（含边权标签防遮挡）
+     */
+    mountQFigure(rootEl, figure) {
+      if (!rootEl || !figure || !window.DsFigure) return;
+      const figEl = rootEl.querySelector('#qFig') || rootEl.querySelector('#wrongFig');
+      if (figEl) {
+        if (figure.graph) {
+          DsFigure.mount(figEl, figure.graph);
+        } else if (figure.has_image) {
+          figEl.innerHTML = '<div class="callout callout--warn" style="padding:8px 12px">本题配图暂不绘制，请按纯文本作答。</div>';
+        }
+      }
+      if (figure.options_graph) {
+        Object.keys(figure.options_graph).forEach(k => {
+          const slot = rootEl.querySelector(`[data-optfig="${k}"]`);
+          if (slot) DsFigure.mount(slot, figure.options_graph[k]);
+        });
+      }
+    },
+
     renderQuiz() {
       const q = this.qs[this.idx];
       this.picked = null; this.startAt = Date.now(); this._submitting = false;
@@ -156,11 +179,13 @@
 
         <div class="q-body">
           <div class="q-stem"><span class="q-no">${this.idx + 1}</span>${q.stem}</div>
+          <div class="q-figure" id="qFig"></div>
           <div class="opts" id="opts">
             ${q.options.map(o => `
               <button class="opt" data-k="${o.key}">
                 <span class="opt__key">${o.key}</span>
                 <span style="flex:1">${o.text}</span>
+                ${q.figure && q.figure.options_graph && q.figure.options_graph[o.key] ? `<div class="q-opt-fig" data-optfig="${o.key}"></div>` : ''}
               </button>`).join('')}
           </div>
           <div id="fbBox"></div>
@@ -183,6 +208,7 @@
       }, 1000);
 
       U.$('#qBack').addEventListener('click', () => { clearInterval(this._timer); this.collapsePanel(); });
+      this.mountQFigure(target, q.figure);
       U.$$('#opts .opt').forEach(o => o.addEventListener('click', () => {
         U.$$('#opts .opt').forEach(x => x.classList.remove('is-picked'));
         o.classList.add('is-picked');
@@ -427,7 +453,8 @@
       API.practice.wrongDetail({ qId }).then(d => {
         const optHtml = d.options.map(o => {
           const isRight = o.key === d.answer;
-          return `<div class="opt${isRight ? ' is-right' : ''}"><span class="opt__key">${o.key}</span><span style="flex:1">${o.text}</span>${isRight ? '<span class="opt__flag badge badge--ok">正确答案</span>' : ''}</div>`;
+          const hasMini = d.figure && d.figure.options_graph && d.figure.options_graph[o.key];
+          return `<div class="opt${isRight ? ' is-right' : ''}"><span class="opt__key">${o.key}</span><span style="flex:1">${o.text}</span>${hasMini ? `<div class="q-opt-fig" data-optfig="${o.key}"></div>` : ''}${isRight ? '<span class="opt__flag badge badge--ok">正确答案</span>' : ''}</div>`;
         }).join('');
 
         Modal.open({
@@ -443,6 +470,7 @@
               </div>
 
               <div class="callout" style="margin-bottom:14px"><b style="font-size:14.5px;line-height:1.7">${d.stem}</b></div>
+              <div class="q-figure" id="wrongFig" style="margin:-6px 0 14px"></div>
 
               <h5 class="fz-12 t-dim" style="margin:0 0 6px">选项</h5>
               <div class="opts opts--readonly" style="margin-bottom:14px">${optHtml}</div>
@@ -494,6 +522,7 @@
               <button class="btn btn--primary" id="wdMastered">${icon('check')} 标记已掌握</button>
             `,
             onMount(ov, close) {
+              Practice.mountQFigure(ov, d.figure);
               U.$('#wdRedo', ov).addEventListener('click', () => {
                 close();
                 API.practice.modes().then(ms => Practice.start('wrong', ms));

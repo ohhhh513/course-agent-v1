@@ -37,4 +37,25 @@ def get_db():
 def init_db():
     """初始化数据库表"""
     from .models import user, course, graph, question, practice, ai, alert, intervention, checkin
+    from .models import agent_st  # noqa: F401  智能出题草稿表
     Base.metadata.create_all(bind=engine)
+    _migrate()
+
+
+def _add_col(conn, table: str, col: str, ddl: str) -> None:
+    """给已存在的表补列（SQLite 无 ADD COLUMN IF NOT EXISTS，用 PRAGMA 守卫，幂等）"""
+    from sqlalchemy import text
+    cols = [r[1] for r in conn.execute(text(f"PRAGMA table_info({table})")).fetchall()]
+    if col not in cols:
+        conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} {ddl}"))
+
+
+def _migrate():
+    """agent_st 集成的列迁移：兼容已有旧库（create_all 不会给旧表加列）"""
+    with engine.connect() as conn:
+        _add_col(conn, "chat_sessions", "flow_id", "VARCHAR(16) DEFAULT 'explain'")
+        _add_col(conn, "chat_messages", "tool_log", "TEXT DEFAULT '[]'")
+        _add_col(conn, "chat_messages", "draft_id", "VARCHAR(32) DEFAULT ''")
+        _add_col(conn, "questions", "figure_json", "TEXT")
+        _add_col(conn, "questions", "has_image", "BOOLEAN DEFAULT 0")
+        conn.commit()

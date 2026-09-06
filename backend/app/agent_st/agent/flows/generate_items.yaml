@@ -1,0 +1,21 @@
+id: generate_items
+name: 智能出题
+persona: course_tutor
+skills:
+  - generate_items.md
+tools:
+  - resolve_topic
+  - retrieve_chunks
+  - get_question
+  - search_similar_questions
+  - validate_question
+  - save_question_draft
+max_steps: 8
+steps:
+  - resolve_topic 锁定章节；若用户给了源题 id 则 get_question 复制骨架
+  - search_similar_questions 取 2–3 道同章同 figure_mode 的题（不要看答案）
+  - retrieve_chunks 取该小节解析/教材，题意不得超出资料
+  - 只输出闭集 JSON，然后 validate_question
+  - 校验失败则按 errors 修改，最多再试 2 次
+  - 通过后每题调用一次 save_question_draft
+  - 提醒这是草稿，尚未进入正式题库

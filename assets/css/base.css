@@ -665,3 +665,52 @@ a.badge--outline:hover { border-color: var(--brand-400); color: var(--brand-300)
 }
 .eq-opt input.eq-opt-text { flex: 1; padding: 7px 10px; }
 
+
+/* ======================================================================
+   图题渲染（课后题库 / 智能出题 figure 规格，DsFigure SVG 挂载容器）
+   ====================================================================== */
+.q-figure { margin: 10px 0 4px; }
+.q-figure:empty { display: none; }
+.q-figure svg, .q-figure table { max-width: 100%; height: auto; background: var(--surface); }
+.q-figure table { border-collapse: collapse; }
+.q-figure table td {
+  border: 1px solid var(--border); padding: 4px 10px; text-align: center;
+  font-size: 12.5px; font-family: var(--font);
+}
+.q-opt-fig { width: 100%; margin-top: 8px; }
+.q-opt-fig svg, .q-opt-fig table { max-width: 100%; height: auto; }
+.q-opt-fig table { border-collapse: collapse; }
+.q-opt-fig table td {
+  border: 1px solid var(--border); padding: 3px 8px; text-align: center; font-size: 12px;
+}
+button.opt .q-opt-fig { text-align: left; }
+
+/* ======================================================================
+   答疑气泡 Markdown 渲染（chat.js mdToHtml）
+   ====================================================================== */
+.bubble .md-h { font-weight: 700; margin: 10px 0 4px; color: var(--text); }
+.bubble .md-h1 { font-size: 16.5px; }
+.bubble .md-h2 { font-size: 15.5px; }
+.bubble .md-h3, .bubble .md-h4, .bubble .md-h5, .bubble .md-h6 { font-size: 14.5px; }
+.bubble ul.md-list, .bubble ol.md-list {
+  margin: 6px 0; padding-left: 22px; display: block; list-style: revert;
+}
+.bubble ul.md-list li, .bubble ol.md-list li { margin: 3px 0; line-height: 1.75; list-style: revert; }
+.bubble ul.md-list { list-style: disc; }
+.bubble ol.md-list { list-style: decimal; }
+.bubble .md-pre {
+  background: var(--surface-2, #f1f5f9); border: 1px solid var(--border);
+  border-radius: 8px; padding: 10px 12px; margin: 8px 0; overflow-x: auto;
+}
+.bubble .md-pre code {
+  background: transparent; padding: 0; font-size: 12.5px; color: var(--text);
+  font-family: Consolas, Menlo, monospace; white-space: pre;
+}
+.bubble .md-quote {
+  margin: 8px 0; padding: 6px 12px; border-left: 3px solid var(--brand-300, #93c5fd);
+  background: var(--surface-2, #f8fafc); color: var(--text-2); border-radius: 0 6px 6px 0;
+}
+.bubble code {
+  background: var(--surface-2, #f1f5f9); border-radius: 4px; padding: 1px 5px;
+  font-family: Consolas, Menlo, monospace; font-size: 12.5px;
+}

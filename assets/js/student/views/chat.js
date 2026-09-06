@@ -3,6 +3,54 @@
   /* ================================================================
      视图 4 · AI 智能答疑
      ================================================================ */
+
+  /**
+   * 轻量 Markdown → HTML 渲染（讲解 Agent 输出为 Markdown）。
+   * 支持：**加粗** / *斜体* / `行内代码` / ```代码块``` / #~###### 标题 /
+   *       - 无序列表 / 1. 有序列表 / > 引用 / 空行分段。
+   * 旧版 mock 存量消息是 HTML，本渲染器对其原样放行，二者兼容。
+   */
+  function mdToHtml(src) {
+    if (src == null) return '';
+    let text = String(src);
+    // 1) 先摘出 fenced 代码块，避免块内语法被二次转换
+    const fences = [];
+    text = text.replace(/```[a-zA-Z0-9_-]*\r?\n?([\s\S]*?)```/g, (_, code) => {
+      fences.push('<pre class="md-pre"><code>' + code.replace(/\n$/, '') + '</code></pre>');
+      return '\n\u0000F' + (fences.length - 1) + '\u0000\n';
+    });
+    // 2) 行内语法
+    const inline = (s) => s
+      .replace(/`([^`]+)`/g, '<code>$1</code>')
+      .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+      .replace(/(^|[^*])\*([^*\n]+)\*/g, '$1<em>$2</em>');
+    // 3) 块级：按空行分段，段内识别标题/列表/引用
+    const html = text.split(/\n{2,}/).map(par => {
+      const blocks = [];
+      let list = null;
+      const flushList = () => { if (list) { blocks.push('</' + list + '>'); list = null; } };
+      par.split('\n').forEach(raw => {
+        const line = raw.replace(/\r$/, '');
+        const fence = line.match(/^\s*\u0000F(\d+)\u0000\s*$/);
+        if (fence) { flushList(); blocks.push(fences[+fence[1]]); return; }
+        const h = line.match(/^(#{1,6})\s+(.*)/);
+        if (h) { flushList(); blocks.push('<div class="md-h md-h' + h[1].length + '">' + inline(h[2]) + '</div>'); return; }
+        const ul = line.match(/^\s*[-*•]\s+(.*)/);
+        if (ul) { if (list !== 'ul') { flushList(); blocks.push('<ul class="md-list">'); list = 'ul'; } blocks.push('<li>' + inline(ul[1]) + '</li>'); return; }
+        const ol = line.match(/^\s*\d+[.、)]\s+(.*)/);
+        if (ol) { if (list !== 'ol') { flushList(); blocks.push('<ol class="md-list">'); list = 'ol'; } blocks.push('<li>' + inline(ol[1]) + '</li>'); return; }
+        const bq = line.match(/^\s*>\s?(.*)/);
+        if (bq) { flushList(); blocks.push('<blockquote class="md-quote">' + inline(bq[1]) + '</blockquote>'); return; }
+        if (!line.trim()) { flushList(); return; }
+        flushList();
+        blocks.push(inline(line) + '<br>');
+      });
+      flushList();
+      return blocks.join('');
+    }).join('');
+    return html.replace(/(<br>\s*)+$/, '');   // 去掉末尾多余换行
+  }
+
   const Chat = {
     method: 'guided', busy: false, sessionId: 'new',
 
@@ -118,7 +166,7 @@
       const cites = (m.citations || []);
       return `<div class="msg msg--ai"><div class="msg__av">AI</div>
         <div class="msg__wrap">
-          <div class="bubble">${m.content}
+          <div class="bubble">${mdToHtml(m.content)}
             ${cites.length ? `
             <div class="cite">
               <button class="cite__head">${icon('shield')} 原文溯源（${cites.length} 处）<span class="caret" style="width:14px;height:14px">${icon('chevronDown')}</span></button>
@@ -222,41 +270,102 @@
       this.busy = true;
 
       log.insertAdjacentHTML('beforeend', this.tpl({ role: 'me', content: question }));
+      // 流式 AI 气泡：delta 逐段累积渲染；结束后替换为完整 tpl（含溯源折叠块）
       log.insertAdjacentHTML('beforeend',
-        `<div class="msg msg--ai" id="typing"><div class="msg__av">AI</div><div class="msg__wrap">
-          <div class="bubble"><span class="typing"><i></i><i></i><i></i></span>
-          <span class="fz-12 t-dim" style="margin-left:6px">正在检索课程材料…</span></div></div></div>`);
+        `<div class="msg msg--ai" id="streamMsg"><div class="msg__av">AI</div><div class="msg__wrap">
+          <div class="bubble"><span id="streamText"></span><span class="typing" id="streamCursor"><i></i><i></i><i></i></span>
+          <div class="fz-12 t-dim" id="streamTool" style="margin-top:6px"></div></div></div></div>`);
       this.scroll();
 
-      API.ai.chat({ question, method: this.method, sessionId: this.sessionId }).then(res => {
-        const t = U.$('#typing'); if (t) t.remove();
-        // 后端如果生成了新 sessionId（之前传了 'new'），更新本地引用
-        if (res.sessionId && res.sessionId !== this.sessionId) {
-          this.sessionId = res.sessionId;
-        }
-        log.insertAdjacentHTML('beforeend', this.tpl({ role: 'ai', method: res.method, content: res.content, citations: res.citations, outOfScope: res.outOfScope }));
+      const $id = (id) => U.$('#' + id);
+      const setText = (html) => { const t = $id('streamText'); if (t) t.innerHTML = html; };
+      const appendDelta = (delta) => {
+        // Markdown 增量：按累积全文重渲染（约数百字，开销可忽略），保证半截语法也能正常显示
+        this._acc = (this._acc || '') + delta;
+        setText(mdToHtml(this._acc));
+        this.scroll();
+      };
+      const toolLine = (name, end) => {
+        const el = $id('streamTool');
+        if (!el) return;
+        el.textContent = end ? `✓ ${name} 完成` : `正在调用 ${name} …`;
+      };
+      const finish = (payload) => {
+        const sm = $id('streamMsg');
+        if (sm) sm.remove();
+        this._acc = '';
+        const cites = (payload.citations || []).map(c => ({
+          source: c.source || c.source_id || c.section || '课程资料',
+          locator: c.locator || c.section || '',
+          quote: c.quote || c.snippet || '',
+          kp: c.kp || c.section || ''
+        }));
+        log.insertAdjacentHTML('beforeend', this.tpl({
+          role: 'ai', method: this.method, content: mdToHtml(this._final || ''),
+          citations: cites, outOfScope: payload.outOfScope,
+        }));
+        this._final = '';
+        this.bindCites();
+        this.scrubLog(log);
+        this.scroll();
+        this.busy = false;
+        this.refreshSessions();
+      };
+      const fail = (msg) => {
+        const sm = $id('streamMsg');
+        if (sm) sm.remove();
+        this._acc = ''; this._final = '';
+        log.insertAdjacentHTML('beforeend', this.tpl({
+          role: 'ai', method: this.method,
+          content: `<p>${U.esc(msg || '回答生成失败，请稍后重试')}</p>`, citations: [], outOfScope: false,
+        }));
         this.bindCites();
         this.scroll();
         this.busy = false;
-        // 刷新历史会话列表（新会话可能已创建）
-        API.ai.sessions().then(r => {
-          const box = U.$('#sessBox');
-          if (box) {
-            box.innerHTML = r.list.map(s => `
-              <div class="list__item list__item--clickable ${s.sessionId === this.sessionId ? 'is-active' : ''}" data-sid="${U.esc(s.sessionId)}">
-                <div class="list__main"><b class="clamp-2">${U.esc(s.title)}</b>
-                  <p>${s.time} · ${s.rounds} 轮 · ${U.esc(s.kp)}</p></div>
-              </div>`).join('');
-            U.$$('#sessBox [data-sid]').forEach(item => {
-              item.addEventListener('click', () => {
-                const sid = item.dataset.sid;
-                U.$$('#sessBox [data-sid]').forEach(x => x.classList.remove('is-active'));
-                item.classList.add('is-active');
-                this.loadSession(sid);
-              });
+      };
+
+      API.ai.chatStream(
+        { question, method: this.method, sessionId: this.sessionId },
+        {
+          onMeta: (d) => { if (d.sessionId && d.sessionId !== this.sessionId) this.sessionId = d.sessionId; },
+          onToolStart: (d) => toolLine(d.name, false),
+          onToolEnd: (d) => toolLine(d.name, true),
+          onContent: (d) => {
+            const c = $id('streamCursor'); if (c) c.remove();
+            // content 事件 data 为 JSON（{delta}）；兼容潜在的裸文本/解析降级形态
+            const delta = typeof d === 'string' ? d : (d && (d.delta != null ? d.delta : d.raw)) || '';
+            appendDelta(delta);
+          },
+          onCitations: (d) => { this._cites = (d && d.items) || []; },
+          onLog: () => {},
+          onDraft: () => {},
+          onError: (d) => fail(d && d.message),
+          onDone: (d) => {
+            this._final = this._acc || '';
+            finish({ citations: this._cites || [], outOfScope: !!(d && d.outOfScope) });
+          },
+        }
+      ).catch((e) => fail(e && e.message));
+    },
+
+    refreshSessions() {
+      API.ai.sessions().then(r => {
+        const box = U.$('#sessBox');
+        if (box) {
+          box.innerHTML = r.list.map(s => `
+            <div class="list__item list__item--clickable ${s.sessionId === this.sessionId ? 'is-active' : ''}" data-sid="${U.esc(s.sessionId)}">
+              <div class="list__main"><b class="clamp-2">${U.esc(s.title)}</b>
+                <p>${s.time} · ${s.rounds} 轮 · ${U.esc(s.kp)}</p></div>
+            </div>`).join('');
+          U.$$('#sessBox [data-sid]').forEach(item => {
+            item.addEventListener('click', () => {
+              const sid = item.dataset.sid;
+              U.$$('#sessBox [data-sid]').forEach(x => x.classList.remove('is-active'));
+              item.classList.add('is-active');
+              this.loadSession(sid);
             });
-          }
-        });
+          });
+        }
       });
     }
   };

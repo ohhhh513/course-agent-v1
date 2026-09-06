@@ -7,3 +7,10 @@ python-multipart==0.0.9
 pydantic==2.9.2
 pydantic-settings==2.5.2
 sse-starlette==2.2.1
+starlette==0.38.6   # 钉住：sse-starlette 会拉高 starlette 破坏 fastapi 0.115 兼容
+# ===== 智能体 agent_st（题库/智能解析/智能出题）=====
+# 注：openai<1.55.3 与 httpx>=0.28 不兼容（proxies= TypeError），必须钉住下限
+openai>=1.55.3,<2
+httpx>=0.27,<0.29
+PyYAML==6.0.2
+pypdf==5.1.0

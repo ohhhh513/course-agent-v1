@@ -103,15 +103,88 @@
         }));
         U.$('#genBtn', box).addEventListener('click', () => {
           if (!this.gen.kpIds.length) return Toast.warn('请至少选择一个知识点');
-          U.$('#genResult').innerHTML = '<div class="card"><div class="card__body">正在基于 ' + this.gen.kpIds.length + ' 个知识点生成 ' + this.gen.count + ' 道习题…</div></div>';
-          API.question.generate({
-            materialIds: cfg.materials.map(m => m.fileId),
+          if (this._genBusy) return;
+          this._genBusy = true;
+          this._drafts = [];
+          U.$('#genResult').innerHTML = `
+            <div class="card"><div class="card__head" style="padding:14px 16px"><h3>${icon('sparkle')} AI 出题中…</h3>
+              <span class="spacer"></span><span class="badge badge--brand" id="genProg">0 题</span></div>
+              <div class="card__body"><div class="fz-12 t-dim" id="genProc">正在调用检索与出题工具…</div></div></div>`;
+          const card = (d, i) => {
+            const q = d.payload || {};
+            const opts = ['A', 'B', 'C', 'D'].map(k => ({
+              key: k, text: (q.options || {})[k] || '', right: q.answer === k,
+            }));
+            const figId = 'genFig' + i;
+            const optFigId = 'genOptFig' + i;
+            return `
+            <div class="gen-q">
+              <div class="gen-q__head">
+                <span class="badge badge--brand">${i + 1}</span>
+                <b>单选题</b>
+                <span class="badge badge--outline">${U.esc(q.chapter || '')}</span>
+                <span class="badge ${d.status === 'draft' ? 'badge--ok' : 'badge--danger'}">${d.status === 'draft' ? '校验通过 · 草稿' : '校验未通过'}</span>
+                <span class="badge badge--outline">#${q.id || ''}</span>
+              </div>
+              <div class="gen-q__body">
+                <div>${U.esc(q.question || '')}</div>
+                <div id="${figId}" style="margin:8px 0"></div>
+                <div class="gen-q__opts">${opts.map(o => {
+                  const mini = d.payload && d.payload.options_graph && d.payload.options_graph[o.key] ? `<div id="${optFigId}${o.key}" style="margin:4px 0"></div>` : '';
+                  return `<div class="gen-q__opt ${o.right ? 'is-answer' : ''}"><i>${o.key}</i> ${o.text ? U.esc(o.text) : ''}${o.right ? ' ✓ 正确答案' : ''}${mini}</div>`;
+                }).join('')}</div>
+                <div class="callout callout--brand" style="margin-top:10px;padding:9px 11px">${icon('bulb')}
+                  <div><b>解析：</b>${U.esc(q.analysis || '暂无')}</div>
+                  ${d.errors && d.errors.length ? `<div class="callout callout--danger" style="margin-top:6px;padding:7px 10px">${U.esc(d.errors.join('；'))}</div>` : ''}
+                </div>
+              </div>
+            </div>`;
+          };
+          const mountFigs = (d, i) => {
+            const q = d.payload || {};
+            if (q.graph) { const el = U.$('#genFig' + i); if (el && window.DsFigure) DsFigure.mount(el, q.graph); }
+            if (q.options_graph) {
+              Object.keys(q.options_graph).forEach(k => {
+                const el = U.$('#genOptFig' + i + k);
+                if (el && window.DsFigure) DsFigure.mount(el, q.options_graph[k]);
+              });
+            }
+          };
+          const box = U.$('#genResult');
+          API.question.genStream({
             kpIds: this.gen.kpIds, types: this.gen.types,
-            difficulty: this.gen.difficulty, count: this.gen.count, skillId: 'SK004'
-          }).then(r => {
-            Toast.ok('AI 生成完成', '共 ' + r.questions.length + ' 题 · 用时 ' + (r.elapsedMs / 1000).toFixed(1) + 's');
-            this.renderGenerated(r.questions);
-          });
+            difficulty: this.gen.difficulty, count: this.gen.count,
+            requirement: this.gen.requirement || ''
+          }, {
+            onMeta: (d) => { const p = U.$('#genProc', box); if (p) p.textContent = `批次 ${d.batchId} · 共 ${d.count} 题`; },
+            onLog: (d) => {
+              const p = U.$('#genProc', box);
+              if (p && d.type === 'tool_start') p.textContent = `正在调用 ${d.name} …`;
+            },
+            onDraft: (d) => {
+              this._drafts.push(d);
+              const i = this._drafts.length - 1;
+              if (!U.$('#genList', box)) {
+                box.innerHTML = `
+                  <div class="card__head" style="padding:14px 16px"><h3>${icon('sparkle')} 生成预览</h3>
+                    <span class="spacer"></span><span class="badge badge--brand" id="genProg">0 题</span></div>
+                  <div id="genList"></div>
+                  <div class="callout callout--warn" style="margin:0 16px 12px">${icon('alert')}
+                    <div>草稿仅保存在你的个人出题历史中，<b>未进入正式题库</b>；确认无误后可通过「题库管理 → 批量导入」合并。</div></div>`;
+              }
+              U.$('#genList', box).insertAdjacentHTML('beforeend', card(d, i));
+              mountFigs(d, i);
+              const prog = U.$('#genProg', box);
+              if (prog) prog.textContent = this._drafts.length + ' 题';
+            },
+            onError: (d) => Toast.err('生成出错', (d && d.message) || ''),
+            onDone: (d) => {
+              this._genBusy = false;
+              const prog = U.$('#genProg', box);
+              if (prog) prog.textContent = (d.count || this._drafts.length) + ' 题 · 完成';
+              Toast.ok('AI 出题完成', `${d.count || 0} 道草稿已存入你的出题历史`);
+            },
+          }).catch((e) => { this._genBusy = false; Toast.err('生成失败', e && e.message); });
         });
       });
     },

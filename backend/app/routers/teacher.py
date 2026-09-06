@@ -3,6 +3,8 @@
 全部从真实 DB 动态聚合，不再依赖 teacher_class_data 静态快照
 """
 import json
+import re
+import uuid
 from datetime import datetime, date, timedelta
 from collections import defaultdict
 from fastapi import APIRouter, Depends, Query, Body, Form, UploadFile, File, HTTPException
@@ -1051,37 +1053,72 @@ def ai_generate_questions(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    """AI 生成习题 —— 从题库按 kp/type/difficulty 筛选，随机组合返回"""
-    import uuid, random
-    q = db.query(Question)
-    if req.kpIds: q = q.filter(Question.kp_id.in_(req.kpIds))
-    if req.types: q = q.filter(Question.type.in_(req.types))
-    if req.difficulty: q = q.filter(Question.difficulty == req.difficulty)
-    pool = q.filter(Question.status == "published").all()
-    random.shuffle(pool)
-    picked = pool[: req.count] if pool else []
+    """AI 智能出题（SSE 流式）—— generate_items 流真实 LLM 生成。
 
-    kp_id_name = {n.id: n.name for n in db.query(GraphNode).filter(GraphNode.graph_type == "knowledge").all()}
+    事件序列：meta(batchId) → tool_start/tool_end → draft(每题落库即推) → done(draftIds)。
+    草稿仅写入 st_question_drafts（按 user_id 归属个人），绝不写入 questions 正式题库。
+    """
+    from sse_starlette.sse import EventSourceResponse
+    from ..agent_st.agent.runtime import run_turn
 
-    questions = []
-    for x in picked:
-        questions.append({
-            "qId": x.q_id, "type": x.type, "difficulty": x.difficulty,
-            "stem": x.stem, "kpId": x.kp_id,
-            "kpPath": loads(x.kp_path) or [kp_id_name.get(x.kp_id, x.kp_id or "未知")],
-            "isKey": bool(x.is_key),
-            "status": "pending",
-            "options": loads(x.options) or [],
-            "analysis": x.analysis or "",
-            "classCorrectRate": round(_calc_question_stats(db, x.q_id)[0], 1),
-        })
-    return ok({
-        "taskId": "GT" + uuid.uuid4().hex[:10],
-        "count": len(questions),
-        "questions": questions,
-        "usedSkill": req.skillId or "SK004",
-        "elapsedMs": 4200,
-    })
+    count = max(1, min(req.count or 3, 10))
+
+    def gen():
+        batch_id = "BT" + uuid.uuid4().hex[:10].upper()
+        draft_ids: list[str] = []
+        demo = False
+        # kp → 课程章号：正式图谱 chapter 形如 "第5章 图"，与原型 1-9 章号一致
+        chapter_nums: list[int] = []
+        if req.kpIds:
+            for row in db.query(GraphNode).filter(GraphNode.id.in_(req.kpIds)).all():
+                m = re.search(r"第\s*([1-9])\s*章", row.chapter or "")
+                if m and int(m.group(1)) not in chapter_nums:
+                    chapter_nums.append(int(m.group(1)))
+        yield {"event": "meta", "data": json.dumps({"batchId": batch_id, "count": count}, ensure_ascii=False)}
+        for i in range(count):
+            context = {"batch_id": batch_id, "difficulty": req.difficulty, "seq": i + 1}
+            if chapter_nums:
+                context["chapter"] = f"第{chapter_nums[i % len(chapter_nums)]}章"
+            hint = req.requirement or "请出一道与课程资料相关的单选题，题目必须能被 validate_question 校验通过。"
+            message = f"请出第 {i + 1}/{count} 道题。{hint}难度要求 {req.difficulty}/5。"
+            try:
+                for ev in run_turn(
+                    message=message,
+                    flow_id="generate_items",
+                    context=context,
+                    user_id=user.user_id,
+                ):
+                    etype = ev.get("type")
+                    if etype == "draft":
+                        did = ev.get("draft_id") or ""
+                        if did:
+                            draft_ids.append(did)
+                        yield {"event": "draft", "data": json.dumps(ev, ensure_ascii=False)}
+                    elif etype == "done":
+                        demo = demo or bool(ev.get("demo"))
+                    elif etype in ("text", "tool_start", "tool_end", "citations"):
+                        # 出题过程事件照常转发（content 用 question/gen 前端折叠展示过程日志）
+                        yield {"event": etype if etype != "text" else "log",
+                               "data": json.dumps(ev, ensure_ascii=False)}
+                    elif etype == "error":
+                        yield {"event": "error", "data": json.dumps(ev, ensure_ascii=False)}
+            except Exception as exc:  # noqa: BLE001  单题失败不中断整批
+                yield {"event": "error", "data": json.dumps({"message": f"第 {i + 1} 题生成失败：{exc}"}, ensure_ascii=False)}
+        yield {"event": "done", "data": json.dumps(
+            {"batchId": batch_id, "draftIds": draft_ids, "demo": demo, "count": len(draft_ids)},
+            ensure_ascii=False)}
+
+    return EventSourceResponse(gen())
+
+
+@question_router.post("/gen/stream")
+def ai_generate_questions_stream(
+    req: GenQuestionReq,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """/gen 的语义化别名，行为完全一致"""
+    return ai_generate_questions(req=req, db=db, user=user)
 
 
 @question_router.get("/bank")

@@ -22,6 +22,18 @@ from sqlalchemy import func
 router = APIRouter(prefix="/api/v1/practice", tags=["智能练习"])
 
 
+def _figure_of(q: Question):
+    """解析图题规格（graph/options_graph/has_image），纯文本题返回 None"""
+    raw = getattr(q, "figure_json", None)
+    if not raw:
+        return None
+    try:
+        data = json.loads(raw)
+        return data if isinstance(data, dict) else None
+    except (TypeError, ValueError):
+        return None
+
+
 # ===== 工具函数：从真实答题记录计算题目统计 =====
 def _calc_question_stats(db: Session, q_id: str):
     """基于 answer_records 返回班级正确率、平均用时、错误数、总答题数"""
@@ -131,6 +143,7 @@ def create_session(
             "stem": q.stem, "options": loads(q.options) or [],
             "kpPath": loads(q.kp_path) or [], "kpId": q.kp_id, "isKey": bool(q.is_key),
             "preKp": loads(q.pre_kp) or [],
+            "figure": _figure_of(q),
         }
         for q in picked
     ]
@@ -408,6 +421,7 @@ def wrong_detail(
         "answer": q.answer, "analysis": q.analysis,
         "kpPath": loads(q.kp_path) or [], "kpId": q.kp_id,
         "preKp": loads(q.pre_kp) or [], "isKey": bool(q.is_key),
+        "figure": _figure_of(q),
         "classCorrectRate": class_rate, "avgSeconds": avg_sec,
         "wrongCount": wrong_count, "totalCount": total_count,
         "errorType": q.error_type,

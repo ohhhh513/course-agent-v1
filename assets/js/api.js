@@ -82,6 +82,72 @@ window.API = (function () {
 
   const M = () => window.MOCK;
 
+  /**
+   * SSE 流式请求（fetch + getReader 手动解析，可携带 JWT 头）
+   * @param {string} method   一般为 'POST'
+   * @param {string} path     形如 '/ai/chat/stream'
+   * @param {object} payload  请求体
+   * @param {object} handlers 事件回调：{ onMeta, onToolStart, onToolEnd, onContent,
+   *                                   onCitations, onDraft, onLog, onDone, onError }
+   *                           各回调接收解析后的 data 对象
+   * @returns {Promise<void>} 流结束后 resolve；HTTP 非 200 时 reject
+   */
+  function streamRequest(method, path, payload, handlers) {
+    const h = handlers || {};
+    let url = config.baseURL + path;
+    return fetch(url, {
+      method: method || 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: config.token },
+      body: JSON.stringify(payload || {})
+    }).then(res => {
+      if (!res.ok || !res.body) return res.json().then(r => { throw new Error(r.message || ('HTTP ' + res.status)); });
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder('utf-8');
+      let buf = '';
+      function dispatch(eventName, dataStr) {
+        let data;
+        try { data = dataStr ? JSON.parse(dataStr) : {}; } catch (e) { data = { raw: dataStr }; }
+        switch (eventName) {
+          case 'meta':        h.onMeta && h.onMeta(data); break;
+          case 'tool_start':  h.onToolStart && h.onToolStart(data); break;
+          case 'tool_end':    h.onToolEnd && h.onToolEnd(data); break;
+          case 'content':     h.onContent && h.onContent(data); break;
+          case 'citations':   h.onCitations && h.onCitations(data); break;
+          case 'draft':       h.onDraft && h.onDraft(data); break;
+          case 'log':         h.onLog && h.onLog(data); break;
+          case 'error':       h.onError && h.onError(data); break;
+          case 'done':        h.onDone && h.onDone(data); break;
+          default:            h.onEvent && h.onEvent(eventName, data);
+        }
+      }
+      function parseSseBlock(block) {
+        let eventName = 'message';
+        const dataLines = [];
+        block.split(/\r?\n/).forEach(line => {
+          if (line.startsWith('event:')) eventName = line.slice(6).trim();
+          else if (line.startsWith('data:')) dataLines.push(line.slice(5).replace(/^ /, ''));  // 仅去掉字段名后的一个空格，保留 delta 内的前导空格
+        });
+        if (dataLines.length) dispatch(eventName, dataLines.join('\n'));
+      }
+      function pump() {
+        return reader.read().then(({ done, value }) => {
+          if (done) return;
+          buf += decoder.decode(value, { stream: true });
+          // sse_starlette 使用 \r\n 行尾，事件分隔符是 \r\n\r\n（兼容 \n\n）
+          let m;
+          while ((m = buf.match(/\r?\n\r?\n/))) {
+            const block = buf.slice(0, m.index);
+            buf = buf.slice(m.index + m[0].length);
+            if (block.trim()) parseSseBlock(block);
+          }
+          return pump();
+        });
+      }
+      return pump();
+    });
+  }
+
+
   /* ---------- 账号表（mock 模式：localStorage 持久化） ---------- */
   const ACCOUNTS_KEY = 'ca_accounts';
   function getAccounts() {
@@ -246,6 +312,16 @@ window.API = (function () {
      * 返回: { messageId, content, citations[], method, followUpQuiz? }
      */
     chat: (p) => request('POST', '/ai/chat', p, (q) => mockAnswer(q)),
+
+    /**
+     * POST /ai/chat/stream  SSE 流式答疑（真实 token 流）
+     * handlers: onMeta({sessionId,messageId}) / onToolStart / onToolEnd /
+     *           onContent({delta}) / onCitations({items}) / onDone({outOfScope,demo})
+     */
+    chatStream: (p, handlers) => streamRequest('POST', '/ai/chat/stream', p, handlers),
+
+    /** GET /agent/status  智能体运行状态（live/demo 与模型信息） */
+    agentStatus: (p) => request('GET', '/agent/status', p, () => ({ mode: 'demo' })),
 
     /** POST /ai/feedback  对回答点赞/点踩，用于知识库迭代 */
     feedback: (p) => request('POST', '/ai/feedback', p, () => ({ accepted: true }))
@@ -481,6 +557,16 @@ window.API = (function () {
       taskId: 'GT' + Date.now(), count: q.count || 3,
       questions: M().generatedQuestions, usedSkill: q.skillId || 'SK004', elapsedMs: 4200
     })),
+
+    /**
+     * POST /question/gen  SSE 流式智能出题（真实 LLM 生成，草稿只存个人会话历史）
+     * handlers: onMeta({batchId,count}) / onDraft({draftId,status,errors,payload}) /
+     *           onLog(过程事件) / onDone({batchId,draftIds,count,demo}) / onError
+     */
+    genStream: (p, handlers) => streamRequest('POST', '/question/gen', p, handlers),
+
+    /** GET /agent/ingest/stats  RAG 知识库切片统计（教师） */
+    ingestStats: (p) => request('GET', '/agent/ingest/stats', p, () => ({ chunks: 0 })),
 
     /** GET /question/bank  题库列表  params: { kpId, type, status, difficulty, keyword, page } */
     bank: (p) => request('GET', '/question/bank', p, (q) => {

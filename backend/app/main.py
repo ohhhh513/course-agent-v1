@@ -75,6 +75,7 @@ from .routers.teacher import router as teacher_router, analysis_router, question
 from .routers.ai import router as ai_router
 from .routers.practice import router as practice_router
 from .routers.intervention import intervention_router, report_router
+from .routers.st_agent import router as st_agent_router
 
 app.include_router(auth_router)
 app.include_router(course_router)
@@ -87,6 +88,7 @@ app.include_router(ai_router)
 app.include_router(practice_router)
 app.include_router(intervention_router)
 app.include_router(report_router)
+app.include_router(st_agent_router)
 
 
 # ========== 健康检查 ==========
