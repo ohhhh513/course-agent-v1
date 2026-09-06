@@ -616,4 +616,7 @@
     }
   };
 
-Router.register('resource', { title: '学习资源中心', mount: () => ResourceView.render() });
+  // 暴露到全局：课程图谱的「挂载资源」点击会通过 window.ResourceView.openResource 打开资源
+  window.ResourceView = ResourceView;
+
+  Router.register('resource', { title: '学习资源中心', mount: () => ResourceView.render() });
