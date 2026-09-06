@@ -329,6 +329,8 @@ def import_resources(cur, con):
             kp_id = decide_kp_id(title, chapter)
 
         chapter_name = CHAPTER_NAMES[chapter]
+        # 资源分类：挂到具体知识点 → knowledge；章节级/教材兜底 → other（课外/教材）
+        category = "knowledge" if kp_id else "other"
 
         # 复制文件到目标目录，保持子目录结构
         # （资源已在目标位置时跳过复制，避免 SameFileError，保证脚本可重复执行）
@@ -350,7 +352,7 @@ def import_resources(cur, con):
             INSERT INTO resources
             (res_id, course_id, title, type, kp, kp_id, category, duration, pages, count, source, views, url)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, '本地资源', 0, ?)
-        """, (res_id, COURSE_ID, title, rtype, chapter_name, kp_id, "other", duration, pages, url))
+        """, (res_id, COURSE_ID, title, rtype, chapter_name, kp_id, category, duration, pages, url))
 
         # 生成封面
         generate_cover(res_id, title, rtype)

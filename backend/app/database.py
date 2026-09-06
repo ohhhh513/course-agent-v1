@@ -50,6 +50,20 @@ def _add_col(conn, table: str, col: str, ddl: str) -> None:
         conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} {ddl}"))
 
 
+def _normalize_resource_category(conn) -> None:
+    """资源分类规范化（幂等）。
+
+    语义：挂到具体知识点（kp_id 非空）→ knowledge（知识点挂载）；
+          章节级/教材（kp_id 为空）→ other（课外/教材）。
+    修复历史库/旧交付备份中 category 曾被写死为 other 的问题，保证各环境启动后一致。
+    """
+    from sqlalchemy import text
+    conn.execute(text(
+        "UPDATE resources SET category = CASE "
+        "WHEN kp_id IS NOT NULL AND kp_id <> '' THEN 'knowledge' ELSE 'other' END"
+    ))
+
+
 def _migrate():
     """agent_st 集成的列迁移：兼容已有旧库（create_all 不会给旧表加列）"""
     with engine.connect() as conn:
@@ -58,4 +72,5 @@ def _migrate():
         _add_col(conn, "chat_messages", "draft_id", "VARCHAR(32) DEFAULT ''")
         _add_col(conn, "questions", "figure_json", "TEXT")
         _add_col(conn, "questions", "has_image", "BOOLEAN DEFAULT 0")
+        _normalize_resource_category(conn)
         conn.commit()
