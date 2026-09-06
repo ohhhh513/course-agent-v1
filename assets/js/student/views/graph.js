@@ -62,7 +62,7 @@
           return `<div class="list__item list__item--clickable" data-node="${n.id}">
             <span class="list__lead" style="width:8px;height:8px;border-radius:50%;background:${g.categories[n.category].color};margin-top:7px"></span>
             <div class="list__main"><b>${U.esc(n.name)}</b>
-              <p>${n.chapter ? '第' + n.chapter + '章 · ' : ''}${n.difficulty ? '难度 ' + '★'.repeat(n.difficulty) : ''}${n.count ? n.count + ' 人次错题' : ''}${n.errorRate ? '错误率 ' + n.errorRate + '%' : ''}</p></div>
+              <p>${n.chapter ? U.esc(n.chapter) + ' · ' : ''}${n.difficulty ? '难度 ' + '★'.repeat(n.difficulty) : ''}${n.count ? n.count + ' 人次错题' : ''}${n.errorRate ? '错误率 ' + n.errorRate + '%' : ''}</p></div>
             ${v !== null ? `<div class="list__trail"><span class="badge ${U.levelBadge[lv]}">${v}%</span></div>` : ''}
           </div>`;
         }).join('') || R.empty('暂无数据');
@@ -108,7 +108,7 @@
           body: `
           <div class="node-detail__hero">
             <div class="row" style="margin-bottom:6px">
-              <span class="badge badge--brand">第${node.chapter}章</span>
+              <span class="badge badge--brand">${U.esc(node.chapter)}</span>
               ${d.isKey ? '<span class="badge badge--warn">◆ 重难点</span>' : ''}
               <span class="badge badge--outline">难度 ${'★'.repeat(d.difficulty)}</span>
               <span class="badge badge--outline">${d.hours} 学时</span>
