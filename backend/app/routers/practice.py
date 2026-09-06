@@ -85,6 +85,7 @@ def _mastery_delta(correct: bool, difficulty: int, score: int) -> float:
 class CreateSessionReq(BaseModel):
     mode: str = "weak"
     kpIds: Optional[List[str]] = None
+    qIds: Optional[List[str]] = None
     count: int = 10
     difficulty: Optional[int] = None
 
@@ -135,12 +136,23 @@ def create_session(
 ):
     """创建练习会话（组卷）"""
     q = db.query(Question).filter(Question.status == "published")
-    if req.kpIds:
+    if req.qIds:
+        # 重做指定题目（错题本“重做本题”）
+        q = q.filter(Question.q_id.in_(req.qIds))
+    elif req.kpIds:
         expanded = _expand_kp_ids(db, req.kpIds)
         if expanded:
             q = q.filter(Question.kp_id.in_(expanded))
         else:
             print(f"[practice] 未识别 kpIds={req.kpIds}，回退为全库", flush=True)
+    elif req.mode == "wrong":
+        # 错题重练：只抽该用户错过的题
+        wrong_q_ids = [r[0] for r in db.query(AnswerRecord.q_id).filter(
+            AnswerRecord.user_id == user.user_id,
+            AnswerRecord.is_correct == 0,
+        ).distinct().all()]
+        if wrong_q_ids:
+            q = q.filter(Question.q_id.in_(wrong_q_ids))
     if req.difficulty:
         q = q.filter(Question.difficulty == req.difficulty)
     # 简单随机抽样（真实环境按 mode 智能组卷）
@@ -378,30 +390,42 @@ def wrong_book(
         q = q.filter(AnswerRecord.error_type == errorType)
     records = q.order_by(AnswerRecord.created_at.desc()).all()
 
-    # 聚合错题
+    # 按题目聚合；records 已按时间倒序，首条即最近一次作答
     wrong_map = {}
     for r in records:
         if r.q_id not in wrong_map:
-            wrong_map[r.q_id] = {"wrongCount": 0, "lastTime": r.created_at}
+            wrong_map[r.q_id] = {
+                "wrongCount": 0, "lastTime": r.created_at,
+                # 最近一次错题的状态决定该题归属“待攻克/已掌握”
+                "mastered": bool(r.mastered),
+                "myAnswer": r.my_answer, "errorType": r.error_type,
+            }
         wrong_map[r.q_id]["wrongCount"] += 1
         if r.created_at > wrong_map[r.q_id]["lastTime"]:
             wrong_map[r.q_id]["lastTime"] = r.created_at
 
-    # 查询题目详情
+    # 状态过滤：'true' 已掌握 / 'false' 待攻克 / 'all'|None 全部
+    filter_flag = None
+    if mastered in ("true", "false"):
+        filter_flag = mastered == "true"
+
     if wrong_map:
         q_ids = list(wrong_map.keys())
         questions = db.query(Question).filter(Question.q_id.in_(q_ids)).all()
         items = []
         for q in questions:
             w = wrong_map[q.q_id]
+            if filter_flag is not None and w["mastered"] != filter_flag:
+                continue
             items.append({
-                "qId": q.q_id, "stem": q.stem, "myAnswer": "", "answer": q.answer,
+                "qId": q.q_id, "stem": q.stem, "myAnswer": w["myAnswer"],
+                "answer": q.answer,
                 "wrongCount": w["wrongCount"],
-                "errorType": q.error_type,
+                "errorType": w["errorType"],
                 "kp": q.kp_id, "kpId": q.kp_id,
                 "difficulty": q.difficulty,
                 "lastTime": w["lastTime"].strftime("%m-%d %H:%M") if w["lastTime"] else "",
-                "mastered": False,  # 简化
+                "mastered": w["mastered"],
             })
     else:
         items = []
@@ -463,11 +487,11 @@ def remove_wrong(
     db: Session = Depends(get_db),
     user=Depends(get_current_user),
 ):
-    """移出错题本（标记掌握）"""
+    """标记已掌握：把该题的错题记录置为 mastered=True（保留历史，不再移出）"""
     db.query(AnswerRecord).filter(
         AnswerRecord.user_id == user.user_id,
         AnswerRecord.q_id == q_id,
         AnswerRecord.is_correct == 0,
-    ).delete()
+    ).update({"mastered": True})
     db.commit()
-    return ok({"qId": q_id, "removed": True})
+    return ok({"qId": q_id, "mastered": True})

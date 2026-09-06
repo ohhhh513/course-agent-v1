@@ -72,25 +72,25 @@
 
         U.$$('#modeGrid .card[data-mode]', box).forEach(c => c.addEventListener('click', () => {
           if (this.activeMode === c.dataset.mode) { this.collapsePanel(); return; }
-          const kpIds = c.dataset.mode === 'weak' ? this._weakKpIds : undefined;
-          this.expandPanel(c.dataset.mode, ms, c, kpIds);
+          const opts = c.dataset.mode === 'weak' ? { kpIds: this._weakKpIds } : undefined;
+          this.expandPanel(c.dataset.mode, ms, c, opts);
         }));
         U.$$('[data-weak-start]', box).forEach(b => b.addEventListener('click', e => {
           e.stopPropagation();
           const kp = b.dataset.weakKp;
-          this.expandPanel('weak', ms, box.querySelector('#modeGrid .card[data-mode="weak"]'), kp ? [kp] : undefined);
+          this.expandPanel('weak', ms, box.querySelector('#modeGrid .card[data-mode="weak"]'), kp ? { kpIds: [kp] } : undefined);
         }));
         });
       });
     },
 
     /* --- 内联展开 / 收起 --- */
-    expandPanel(mode, ms, cardEl, kpIds) {
+    expandPanel(mode, ms, cardEl, opts) {
       this.activeMode = mode;
       U.$$('#modeGrid .card[data-mode]').forEach(c => c.classList.toggle('is-active', c === cardEl));
       const panel = U.$('#modePanel');
       if (panel) panel.hidden = false;
-      this.start(mode, ms, kpIds);
+      this.start(mode, ms, opts);
     },
     collapsePanel() {
       clearInterval(this._timer);
@@ -122,13 +122,15 @@
     },
 
     /* --- 开始练习 --- */
-    start(mode, ms, kpIds) {
+    start(mode, ms, opts) {
       const m = (ms || []).find(x => x.key === mode);
       // 记录进入练习时的 tab，退出时按此恢复到对应列表
       this._startTab = this.tab;
-      this._lastKpIds = (kpIds && kpIds.length) ? kpIds : undefined;
+      this._lastKpIds = (opts && opts.kpIds && opts.kpIds.length) ? opts.kpIds : undefined;
+      this._lastQIds = (opts && opts.qIds && opts.qIds.length) ? opts.qIds : undefined;
       const body = { mode, count: m ? m.count : 10 };
       if (this._lastKpIds) body.kpIds = this._lastKpIds;
+      if (this._lastQIds) body.qIds = this._lastQIds;
       API.practice.create(body).then(s => {
         this.mode = mode; this.qs = s.questions; this.idx = 0; this.answers = {};
         this.sessionId = s.sessionId;  // 保存真实 sessionId，后续 submit/finish 要用
@@ -385,7 +387,7 @@
           { horizontal: true, showLabel: true, labelFmt: '{c} 题' });
       }
 
-      U.$('#againBtn').addEventListener('click', () => API.practice.modes().then(ms => this.start(this.mode || 'weak', ms, this._lastKpIds)));
+      U.$('#againBtn').addEventListener('click', () => API.practice.modes().then(ms => this.start(this.mode || 'weak', ms, { kpIds: this._lastKpIds, qIds: this._lastQIds })));
       U.$('#toWrong').addEventListener('click', () => {
         U.$$('#pTabs button').forEach(x => x.classList.toggle('is-active', x.dataset.t === 'wrong'));
         this.renderWrong();
@@ -439,7 +441,13 @@
 
         U.$$('#wFilter button').forEach(b => b.addEventListener('click', () => this.renderWrong(b.dataset.f)));
         U.$('#wPractice').addEventListener('click', () => API.practice.modes().then(ms => this.start('wrong', ms)));
-        U.$$('[data-redo]').forEach(b => b.addEventListener('click', () => API.practice.modes().then(ms => this.start('wrong', ms))));
+        U.$$('[data-redo]').forEach(b => b.addEventListener('click', e => {
+          e.stopPropagation();
+          API.practice.modes().then(ms => {
+            // 重做本题：只组卷这一个错题
+            this.start('wrong', ms, { qIds: [b.dataset.redo] });
+          });
+        }));
         U.$$('[data-mastered]').forEach(b => b.addEventListener('click', () => {
           API.practice.removeWrong({ qId: b.dataset.mastered }).then(() => {
             Toast.ok('已标记为掌握', '该题移出待攻克列表');
@@ -532,7 +540,7 @@
               Practice.mountQFigure(ov, d.figure);
               U.$('#wdRedo', ov).addEventListener('click', () => {
                 close();
-                API.practice.modes().then(ms => Practice.start('wrong', ms));
+                API.practice.modes().then(ms => Practice.start('wrong', ms, { qIds: [qId] }));
               });
               U.$('#wdMastered', ov).addEventListener('click', () => {
                 API.practice.removeWrong({ qId }).then(() => {

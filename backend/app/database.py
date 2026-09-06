@@ -72,5 +72,6 @@ def _migrate():
         _add_col(conn, "chat_messages", "draft_id", "VARCHAR(32) DEFAULT ''")
         _add_col(conn, "questions", "figure_json", "TEXT")
         _add_col(conn, "questions", "has_image", "BOOLEAN DEFAULT 0")
+        _add_col(conn, "answer_records", "mastered", "BOOLEAN DEFAULT 0")
         _normalize_resource_category(conn)
         conn.commit()
