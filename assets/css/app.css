@@ -691,6 +691,19 @@
 .bank-table-scroll::-webkit-scrollbar { width: 6px; height: 6px; }
 .bank-table-scroll::-webkit-scrollbar-track { background: var(--surface-3); border-radius: var(--r-full); }
 .bank-table-scroll::-webkit-scrollbar-thumb { background: var(--brand-300); border-radius: var(--r-full); }
+.bank-pagination {
+  display: flex; align-items: center; justify-content: center; gap: 5px;
+  padding: 12px 14px; border-top: 1px solid var(--border-soft);
+  background: var(--surface);
+}
+.bank-page-btn {
+  min-width: 30px; height: 30px; padding: 0 7px; border: 1px solid var(--border);
+  border-radius: var(--r-xs); background: var(--surface); color: var(--text-2);
+  font-size: 13px; line-height: 28px; text-align: center; cursor: pointer;
+}
+.bank-page-btn:hover:not(:disabled) { border-color: var(--brand-400); color: var(--brand-600); }
+.bank-page-btn.is-active { border-color: var(--brand-500); background: var(--brand-500); color: #fff; }
+.bank-page-btn:disabled { opacity: .45; cursor: not-allowed; }
 .bank-stem-scroll {
   max-width: 280px; max-height: 3.2em; overflow-y: auto;
   line-height: 1.6; white-space: normal; overflow-wrap: anywhere;

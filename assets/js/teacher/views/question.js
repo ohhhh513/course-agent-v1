@@ -6,7 +6,7 @@
   const Question = {
     tab: 'gen',
     gen: { kpIds: [], difficulty: 3, count: 6 },
-    bankFilter: 'all', bankKeyword: '',
+    bankFilter: 'all', bankKeyword: '', bankPage: 1, bankPageSize: 10,
     render() {
       const el = U.$('#view-question');
       el.innerHTML = `
@@ -257,14 +257,17 @@
             <button data-s="approved">已审</button><button data-s="published">已发布</button><button data-s="archived">归档</button></div>
           <button class="btn btn--sm btn--primary" id="bankImport">${icon('upload')} 批量导入</button>
         </div>
-        <div class="card__body card__body--flush"><div class="tbl-wrap bank-table-scroll"><table class="tbl" id="bankTbl"></table></div></div>
+        <div class="card__body card__body--flush">
+          <div class="tbl-wrap bank-table-scroll"><table class="tbl" id="bankTbl"></table></div>
+          <div class="bank-pagination" id="bankPagination"></div>
+        </div>
       </div>`;
 
       U.$$('#bankSeg button', box).forEach(b => b.addEventListener('click', () => {
         U.$$('#bankSeg button', box).forEach(x => x.classList.remove('is-active'));
-        b.classList.add('is-active'); this.bankFilter = b.dataset.s; this.loadBank();
+        b.classList.add('is-active'); this.bankFilter = b.dataset.s; this.bankPage = 1; this.loadBank();
       }));
-      U.$('#bankSearch', box).addEventListener('input', e => { this.bankKeyword = e.target.value.trim(); this.loadBank(); });
+      U.$('#bankSearch', box).addEventListener('input', e => { this.bankKeyword = e.target.value.trim(); this.bankPage = 1; this.loadBank(); });
       U.$('#bankImport', box).addEventListener('click', () => {
         Modal.open({
           title: '批量导入题目', size: 'wide',
@@ -397,8 +400,13 @@
     },
 
     loadBank() {
-      API.question.bank({ status: this.bankFilter, keyword: this.bankKeyword }).then(r => {
+      API.question.bank({
+        status: this.bankFilter, keyword: this.bankKeyword,
+        page: this.bankPage, size: this.bankPageSize
+      }).then(r => {
         const t = U.$('#bankTbl'); if (!t) return;
+        const totalPages = Math.max(1, Math.ceil((r.total || 0) / this.bankPageSize));
+        if (this.bankPage > totalPages) { this.bankPage = totalPages; return this.loadBank(); }
         const stMap = { pending: ['待审核', 'badge--warn'], approved: ['已审', 'badge--ok'], published: ['已发布', 'badge--brand'], archived: ['归档', 'badge--outline'] };
         t.innerHTML = `
           <thead><tr><th>题号</th><th>题干</th><th>题型</th><th>知识点</th><th>难度</th><th class="t-right">正确率</th><th>状态</th><th></th></tr></thead>
@@ -419,6 +427,26 @@
         U.$$('[data-del]', t).forEach(b => b.addEventListener('click', () => {
           API.question.remove({ qId: b.dataset.del }).then(() => { Toast.ok('已删除习题'); this.loadBank(); });
         }));
+
+        const pager = U.$('#bankPagination');
+        if (!pager) return;
+        pager.innerHTML = `
+          <button class="bank-page-btn" data-page-action="first" aria-label="第一页" ${this.bankPage === 1 ? 'disabled' : ''}>«</button>
+          <button class="bank-page-btn" data-page-action="prev" aria-label="上一页" ${this.bankPage === 1 ? 'disabled' : ''}>‹</button>
+          ${Array.from({ length: totalPages }, (_, i) => i + 1).map(p =>
+            `<button class="bank-page-btn ${p === this.bankPage ? 'is-active' : ''}" data-page="${p}">${p}</button>`
+          ).join('')}
+          <button class="bank-page-btn" data-page-action="next" aria-label="下一页" ${this.bankPage === totalPages ? 'disabled' : ''}>›</button>
+          <button class="bank-page-btn" data-page-action="last" aria-label="最后一页" ${this.bankPage === totalPages ? 'disabled' : ''}>»</button>`;
+        const go = page => {
+          if (page < 1 || page > totalPages || page === this.bankPage) return;
+          this.bankPage = page; this.loadBank();
+        };
+        U.$$('[data-page]', pager).forEach(b => b.addEventListener('click', () => go(+b.dataset.page)));
+        U.$('[data-page-action="first"]', pager).addEventListener('click', () => go(1));
+        U.$('[data-page-action="prev"]', pager).addEventListener('click', () => go(this.bankPage - 1));
+        U.$('[data-page-action="next"]', pager).addEventListener('click', () => go(this.bankPage + 1));
+        U.$('[data-page-action="last"]', pager).addEventListener('click', () => go(totalPages));
       });
     },
 
