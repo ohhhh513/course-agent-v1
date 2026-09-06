@@ -351,6 +351,19 @@ def finish_session(
         if r.is_correct:
             score_gain += q_score_map.get(r.q_id, 5)
 
+    # 错题重练：答对的题自动标记为已掌握（进入错题本“已掌握”列表）
+    mastered_count = 0
+    if session.mode == "wrong":
+        correct_qids = {r.q_id for r in records if r.is_correct == 1}
+        for qid in correct_qids:
+            res = db.query(AnswerRecord).filter(
+                AnswerRecord.user_id == user.user_id,
+                AnswerRecord.q_id == qid,
+                AnswerRecord.is_correct == 0,
+            ).update({"mastered": True})
+            if res:
+                mastered_count += 1
+
     db.commit()
 
     return ok({
@@ -364,6 +377,7 @@ def finish_session(
         "scoreGain": round(score_gain, 1),
         "kpChanges": kp_changes,
         "errorTypes": [{"type": t, "count": c} for t, c in err_map.items()],
+        "masteredCount": mastered_count,
         "nextSuggestion": "建议先回顾错题对应的知识点，再进行薄弱点强化。",
     })
 

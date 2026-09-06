@@ -128,7 +128,7 @@
       this._startTab = this.tab;
       this._lastKpIds = (opts && opts.kpIds && opts.kpIds.length) ? opts.kpIds : undefined;
       this._lastQIds = (opts && opts.qIds && opts.qIds.length) ? opts.qIds : undefined;
-      const body = { mode, count: m ? m.count : 10 };
+      const body = { mode, count: (opts && opts.count) || (m ? m.count : 10) };
       if (this._lastKpIds) body.kpIds = this._lastKpIds;
       if (this._lastQIds) body.qIds = this._lastQIds;
       API.practice.create(body).then(s => {
@@ -332,6 +332,8 @@
           <div class="stat__hint">已回写目标图谱达成度</div></div>
       </div>
 
+      ${(r.masteredCount > 0) ? `<div class="callout" style="margin-bottom:16px">${icon('checkCircle')}<div><b>${r.masteredCount} 道答对题目已自动标记为「已掌握」</b><span class="fz-12 t-dim" style="margin-left:6px">可到错题本「已掌握」查看</span></div></div>` : ''}
+
       <div class="grid g-21" style="margin-bottom:16px">
         <div class="card">
           <div class="card__head"><h3>${icon('trend')} 薄弱点变化对比</h3><span class="spacer"></span>
@@ -440,7 +442,12 @@
         </div>`;
 
         U.$$('#wFilter button').forEach(b => b.addEventListener('click', () => this.renderWrong(b.dataset.f)));
-        U.$('#wPractice').addEventListener('click', () => API.practice.modes().then(ms => this.start('wrong', ms)));
+        U.$('#wPractice').addEventListener('click', () => {
+          // 一键重练：只重练当前 tab（待攻克/已掌握/全部）下显示的那些题
+          const qIds = r.list.map(w => w.qId);
+          if (!qIds.length) { Toast.error('当前分类下没有可重练的题目'); return; }
+          API.practice.modes().then(ms => this.start('wrong', ms, { qIds, count: qIds.length }));
+        });
         U.$$('[data-redo]').forEach(b => b.addEventListener('click', e => {
           e.stopPropagation();
           API.practice.modes().then(ms => {
