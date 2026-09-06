@@ -5,7 +5,7 @@
      ================================================================ */
   const Question = {
     tab: 'gen',
-    gen: { kpIds: [], types: ['single'], difficulty: 3, count: 6 },
+    gen: { kpIds: [], difficulty: 3, count: 6 },
     bankFilter: 'all', bankKeyword: '',
     render() {
       const el = U.$('#view-question');
@@ -50,18 +50,18 @@
             </div>
             <div class="card">
               <div class="card__head"><h3>${icon('settings')} 出题配置</h3></div>
-              <div class="card__body stack" style="gap:12px">
-                <div><p class="fz-12 t-dim" style="margin-bottom:6px">指定知识点（可多选）</p>
-                  <div class="chips" id="genKp">${cfg.kpOptions.map(k =>
+              <div class="card__body stack gen-config-body" style="gap:12px">
+                <div class="gen-config-section gen-config-section--kp">
+                  <p class="fz-12 t-dim" style="margin-bottom:8px">指定知识点（可多选）</p>
+                  <div class="gen-kp-scroll" id="genKp">${cfg.kpOptions.map(k =>
                     `<button class="chip" data-kp="${k.kpId}">${U.esc(k.name)}</button>`).join('')}</div></div>
-                <div><p class="fz-12 t-dim" style="margin-bottom:6px">题型</p>
-                  <div class="chips" id="genType">${cfg.typeOptions.map(t =>
-                    `<button class="chip ${t.key === 'single' ? 'is-active' : ''}" data-ty="${t.key}">${t.name}</button>`).join('')}</div></div>
-                <div class="grid g-2" style="gap:12px">
-                  <div><p class="fz-12 t-dim" style="margin-bottom:6px">难度 <span class="mono" id="genDiffLbl">${this.gen.difficulty} 星</span></p>
+                <div class="gen-config-section gen-config-section--settings">
+                  <div class="gen-config-settings">
+                    <div class="gen-config-field"><p class="fz-12 t-dim" style="margin-bottom:6px">难度 <span class="mono" id="genDiffLbl">${this.gen.difficulty} 星</span></p>
                     <input type="range" min="1" max="5" value="${this.gen.difficulty}" id="genDiff" style="width:100%"></div>
-                  <div><p class="fz-12 t-dim" style="margin-bottom:6px">题量</p>
-                    <div class="seg" id="genCount"><button data-c="3">3</button><button data-c="6" class="is-active">6</button><button data-c="10">10</button></div></div>
+                    <div class="gen-config-field"><p class="fz-12 t-dim" style="margin-bottom:6px">题量 <span class="mono" id="genCountLbl">${this.gen.count} 题</span></p>
+                    <input type="range" min="1" max="10" value="${this.gen.count}" id="genCountRange" style="width:100%"></div>
+                  </div>
                 </div>
                 <button class="btn btn--primary btn--block" id="genBtn">${icon('sparkle')} 生成习题</button>
               </div>
@@ -69,7 +69,7 @@
           </div>
           <div class="stack" style="gap:12px">
             <div class="callout callout--brand">${icon('info')}<div>AI 将依据课程标准自动标注每题的<b>知识点定位树</b>（前后置关系 + 重难点），并附<b>材料溯源</b>（fileId + 定位），确保可解释、可溯源。</div></div>
-            <div id="genResult"><div class="card"><div class="card__body card__body--flush" style="padding:18px">${R.empty('配置后点击「生成习题」', 'AI 将产出并预览题目与解析', 'sparkle')}</div></div></div>
+            <div id="genResult" class="gen-result-scroll"><div class="card"><div class="card__body card__body--flush" style="padding:18px">${R.empty('配置后点击「生成习题」', 'AI 将产出并预览题目与解析', 'sparkle')}</div></div></div>
           </div>
         </div>`;
 
@@ -92,21 +92,21 @@
           if (this.gen.kpIds.includes(id)) this.gen.kpIds = this.gen.kpIds.filter(x => x !== id);
           else this.gen.kpIds.push(id);
         }));
-        U.$$('#genType .chip', box).forEach(c => c.addEventListener('click', () => {
-          U.$$('#genType .chip', box).forEach(x => x.classList.remove('is-active'));
-          c.classList.add('is-active'); this.gen.types = [c.dataset.ty];
-        }));
         U.$('#genDiff', box).addEventListener('input', e => { this.gen.difficulty = +e.target.value; U.$('#genDiffLbl', box).textContent = e.target.value + ' 星'; });
-        U.$$('#genCount button', box).forEach(b => b.addEventListener('click', () => {
-          U.$$('#genCount button', box).forEach(x => x.classList.remove('is-active'));
-          b.classList.add('is-active'); this.gen.count = +b.dataset.c;
-        }));
+        U.$('#genCountRange', box).addEventListener('input', e => {
+          this.gen.count = +e.target.value;
+          U.$('#genCountLbl', box).textContent = this.gen.count + ' 题';
+        });
         U.$('#genBtn', box).addEventListener('click', () => {
           if (!this.gen.kpIds.length) return Toast.warn('请至少选择一个知识点');
           if (this._genBusy) return;
           this._genBusy = true;
           this._drafts = [];
+          this._genTargetCount = this.gen.count;
           U.$('#genResult').innerHTML = `
+            <div class="callout callout--brand gen-progress-status" id="genProgressStatus" role="status" aria-live="polite" style="margin-bottom:12px">
+              ${icon('sparkle')}<div id="genProgressText">正在生成第1道题目</div>
+            </div>
             <div class="card"><div class="card__head" style="padding:14px 16px"><h3>${icon('sparkle')} AI 出题中…</h3>
               <span class="spacer"></span><span class="badge badge--brand" id="genProg">0 题</span></div>
               <div class="card__body"><div class="fz-12 t-dim" id="genProc">正在调用检索与出题工具…</div></div></div>`;
@@ -152,7 +152,7 @@
           };
           const box = U.$('#genResult');
           API.question.genStream({
-            kpIds: this.gen.kpIds, types: this.gen.types,
+            kpIds: this.gen.kpIds, types: ['single'],
             difficulty: this.gen.difficulty, count: this.gen.count,
             requirement: this.gen.requirement || ''
           }, {
@@ -166,25 +166,45 @@
               const i = this._drafts.length - 1;
               if (!U.$('#genList', box)) {
                 box.innerHTML = `
-                  <div class="card__head" style="padding:14px 16px"><h3>${icon('sparkle')} 生成预览</h3>
-                    <span class="spacer"></span><span class="badge badge--brand" id="genProg">0 题</span></div>
-                  <div id="genList"></div>
-                  <div class="callout callout--warn" style="margin:0 16px 12px">${icon('alert')}
-                    <div>草稿仅保存在你的个人出题历史中，<b>未进入正式题库</b>；确认无误后可通过「题库管理 → 批量导入」合并。</div></div>`;
+                  <div class="card gen-result-card">
+                    <div class="card__head" style="padding:14px 16px"><h3>${icon('sparkle')} 生成预览</h3>
+                      <span class="spacer"></span><span class="badge badge--brand" id="genProg">0 题</span></div>
+                    <div id="genList"></div>
+                    <div class="callout callout--brand gen-progress-status" id="genProgressStatus" role="status" aria-live="polite" style="margin:12px 16px">
+                      ${icon('sparkle')}<div id="genProgressText">正在生成第1道题目</div>
+                    </div>
+                    <div class="callout callout--warn" style="margin:0 16px 12px">${icon('alert')}
+                      <div>草稿仅保存在你的个人出题历史中，<b>未进入正式题库</b>；确认无误后可通过「题库管理 → 批量导入」合并。</div></div>
+                  </div>`;
               }
               U.$('#genList', box).insertAdjacentHTML('beforeend', card(d, i));
               mountFigs(d, i);
               const prog = U.$('#genProg', box);
               if (prog) prog.textContent = this._drafts.length + ' 题';
+              const progressText = U.$('#genProgressText', box);
+              if (progressText) {
+                const nextNumber = this._drafts.length + 1;
+                progressText.textContent = nextNumber <= this._genTargetCount
+                  ? `正在生成第${nextNumber}道题目`
+                  : '正在完成生成…';
+              }
+              box.scrollTop = box.scrollHeight;
             },
             onError: (d) => Toast.err('生成出错', (d && d.message) || ''),
             onDone: (d) => {
               this._genBusy = false;
+              const progressStatus = U.$('#genProgressStatus', box);
+              if (progressStatus) progressStatus.remove();
               const prog = U.$('#genProg', box);
               if (prog) prog.textContent = (d.count || this._drafts.length) + ' 题 · 完成';
               Toast.ok('AI 出题完成', `${d.count || 0} 道草稿已存入你的出题历史`);
             },
-          }).catch((e) => { this._genBusy = false; Toast.err('生成失败', e && e.message); });
+          }).catch((e) => {
+            this._genBusy = false;
+            const progressText = U.$('#genProgressText', box);
+            if (progressText) progressText.textContent = '生成已中断，请重试';
+            Toast.err('生成失败', e && e.message);
+          });
         });
       });
     },
