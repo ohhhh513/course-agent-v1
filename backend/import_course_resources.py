@@ -23,8 +23,9 @@ from app.media_utils import (
 
 DB_PATH = BACKEND_DIR / "app" / "data" / "course_agent.db"
 # 相对项目根目录（course-agent）解析，避免依赖本机绝对路径
-SOURCE_DIR = BASE_DIR / "assets" / "resources" / "data-structures-1-9"
-TARGET_DIR = BASE_DIR / "assets" / "resources" / "data-structures-1-9"
+# 课程资源实际放在项目根 resources/（由 main.py 挂载到 /assets/resources）
+SOURCE_DIR = BASE_DIR / "resources" / "data-structures-1-9"
+TARGET_DIR = BASE_DIR / "resources" / "data-structures-1-9"
 COURSE_ID = "C2026DS001"
 
 # 9 章名称（与清单一致）

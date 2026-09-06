@@ -48,6 +48,8 @@ assets/resources/covers/
 assets/resources/uploads/*
 assets/resources/data-structures-1-9
 !assets/resources/uploads/.gitkeep
+# 课程资源实际存放目录（项目根，由 main.py 静态挂载到 /assets/resources）
+resources/
 
 # ---------- 日志 ----------
 *.log
