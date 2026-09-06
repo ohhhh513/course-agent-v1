@@ -217,11 +217,11 @@ def kp_detail(
             personal_mastery = round((correct or 0) / total * 100, 1)
         else:
             lp = db.query(LearningPath.mastery).filter(
-            LearningPath.user_id == uid,
-            LearningPath.kp_id == kp_id,
-        ).first()
-        if lp and lp[0] is not None:
-            personal_mastery = round(lp[0], 1)
+                LearningPath.user_id == uid,
+                LearningPath.kp_id == kp_id,
+            ).first()
+            if lp and lp[0] is not None:
+                personal_mastery = round(lp[0], 1)
 
     # 个人掌握率：融合答题正确率与资源进度
     if uid:

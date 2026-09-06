@@ -184,7 +184,7 @@
             });
           }
         });
-      });
+      }).catch(err => Toast.error('知识点详情加载失败', err && err.message || '请稍后重试'));
     }
   };
 
