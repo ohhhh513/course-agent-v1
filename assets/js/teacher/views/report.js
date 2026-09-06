@@ -34,7 +34,7 @@
           <div class="card__body">
             <p class="fz-13 t-2" style="line-height:1.8">基于班级 / 章节 / 时间段，自动汇总<b>整体掌握度、共性短板、个体预警、干预效果、目标达成度</b>，支持 PDF / 网页导出，便于教研与上报。</p>
             <div class="divider"></div>
-            <div class="row fz-12 t-dim"><span>覆盖章节</span><span class="spacer"></span><span>第1章 ~ 第5章 · 6 个知识点</span></div>
+            <div class="row fz-12 t-dim"><span>覆盖章节</span><span class="spacer"></span><span>第1章 ~ 第9章 · 25 个知识点</span></div>
           </div>
         </div>
         <div class="card">
