@@ -790,14 +790,14 @@ def growth(
         if r.kp_id:
             week_data[key]["kps"].add(r.kp_id)
 
-    # 有序周（确保连续 8 周）：以“当前周（周一 8/31 起）”为第1周，往前推
+    # 有序周：以“当前周周一(8/31)”为第1周起点，往后排（第1周→第8周，时间前进）
+    first_monday = today - timedelta(days=today.isoweekday() - 1)
     weeks = []
     for i in range(0, 8):
-        wd = today - timedelta(weeks=i)
-        iso_year, iso_week, _ = wd.isocalendar()
+        monday = first_monday + timedelta(weeks=i)
+        iso_year, iso_week, _ = monday.isocalendar()
         key = f"{iso_year}-W{iso_week:02d}"
         w = week_data.get(key, {"correct": 0, "total": 0, "kps": set()})
-        monday = wd - timedelta(days=wd.isoweekday() - 1)
         weeks.append({
             "label": f"第{i+1}周·{monday.strftime('%m/%d')}",
             "correct": w["correct"], "total": w["total"],
