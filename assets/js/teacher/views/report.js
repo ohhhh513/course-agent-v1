@@ -1,5 +1,18 @@
 'use strict';
 
+  function saveDownloadedFile(file, fallbackName) {
+    if (!file || !file.blob) throw new Error('导出接口未返回文件');
+    const url = URL.createObjectURL(file.blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = file.filename || fallbackName;
+    link.style.display = 'none';
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
   /* ================================================================
      视图 6 · 学情分析报告
      ================================================================ */
@@ -78,29 +91,52 @@
 
     openDetail(reportId) {
       const load = (id) => API.report.detail({ reportId: id });
-      load(reportId).then(d => {
+      load(reportId).then(raw => {
+        // 后端返回 { reportId, title, status, detail: { meta, sections } }，mock 则可能直接返回详情
+        const detail = raw && raw.detail && typeof raw.detail === 'object' ? raw.detail : (raw || {});
+        if (detail.error) return Toast.warn(detail.error);
+        const d = {
+          ...detail,
+          title: raw.title || detail.title || '学情分析报告',
+          meta: detail.meta || {},
+          sections: Array.isArray(detail.sections) ? detail.sections : [],
+        };
+        const meta = d.meta;
         Modal.open({
-          title: d.title, size: 'wide',
+          title: U.esc(d.title), size: 'wide',
           body: `<div class="report">
             <div class="report__hd"><h2>${U.esc(d.title)}</h2>
               <div class="report__meta">
-                <span>班级：${d.meta.className}</span><span>人数：${d.meta.studentCount}</span>
-                <span>章节：${d.meta.chapter}</span><span>区间：${d.meta.period}</span>
-                <span>生成：${d.meta.generatedAt}</span><span>${d.meta.generator}</span></div></div>
+                <span>班级：${U.esc(meta.className || '—')}</span><span>人数：${U.esc(meta.studentCount ?? '—')}</span>
+                <span>章节：${U.esc(meta.chapter || '全课程')}</span><span>区间：${U.esc(meta.period || ((meta.startDate || '') + (meta.endDate ? ' ~ ' + meta.endDate : '')) || '—')}</span>
+                <span>生成：${U.esc(meta.generatedAt || '—')}</span><span>${U.esc(meta.generator || '系统')}</span></div></div>
             ${d.sections.map(s => `
               <h3>${U.esc(s.title)}</h3>
-              ${s.paragraphs.map(p => `<p>${U.esc(p)}</p>`).join('')}
+              ${(s.paragraphs || []).map(p => `<p>${U.esc(p)}</p>`).join('')}
               ${s.bullets && s.bullets.length ? `<ul>${s.bullets.map(b => `<li>${U.esc(b)}</li>`).join('')}</ul>` : ''}`).join('')}
           </div>`,
           footer: `<button class="btn" data-close>关闭</button>
             <button class="btn btn--outline" id="exPdf">${icon('download')} 导出 PDF</button>
             <button class="btn btn--primary" id="exHtml">${icon('download')} 导出网页</button>`,
           onMount(ov, close) {
-            U.$('#exPdf', ov).addEventListener('click', () => API.report.exportReport({ reportId, format: 'pdf' }).then(r => Toast.ok('PDF 已导出', r.url)));
-            U.$('#exHtml', ov).addEventListener('click', () => API.report.exportReport({ reportId, format: 'html' }).then(r => Toast.ok('网页版已导出', r.url)));
+            const exportFile = (format, selector, label) => {
+              const button = U.$(selector, ov);
+              const original = button.innerHTML;
+              button.disabled = true;
+              button.textContent = '生成中…';
+              API.report.exportReport({ reportId, format })
+                .then(file => {
+                  saveDownloadedFile(file, `report_${reportId}.${format}`);
+                  Toast.ok(label + '已下载', '文件已保存到浏览器默认下载目录');
+                })
+                .catch(err => Toast.warn(label + '失败：' + (err.message || err)))
+                .finally(() => { button.disabled = false; button.innerHTML = original; });
+            };
+            U.$('#exPdf', ov).addEventListener('click', () => exportFile('pdf', '#exPdf', 'PDF'));
+            U.$('#exHtml', ov).addEventListener('click', () => exportFile('html', '#exHtml', '网页'));
           }
         });
-      });
+      }).catch(err => Toast.warn('报告加载失败：' + (err.message || err)));
     }
   };
 

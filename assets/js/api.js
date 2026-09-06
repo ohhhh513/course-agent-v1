@@ -80,6 +80,50 @@ window.API = (function () {
     });
   }
 
+  /** 下载二进制文件，返回 { blob, filename }，供报告等导出接口使用。 */
+  function download(method, path, payload, resolver) {
+    if (config.mode === 'http') {
+      const isGet = method === 'GET';
+      let url = config.baseURL + path;
+      if (isGet && payload) {
+        const qs = new URLSearchParams(
+          Object.entries(payload).filter(([, v]) => v !== undefined && v !== null && v !== '')
+        ).toString();
+        if (qs) url += '?' + qs;
+      }
+      return fetch(url, {
+        method,
+        headers: { 'Content-Type': 'application/json', Authorization: config.token },
+        body: isGet ? undefined : JSON.stringify(payload || {})
+      }).then(async res => {
+        const contentType = res.headers.get('content-type') || '';
+        const blob = await res.blob();
+        if (!res.ok || contentType.includes('application/json')) {
+          let message = '文件导出失败';
+          try {
+            const data = JSON.parse(await blob.text());
+            message = data.message || data.detail || (data.data && data.data.error) || message;
+          } catch (e) {}
+          throw new Error(message);
+        }
+        const disposition = res.headers.get('content-disposition') || '';
+        const encoded = disposition.match(/filename\*=UTF-8''([^;]+)/i);
+        const plain = disposition.match(/filename="?([^";]+)"?/i);
+        let filename = encoded ? encoded[1] : (plain ? plain[1] : '');
+        if (encoded) {
+          try { filename = decodeURIComponent(filename); } catch (e) {}
+        }
+        return { blob, filename };
+      });
+    }
+    return new Promise((resolve, reject) => {
+      setTimeout(() => {
+        try { resolve(resolver ? resolver(payload || {}) : null); }
+        catch (e) { reject(e); }
+      }, delay());
+    });
+  }
+
   const M = () => window.MOCK;
 
   /**
@@ -647,11 +691,11 @@ window.API = (function () {
     detail: (p) => request('GET', '/report/' + p.reportId, p, () => M().reportDetail),
 
     /** POST /report/{reportId}/export  导出  body: { format: pdf|html } */
-    exportReport: (p) => request('POST', `/report/${p.reportId}/export`, p, (q) =>
+    exportReport: (p) => download('POST', `/report/${p.reportId}/export`, p, (q) =>
       ({ url: `/files/report/${q.reportId}.${q.format || 'pdf'}`, format: q.format || 'pdf' }))
   };
 
 
 
-  return { config, request, auth, graph, student: stu, ai, practice, teacher: tea, analysis, question, intervention, report };
+  return { config, request, download, auth, graph, student: stu, ai, practice, teacher: tea, analysis, question, intervention, report };
 })();
