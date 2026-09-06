@@ -877,3 +877,17 @@
 .chip--other.is-active {
   background: #f59e0b; border-color: #f59e0b; color: #fff;
 }
+
+/* ---------- 学习资源中心：左右两框独立滚动 ---------- */
+/* 让「推荐学习路径」与「资源聚合」各自成为滚动容器，
+   鼠标在其中一个区域滚动时不带动另一个区域、页面整体也不再滚动。 */
+#view-resource #pathList {
+  max-height: calc(100vh - var(--topbar-h) - 150px);
+  min-height: 320px;
+  overflow-y: auto; overscroll-behavior: contain;
+}
+#view-resource #resGrid {
+  max-height: calc(100vh - var(--topbar-h) - 245px);
+  min-height: 320px;
+  overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable;
+}
