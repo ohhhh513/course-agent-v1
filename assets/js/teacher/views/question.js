@@ -462,74 +462,108 @@
 
   function _openEditModal(qId, q) {
     Modal.open({
-      title: '编辑习题 · ' + qId, size: 'wide',
+      title: icon('file') + ' 编辑习题 · ' + U.esc(qId), size: 'wide',
       body: `
-      <div class="edit-grid">
-        <div class="edit-field">
-          <label>知识点</label>
-          <input class="code-edit" id="eqKp" list="eqKpList" value="${U.esc(q.kp || '')}" placeholder="输入知识点名称">
-          <datalist id="eqKpList"></datalist>
+      <div class="question-edit">
+        <div class="question-edit__summary">
+          <div class="question-edit__summary-main">
+            <span class="badge badge--brand">编辑中</span>
+            <div><b>题目内容与属性</b><span>修改后保存即可更新题库记录</span></div>
+          </div>
+          <span class="question-edit__summary-id">题号 <b class="mono">#${U.esc(qId)}</b></span>
         </div>
-        <div class="edit-field">
-          <label>难度</label>
-          <select id="eqDiff" class="code-edit">
-            ${[1,2,3,4,5].map(i => `<option value="${i}" ${i === (q.difficulty || 3) ? 'selected' : ''}>${'★'.repeat(i)}${'☆'.repeat(5-i)} ${['入门','简单','中等','较难','困难'][i-1]}</option>`).join('')}
-          </select>
-        </div>
-        <div class="edit-field">
-          <label>来源</label>
-          <input class="code-edit" id="eqSource" value="${U.esc(q.source || q.sourceRef?.fileId || q.sourceRef?.locator || '')}" placeholder="题目来源（如 讲义第3章、题库导入）">
-        </div>
-        <div class="edit-field">
-          <label>题型</label>
-          <select id="eqType" class="code-edit">
-            ${[['single','单选题'],['multiple','多选题'],['blank','填空题'],['judge','判断题'],['essay','简答题']].map(([v,l]) => `<option value="${v}" ${v === (q.type || 'single') ? 'selected' : ''}>${l}</option>`).join('')}
-          </select>
-        </div>
-        <div class="edit-field">
-          <label>分值</label>
-          <input class="code-edit" id="eqScore" type="number" min="1" max="100" value="${q.score || 5}">
-        </div>
-        <div class="edit-field">
-          <label>标记</label>
-          <label class="fz-13" style="display:flex;align-items:center;gap:6px;cursor:pointer">
-            <input type="checkbox" id="eqKey" ${q.isKey ? 'checked' : ''} style="width:auto"> 重点题（高频考点）
-          </label>
-        </div>
+
+        <section class="question-edit__section">
+          <div class="question-edit__section-head">
+            <div><b>基础信息</b><span>设置题目的归属、题型和审核属性</span></div>
+          </div>
+          <div class="edit-grid">
+            <div class="edit-field">
+              <label>知识点</label>
+              <input class="input" id="eqKp" list="eqKpList" value="${U.esc(q.kp || '')}" placeholder="输入知识点名称">
+              <datalist id="eqKpList"></datalist>
+            </div>
+            <div class="edit-field">
+              <label>难度</label>
+              <select id="eqDiff" class="select">
+                ${[1,2,3,4,5].map(i => `<option value="${i}" ${i === (q.difficulty || 3) ? 'selected' : ''}>${'★'.repeat(i)}${'☆'.repeat(5-i)} ${['入门','简单','中等','较难','困难'][i-1]}</option>`).join('')}
+              </select>
+            </div>
+            <div class="edit-field">
+              <label>来源</label>
+              <input class="input" id="eqSource" value="${U.esc(q.source || q.sourceRef?.fileId || q.sourceRef?.locator || '')}" placeholder="如 讲义第3章、题库导入">
+            </div>
+            <div class="edit-field">
+              <label>题型</label>
+              <select id="eqType" class="select">
+                ${[['single','单选题'],['multiple','多选题'],['blank','填空题'],['judge','判断题'],['essay','简答题']].map(([v,l]) => `<option value="${v}" ${v === (q.type || 'single') ? 'selected' : ''}>${l}</option>`).join('')}
+              </select>
+            </div>
+            <div class="edit-field">
+              <label>分值</label>
+              <input class="input" id="eqScore" type="number" min="1" max="100" value="${q.score || 5}">
+            </div>
+            <div class="edit-field">
+              <label>标记</label>
+              <label class="question-edit__check">
+                <input type="checkbox" id="eqKey" ${q.isKey ? 'checked' : ''}>
+                <span>重点题 <em>高频考点</em></span>
+              </label>
+            </div>
+          </div>
+        </section>
+
+        <section class="question-edit__section">
+          <div class="question-edit__section-head">
+            <div><b>题干</b><span>清晰描述题目要求，支持多行内容</span></div>
+          </div>
+          <div class="question-edit__section-body">
+            <textarea class="textarea question-edit__stem" id="eqStem" placeholder="请输入题干内容">${U.esc(q.stem || '')}</textarea>
+          </div>
+        </section>
+
+        <section class="question-edit__section">
+          <div class="question-edit__section-head">
+            <div><b>选项设置</b><span>勾选正确答案，可按需添加或删除选项</span></div>
+            <button class="btn btn--xs btn--outline" id="eqAddOpt" type="button">+ 添加选项</button>
+          </div>
+          <div class="question-edit__options" id="eqOpts">
+            ${(q.options || [{key:'A',text:'',right:false},{key:'B',text:'',right:false},{key:'C',text:'',right:false},{key:'D',text:'',right:false}]).map((o,i) => `
+              <div class="eq-opt" data-i="${i}">
+                <select class="select eq-opt-key" aria-label="选项字母">${'ABCDEFG'.slice(0,8).split('').map(k => `<option ${k === (o.key || 'ABCD'[i]) ? 'selected' : ''}>${k}</option>`).join('')}</select>
+                <input class="input eq-opt-text" value="${U.esc(o.text || '')}" placeholder="选项 ${o.key || 'ABCD'[i]} 内容">
+                <label class="question-edit__correct">
+                  <input type="checkbox" class="eq-opt-right" ${o.right ? 'checked' : ''}> <span>正确答案</span>
+                </label>
+                <button class="btn btn--xs btn--ghost eq-opt-del" type="button">删除</button>
+              </div>`).join('')}
+          </div>
+        </section>
+
+        <section class="question-edit__section">
+          <div class="edit-grid edit-grid--2">
+            <div class="edit-field">
+              <label>答案</label>
+              <input class="input" id="eqAns" value="${U.esc(q.answer || '')}" placeholder="如 B 或 AB">
+            </div>
+            <div class="edit-field">
+              <label>状态</label>
+              <select id="eqStatus" class="select">
+                ${[['pending','待审核'],['published','已发布'],['archived','归档']].map(([v,l]) => `<option value="${v}" ${v === (q.status || 'pending') ? 'selected' : ''}>${l}</option>`).join('')}
+              </select>
+            </div>
+          </div>
+        </section>
+
+        <section class="question-edit__section">
+          <div class="question-edit__section-head">
+            <div><b>解析</b><span>补充答案依据或解题思路，帮助学生理解</span></div>
+          </div>
+          <div class="question-edit__section-body">
+            <textarea class="textarea question-edit__analysis" id="eqAnalysis" placeholder="请输入题目解析">${U.esc(q.analysis || '')}</textarea>
+          </div>
+        </section>
       </div>
-
-      <label class="fz-12 t-dim" style="display:block;margin:14px 0 6px">题干</label>
-      <textarea class="code-edit" id="eqStem" style="min-height:100px">${U.esc(q.stem || '')}</textarea>
-
-      <div style="margin:14px 0 6px" class="row"><b class="fz-13">选项</b><span class="spacer"></span>
-        <button class="btn btn--xs btn--outline" id="eqAddOpt">+ 添加选项</button></div>
-      <div id="eqOpts">
-        ${(q.options || [{key:'A',text:'',right:false},{key:'B',text:'',right:false},{key:'C',text:'',right:false},{key:'D',text:'',right:false}]).map((o,i) => `
-          <div class="eq-opt" data-i="${i}">
-            <select class="eq-opt-key">${'ABCDEFG'.slice(0,8).split('').map(k => `<option ${k === (o.key || 'ABCD'[i]) ? 'selected' : ''}>${k}</option>`).join('')}</select>
-            <input class="code-edit eq-opt-text" value="${U.esc(o.text || '')}" placeholder="选项 ${o.key || 'ABCD'[i]} 内容">
-            <label style="display:flex;align-items:center;gap:4px;cursor:pointer">
-              <input type="checkbox" class="eq-opt-right" ${o.right ? 'checked' : ''} style="width:auto"> 正确
-            </label>
-            <button class="btn btn--xs btn--ghost eq-opt-del">删除</button>
-          </div>`).join('')}
-      </div>
-
-      <div class="edit-grid edit-grid--2">
-        <div class="edit-field">
-          <label>答案</label>
-          <input class="code-edit" id="eqAns" value="${U.esc(q.answer || '')}" placeholder="如 B 或 AB">
-        </div>
-        <div class="edit-field">
-          <label>状态</label>
-          <select id="eqStatus" class="code-edit">
-            ${[['pending','待审核'],['published','已发布'],['archived','归档']].map(([v,l]) => `<option value="${v}" ${v === (q.status || 'pending') ? 'selected' : ''}>${l}</option>`).join('')}
-          </select>
-        </div>
-      </div>
-
-      <label class="fz-12 t-dim" style="display:block;margin:14px 0 6px">解析</label>
-      <textarea class="code-edit" id="eqAnalysis" style="min-height:80px">${U.esc(q.analysis || '')}</textarea>
       `,
       footer: `<button class="btn" data-close>取消</button><button class="btn btn--primary" id="eqSave">保存修订</button>`,
       onMount(ov, close) {
@@ -550,10 +584,10 @@
           row.className = 'eq-opt';
           row.dataset.i = idx;
           row.innerHTML = `
-            <select class="eq-opt-key">${'ABCDEFG'.slice(0,8).split('').map(k => `<option ${k===letter?'selected':''}>${k}</option>`).join('')}</select>
-            <input class="code-edit eq-opt-text" placeholder="选项 ${letter} 内容">
-            <label style="display:flex;align-items:center;gap:4px;cursor:pointer"><input type="checkbox" class="eq-opt-right" style="width:auto"> 正确</label>
-            <button class="btn btn--xs btn--ghost eq-opt-del">删除</button>`;
+            <select class="select eq-opt-key" aria-label="选项字母">${'ABCDEFG'.slice(0,8).split('').map(k => `<option ${k===letter?'selected':''}>${k}</option>`).join('')}</select>
+            <input class="input eq-opt-text" placeholder="选项 ${letter} 内容">
+            <label class="question-edit__correct"><input type="checkbox" class="eq-opt-right"> <span>正确答案</span></label>
+            <button class="btn btn--xs btn--ghost eq-opt-del" type="button">删除</button>`;
           container.appendChild(row);
         });
         // 删除选项委托
