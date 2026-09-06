@@ -858,6 +858,32 @@
 .report li::before { content: '▪'; color: var(--brand-400); flex: 0 0 auto; }
 .report__meta { display: flex; gap: 22px; flex-wrap: wrap; justify-content: center; font-size: 12px; color: var(--text-3); }
 
+/* ---------- 学情报告生成表单 ---------- */
+.report-scope-list {
+  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px;
+  max-height: 190px; overflow-y: auto; padding: 2px 4px 2px 0;
+  scrollbar-width: thin; scrollbar-color: var(--brand-300) var(--surface-3);
+}
+.report-scope-option {
+  display: flex; align-items: center; gap: 8px; min-width: 0;
+  padding: 9px 10px; border: 1px solid var(--border); border-radius: var(--r-sm);
+  background: var(--surface-2); color: var(--text-2); font-size: 12.5px;
+  cursor: pointer; transition: all var(--t-fast);
+}
+.report-scope-option:hover { border-color: var(--brand-300); color: var(--text); }
+.report-scope-option:has(input:checked) {
+  border-color: var(--brand-400); background: rgba(99,102,241,.08); color: var(--brand-600);
+}
+.report-scope-option input { width: 15px; height: 15px; flex: 0 0 auto; accent-color: var(--brand-500); }
+.report-scope-option span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.report-scope-foot {
+  display: flex; justify-content: space-between; margin-top: 8px;
+  color: var(--text-3); font-size: 11.5px;
+}
+.report-date-grid { gap: 10px; }
+.report-date-tip { margin-top: 6px; color: var(--text-3); font-size: 11.5px; }
+@media (max-width: 600px) { .report-scope-list { grid-template-columns: minmax(0, 1fr); } }
+
 /* prompt 编辑器 */
 .code-edit {
   font-family: var(--font-num); font-size: 12.5px; line-height: 1.75;
