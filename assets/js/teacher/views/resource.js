@@ -77,7 +77,7 @@
       <div class="res tr-res" data-res="${r.resId}">
         <button class="btn btn--ghost btn--icon btn--sm tr-del" data-res="${r.resId}" data-title="${U.esc(r.title)}" title="删除">${icon('x')}</button>
         <div class="res__thumb res__thumb--${r.type}">
-          <img class="res__cover" src="${r.cover}" alt="" loading="lazy" onerror="this.remove()">
+          <img class="res__cover" src="${U.esc(U.resourceUrl(r.cover))}" alt="" loading="lazy" onerror="this.remove()">
           <span class="res__type-label">${label[r.type]}</span>
           ${r.duration ? `<span class="res__dur">${r.duration}</span>` : ''}
           ${r.pages ? `<span class="res__dur">${r.pages} 页</span>` : ''}

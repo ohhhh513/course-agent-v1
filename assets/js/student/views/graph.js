@@ -139,8 +139,8 @@
             <p class="fz-12 t-dim" style="margin-bottom:8px">挂载学习资源（${(d.resources || []).length}）</p>
             <div class="stack" style="gap:8px;margin-bottom:18px">
               ${(d.resources || []).map(r => `
-                <div class="file-item res-link" data-res-id="${U.esc(r.resId)}" data-type="${U.esc(r.type)}" data-title="${U.esc(r.title)}" data-duration="${U.esc(r.duration || '')}" data-pages="${r.pages || 0}" data-url="${U.esc(r.url || '')}">
-                  <img class="file-item__cov" src="/assets/resources/covers/${r.resId}.jpg" alt="" onerror="this.remove()">
+                <div class="file-item res-link" data-res-id="${U.esc(r.resId)}" data-type="${U.esc(r.type)}" data-title="${U.esc(r.title)}" data-duration="${U.esc(r.duration || '')}" data-pages="${r.pages || 0}" data-url="${U.esc(U.resourceUrl(r.url))}">
+                  <img class="file-item__cov" src="${U.esc(U.resourceUrl('covers/' + r.resId + '.jpg'))}" alt="" onerror="this.remove()">
                   ${icon(r.type === 'video' ? 'video' : r.type === 'ppt' ? 'ppt' : 'file')}
                   <b>${U.esc(r.title)}</b>
                   <span class="fz-11 t-dim nowrap">${r.duration || (r.pages + ' 页')}</span>

@@ -78,6 +78,12 @@ function icon(name, cls) {
 }
 
 /* ---------------- 2. 工具函数 ---------------- */
+/* ---------------- 0. 资源云存储前缀 ---------------- */
+// 云端（Cloudflare R2 公共地址）。留空则回退到本地 /assets/resources 静态目录；
+// 可在运行时覆盖 window.RESOURCE_BASE = '' 切换为本地。
+const RESOURCE_BASE = 'https://pub-ce14a8bd5ed84c94971bd81b7f89063a.r2.dev';
+window.RESOURCE_BASE = RESOURCE_BASE;
+
 const U = {
   $: (s, r) => (r || document).querySelector(s),
   $$: (s, r) => Array.from((r || document).querySelectorAll(s)),
@@ -146,6 +152,15 @@ const U = {
   esc(s) {
     return String(s == null ? '' : s).replace(/[&<>"']/g, c =>
       ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  },
+
+  /** 资源地址 → 使用云存储（或本地 /assets/resources 静态目录）的完整 URL */
+  resourceUrl(p) {
+    if (!p) return '';
+    if (/^https?:\/\//i.test(p)) return p;                            // 已是完整 URL
+    const rel = String(p).replace(/^\/?assets\/resources\/?/, '');    // 去掉本地前缀
+    const base = window.RESOURCE_BASE || '';
+    return base ? `${base}/${rel}` : `/assets/resources/${rel}`;
   },
 
   /** 骨架屏 */
@@ -335,9 +350,9 @@ const R = {
   res(r) {
     const map = { video: 'video', ppt: 'ppt', doc: 'file', quiz: 'quiz' };
     const label = { video: '教学视频', ppt: '课堂PPT', doc: '教材文献', quiz: '题库' };
-    return `<div class="res" data-res="${r.resId}" data-kp="${U.esc(r.kp)}" ${r.url ? `data-url="${U.esc(r.url)}"` : ''}>
+    return `<div class="res" data-res="${r.resId}" data-kp="${U.esc(r.kp)}" ${r.url ? `data-url="${U.esc(U.resourceUrl(r.url))}"` : ''}>
       <div class="res__thumb res__thumb--${r.type}">
-        <img class="res__cover" src="/assets/resources/covers/${r.resId}.jpg" alt="" loading="lazy" onerror="this.remove()">
+        <img class="res__cover" src="${U.esc(U.resourceUrl('covers/' + r.resId + '.jpg'))}" alt="" loading="lazy" onerror="this.remove()">
         <span class="res__type-label">${label[r.type]}</span>
         ${r.duration ? `<span class="res__dur">${r.duration}</span>` : ''}
         ${r.pages ? `<span class="res__dur">${r.pages} 页</span>` : ''}

@@ -531,7 +531,7 @@
               <h5 class="fz-12 t-dim" style="margin:14px 0 6px">推荐资源</h5>
               <div class="row row--wrap" style="gap:6px;margin-bottom:14px">
                 ${d.resources.map(r => r.url
-                  ? `<a class="badge badge--outline res-badge-link" href="${U.esc(r.url)}" target="_blank" rel="noopener noreferrer" data-res-id="${U.esc(r.resId)}" data-type="${U.esc(r.type)}" data-url="${U.esc(r.url)}" data-title="${U.esc(r.name)}">${icon(r.type === 'video' ? 'play' : 'file')} ${U.esc(r.name)} · <span class="t-dim">${U.esc(r.meta)}</span></a>`
+                  ? `<a class="badge badge--outline res-badge-link" href="${U.esc(U.resourceUrl(r.url))}" target="_blank" rel="noopener noreferrer" data-res-id="${U.esc(r.resId)}" data-type="${U.esc(r.type)}" data-url="${U.esc(U.resourceUrl(r.url))}" data-title="${U.esc(r.name)}">${icon(r.type === 'video' ? 'play' : 'file')} ${U.esc(r.name)} · <span class="t-dim">${U.esc(r.meta)}</span></a>`
                   : `<span class="badge badge--outline">${icon(r.type === 'video' ? 'play' : 'file')} ${U.esc(r.name)} · <span class="t-dim">${U.esc(r.meta)}</span></span>`
                 ).join('') || '<span class="fz-12 t-dim">暂无推荐资源</span>'}
               </div>

@@ -459,14 +459,14 @@
       const self = this;
       const startAt = (pr && pr.position && pr.position > 0) ? pr.position : 0;
       const body = `
-        <video id="rv" src="${U.esc(res.url)}" controls ${startAt ? '' : 'autoplay'} style="width:100%;border-radius:var(--r-md);background:#000;max-height:60vh"></video>
+        <video id="rv" src="${U.esc(U.resourceUrl(res.url))}" controls ${startAt ? '' : 'autoplay'} style="width:100%;border-radius:var(--r-md);background:#000;max-height:60vh"></video>
         <div class="kv" style="margin-top:14px">
           <div class="kv__row"><span>资源类型</span><span>教学视频</span></div>
           <div class="kv__row"><span>时长</span><span>${U.esc(res.duration || '—')}</span></div>
           <div class="kv__row"><span>关联知识点</span><span>${U.esc(res.kp) || '—'}</span></div>
           <div class="kv__row"><span>续看进度</span><span id="rvProg" class="mono">${startAt ? '定位到 ' + this._fmt(startAt) : '从头播放'}</span></div>
         </div>`;
-      const footer = `<a class="btn btn--primary" href="${U.esc(res.url)}" download>下载视频</a><button class="btn" data-close>关闭</button>`;
+      const footer = `<a class="btn btn--primary" href="${U.esc(U.resourceUrl(res.url))}" download>下载视频</a><button class="btn" data-close>关闭</button>`;
 
       const save = (force) => {
         const v = U.$('#rv');
@@ -527,7 +527,7 @@
       const isPdf = (res.url || '').toLowerCase().endsWith('.pdf');
 
       if (isPdf) {
-        const url = res.url + (savedPage > 1 ? '#page=' + savedPage : '');
+        const url = U.resourceUrl(res.url) + (savedPage > 1 ? '#page=' + savedPage : '');
         const body = `
           <iframe id="rd" src="${U.esc(url)}" style="width:100%;height:62vh;border:0;border-radius:var(--r-md);background:#fff"></iframe>
           <div class="row" style="margin-top:12px;gap:8px;align-items:center">
@@ -537,7 +537,7 @@
             <span class="spacer"></span>
             <span class="fz-12 t-dim">共 ${res.pages || '?'} 页 · 续看已定位</span>
           </div>`;
-        const footer = `<a class="btn btn--primary" href="${U.esc(res.url)}" target="_blank" rel="noopener noreferrer">在新窗口打开</a><button class="btn" data-close>关闭</button>`;
+        const footer = `<a class="btn btn--primary" href="${U.esc(U.resourceUrl(res.url))}" target="_blank" rel="noopener noreferrer">在新窗口打开</a><button class="btn" data-close>关闭</button>`;
         const save = (page) => {
           page = parseInt(page, 10) || 0;
           API.student.saveResourceProgress(res.resId, {
@@ -553,7 +553,7 @@
             if (jb) jb.addEventListener('click', () => {
               const p = parseInt(inp.value, 10) || 1;
               const f = U.$('#rd');
-              if (f) f.src = res.url + '#page=' + p;
+              if (f) f.src = U.resourceUrl(res.url) + '#page=' + p;
               save(p);
             });
             ov.addEventListener('click', e => {
@@ -582,8 +582,8 @@
             <button class="btn btn--sm btn--primary" id="rdSave">保存进度</button>
           </div>`;
         const footer = `
-          <a class="btn btn--primary" href="${U.esc(res.url)}" target="_blank" rel="noopener noreferrer" id="rdView">在线查看</a>
-          <a class="btn" href="${U.esc(res.url)}" download>下载课件</a>
+          <a class="btn btn--primary" href="${U.esc(U.resourceUrl(res.url))}" target="_blank" rel="noopener noreferrer" id="rdView">在线查看</a>
+          <a class="btn" href="${U.esc(U.resourceUrl(res.url))}" download>下载课件</a>
           <button class="btn" data-close>关闭</button>`;
         Modal.open({
           title: res.title, body, footer,
