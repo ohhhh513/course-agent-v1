@@ -20,10 +20,15 @@ from app.agent_st.rag.topic import resolve_topic as resolve_topic_impl
 )
 def resolve_topic(ctx: ToolContext, text: str = "", chapter: str | None = None, question_id: int | None = None):
     extra = ctx.extra or {}
+    qid = question_id if question_id is not None else extra.get("question_id")
+    if qid is None:
+        example_ids = extra.get("example_question_ids") or []
+        if example_ids:
+            qid = example_ids[0]
     result = resolve_topic_impl(
         text=text or extra.get("message") or "",
         chapter=chapter or extra.get("chapter"),
-        question_id=question_id if question_id is not None else extra.get("question_id"),
+        question_id=qid,
     )
     ctx.turn["topic"] = result
     return result

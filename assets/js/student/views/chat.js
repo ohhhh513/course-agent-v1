@@ -127,10 +127,12 @@
      */
     toolsPanelHtml(entries, isOpen) {
       if (!entries || !entries.length) return '';
-        const rows = entries.map(e => {
+      // live 标记只允许存在一个（最后一个），避免重复 id="thinkLive" 导致内容写错位置
+      const liveIdx = entries.reduce((acc, e, i) => (e.live ? i : acc), -1);
+      const rows = entries.map((e, i) => {
         const kind = e.kind || (e.text ? 'think' : 'tool');
         if (kind === 'think') {
-          const liveId = e.live ? ' id="thinkLive"' : '';
+          const liveId = i === liveIdx ? ' id="thinkLive"' : '';
           return `<div class="tools__think">${icon('bulb')}<span${liveId}>${U.esc(e.text || '')}</span></div>`;
         }
         const running = e.ok === undefined || e.ok === null;
@@ -349,6 +351,8 @@
           onMeta: (d) => { if (d.sessionId && d.sessionId !== this.sessionId) this.sessionId = d.sessionId; },
           onToolStart: (d) => {
             const c = $id('streamCursor'); if (c) c.remove();
+            // 新工具轮开始：结束所有未完成的 think 条目（防止跨轮拼接与重复 id）
+            this._tools.forEach(e => { if (e.live) e.live = false; });
             flushAccToThink();
             this._tools.push({ kind: 'tool', name: d.name, args: d.args, ok: null });  // null=运行中
             renderPanel();

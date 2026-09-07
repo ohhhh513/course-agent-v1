@@ -80,7 +80,12 @@ def retrieve_chunks(
         "section_prefix": prefix,
         "source_types": types,
         "empty_this_call": this_call_empty,
-        "refuse_hint": "未检索到原文，请换章节、题号或问法。" if empty else None,
+        "refuse_hint": (
+            "未检索到课程原文。若问题与数据结构课程明显无关（日常生活等），直接简短说明本助手只覆盖数据结构课程内容，"
+            "不得讲解该问题本身；若属课程相关但证据不足，可用【补充】声明非课程原文。不得伪造引用。"
+            if empty
+            else None
+        ),
     }
     ctx.turn["retrieval"] = payload
     ctx.turn["retrieval_scope"] = scope

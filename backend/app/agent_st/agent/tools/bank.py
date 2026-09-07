@@ -8,7 +8,7 @@ from app.agent_st.rag.bank import search_similar
 
 @tool(
     name="get_question",
-    description="按题号读取题库中的题目。讲解某题时使用。默认不返回标准答案。",
+    description="按题号读取题库中的题目。讲解默认不返回答案；出题流可读答案以便避开原解题路径。",
     parameters={
         "type": "object",
         "properties": {
@@ -19,17 +19,26 @@ from app.agent_st.rag.bank import search_similar
     },
     flows=("explain", "generate_items"),
 )
-def get_question(ctx: ToolContext, question_id: int, include_answer: bool = False):
-    item = load_one(int(question_id), include_answer=include_answer)
+def get_question(ctx: ToolContext, question_id: int, include_answer: bool | None = None):
+    if include_answer is None:
+        include_answer = ctx.flow_id == "generate_items"
+    item = load_one(int(question_id), include_answer=bool(include_answer))
     if item is None:
         return {"error": "题目不存在", "question_id": question_id}
     ctx.turn["question"] = item
+    examples = ctx.turn.setdefault("example_questions", [])
+    try:
+        qid = int(item.get("id") or question_id)
+    except (TypeError, ValueError):
+        qid = int(question_id)
+    if not any(int(x.get("id") or 0) == qid for x in examples if isinstance(x, dict)):
+        examples.append(item)
     return item
 
 
 @tool(
     name="search_similar_questions",
-    description="检索同章、同配图形态的原题作为出题骨架。默认不返回 answer/analysis。",
+    description="检索同章题目作为防抄黑名单。不要把命中题当可微调骨架，不要抄题干或选项。默认不返回 answer/analysis。",
     parameters={
         "type": "object",
         "properties": {
@@ -53,18 +62,27 @@ def search_similar_questions(
     limit: int = 3,
 ):
     topic = ctx.turn.get("topic") or {}
-    question = ctx.turn.get("question") or {}
-    raw = (question.get("raw") or {}) if isinstance(question, dict) else {}
-    gtype = graph_type or (raw.get("graph") or {}).get("type")
-    fig = figure_mode or (question.get("figureMode") if question else None)
+    exclude: set[int] = set()
+    for raw_id in (ctx.extra or {}).get("example_question_ids") or []:
+        try:
+            exclude.add(int(raw_id))
+        except (TypeError, ValueError):
+            continue
+    if exclude_id is not None:
+        exclude.add(int(exclude_id))
+    elif topic.get("question_id"):
+        exclude.add(int(topic["question_id"]))
+    want = limit or 3
     hits = search_similar(
         course_chapter=course_chapter or topic.get("course_chapter"),
         section_prefix=section_prefix or topic.get("section_prefix"),
-        figure=fig,
-        graph_type=gtype,
-        exclude_id=exclude_id or topic.get("question_id"),
-        limit=limit or 3,
+        figure=figure_mode,
+        graph_type=graph_type,
+        exclude_id=None,
+        limit=want + len(exclude),
         include_answer=False,
     )
+    if exclude:
+        hits = [h for h in hits if int(h["id"]) not in exclude][:want]
     ctx.turn["similar"] = hits
     return hits

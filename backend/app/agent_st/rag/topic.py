@@ -185,3 +185,34 @@ def resolve_topic(
 
     result["suggestions"] = [f"{c['id']}:{c['title']}" for c in CHAPTERS]
     return result
+
+
+_COURSE_HINTS = (
+    "定义",
+    "实现",
+    "算法",
+    "复杂度",
+    "遍历",
+    "结点",
+    "节点",
+    "指针",
+    "递归",
+    "数据结构",
+    "课件",
+    "教材",
+    "ppt",
+)
+
+
+def looks_like_course_question(text: str) -> bool:
+    """粗判是否像本课问题：有题号/章节/考点关键词即视为课程相关。"""
+    query = str(text or "").strip()
+    if not query:
+        return False
+    if QUESTION_ID_RE.search(query) or SECTION_RE.search(query) or COURSE_CHAPTER_RE.search(query):
+        return True
+    lower = query.lower()
+    for key, _ in TOPIC_KEYWORDS:
+        if key.lower() in lower:
+            return True
+    return any(hint in query for hint in _COURSE_HINTS)

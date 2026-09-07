@@ -13,15 +13,11 @@ from app.agent_st.agent.registry import execute, openai_tools
 from app.agent_st.agent.store import AgentStore, allocate_question_id
 from app.agent_st.rag.bank import get_question, search_similar
 from app.agent_st.rag.ingest import ensure_bank_indexed
+from app.agent_st.rag.topic import looks_like_course_question
 from app.agent_st.rag.validate import validate_question
 
 # 注册工具
-from app.agent_st.agent.tools import bank, draft, rag, topic, validate  # noqa: F401
-
-EMPTY_RETRIEVAL_TEXT = "未检索到原文。请换一个章节关键词、题号或问法后再试。我不会用记忆补定义。"
-NEED_TOPIC_TEXT = "请先指定章节或题号，例如：「讲解 KMP」「第4章」「题12」。不确定主题时不会全库检索。"
-# 讲解流没走检索就出结论时，同样要求用户明确主题，措辞与演示模式保持一致。
-NO_RETRIEVAL_TEXT = "讲解前必须先检索原文，不能凭记忆作答。" + NEED_TOPIC_TEXT
+from app.agent_st.agent.tools import bank, draft, plan, rag, topic, validate  # noqa: F401
 
 Event = dict  # run_turn 产出的事件统一为 dict：{"type": ...}
 
@@ -61,40 +57,48 @@ def _run_tool(name: str, args: dict, ctx: ToolContext) -> tuple[list[Event], obj
 
 def _demo_explain(message: str, ctx: ToolContext) -> str:
     retrieval = ctx.turn.get("retrieval") or {}
-    if retrieval.get("empty"):
-        return EMPTY_RETRIEVAL_TEXT
     hits = retrieval.get("hits") or []
     topic = ctx.turn.get("topic") or {}
     lines = [
-        "【演示模式，未配置 LLM_API_KEY】以下讲解只根据检索片段整理。",
+        "【演示模式，未配置 LLM_API_KEY】",
         "",
-        f"结论：该问题对应 {topic.get('course_title') or ''} {topic.get('section') or ''}。",
+        f"结论：该问题对应 {topic.get('course_title') or '本课'} {topic.get('section') or ''}。",
         "",
     ]
+    if retrieval.get("empty") or not hits:
+        lines.append("未检索到课程原文。")
+        lines.append("【补充】以下内容基于课程常识，并非教材或题库原文，请以课堂材料为准。")
+        lines.append("请补充章节、题号或换一种问法，以便引用原文。")
+        return "\n".join(lines)
+    lines.insert(1, "以下讲解根据检索片段整理。")
     for hit in hits[:3]:
         qid = hit.get("question_id")
         cite = f"[题号 {qid}]" if qid else f"[小节 {hit.get('section')}]"
         lines.append(f"依据：{hit.get('text', '')[:220]} {cite}")
         lines.append("")
-    lines.append("易错点：请以引用片段为准，不要用课外定义替换。")
-    lines.append("若需要同类练习，请切换到「智能出题」。")
+    lines.append("易错点：请以引用片段为准；若需课外说明请看【补充】并自行核对教材。")
     return "\n".join(lines)
 
 
 def _demo_generate(message: str, ctx: ToolContext) -> str:
     topic = ctx.turn.get("topic") or {}
+    examples = [x for x in (ctx.turn.get("example_questions") or []) if isinstance(x, dict)]
     similar = ctx.turn.get("similar") or []
-    if not similar:
-        similar = search_similar(
-            course_chapter=topic.get("course_chapter"),
-            section_prefix=topic.get("section_prefix"),
-            limit=1,
-            include_answer=True,
-        )
-    if not similar:
-        return "未找到可复用的同章题目骨架。请指定章节或源题号。"
-    src = similar[0]
-    full = get_question(src["id"], include_answer=True) or src
+    src = examples[0] if examples else None
+    if src is None:
+        if not similar:
+            similar = search_similar(
+                course_chapter=topic.get("course_chapter"),
+                section_prefix=topic.get("section_prefix"),
+                limit=1,
+                include_answer=True,
+            )
+        if not similar:
+            return "未找到可复用的同章题目骨架。请指定章节、知识点或源题号。"
+        src = similar[0]
+    full = src
+    if src.get("id") is not None:
+        full = get_question(src["id"], include_answer=True) or src
     payload = {
         "id": allocate_question_id(ctx.store),
         "chapter": full.get("section") or src.get("chapter"),
@@ -116,7 +120,7 @@ def _demo_generate(message: str, ctx: ToolContext) -> str:
         "【演示模式，未配置 LLM_API_KEY】已按同章原题骨架写入 1 道草稿"
         f"（draft_id={saved['draft_id']}，status={saved['status']}）。\n"
         f"校验：{'通过' if check['ok'] else '失败'} {check.get('errors')}\n"
-        "请到草稿列表查看。配置 API Key 后可真正改写相似题。\n\n"
+        "演示模式未走「较大变动」构思与 novelty 校验。配置 API Key 后将按新工作流改写出题。\n\n"
         + json.dumps(payload, ensure_ascii=False, indent=2)
     )
 
@@ -129,14 +133,18 @@ def _demo_turn(flow_id: str, message: str, ctx: ToolContext) -> Iterator[Event]:
         ctx,
     )
     yield from events
-    if isinstance(topic, dict) and topic.get("question_id"):
+    example_ids = extra.get("example_question_ids") or []
+    if isinstance(topic, dict) and topic.get("question_id") and topic["question_id"] not in example_ids:
         ev, _ = _run_tool("get_question", {"question_id": topic["question_id"]}, ctx)
         yield from ev
-    if isinstance(topic, dict) and topic.get("uncertain") and flow_id == "explain":
-        for chunk in llm.chunk_text(NEED_TOPIC_TEXT):
-            yield {"type": "text", "delta": chunk}
-        yield {"type": "citations", "items": []}
-        return
+    if flow_id == "generate_items":
+        for qid in example_ids:
+            ev, _ = _run_tool(
+                "get_question",
+                {"question_id": qid, "include_answer": True},
+                ctx,
+            )
+            yield from ev
 
     query = message
     if isinstance(topic, dict) and topic.get("section"):
@@ -166,7 +174,24 @@ def _demo_turn(flow_id: str, message: str, ctx: ToolContext) -> Iterator[Event]:
 
 def _retrieval_empty(ctx: ToolContext) -> bool:
     retrieval = ctx.turn.get("retrieval") or {}
-    return bool(retrieval.get("empty"))
+    hits = retrieval.get("hits") or []
+    return bool(retrieval.get("empty") or not hits)
+
+
+def _explain_out_of_scope(ctx: ToolContext, message: str) -> bool:
+    """越界判定：主题不确定 + 不像本课问题 + 检索证据分低于越界阈值。
+
+    注意检索混合了向量分，生活类问题（如菜谱）也可能捞到几个低分切片，
+    因此不能用「有命中就算相关」，必须看最高分是否达到课程问题的水平。
+    """
+    topic = ctx.turn.get("topic") or {}
+    if not topic.get("uncertain", True):
+        return False
+    if looks_like_course_question(message):
+        return False
+    retrieval = ctx.turn.get("retrieval") or {}
+    max_score = float(retrieval.get("max_score") or 0.0)
+    return max_score < get_settings().off_topic_score
 
 
 def run_turn(
@@ -215,7 +240,12 @@ def run_turn(
                 final += event.get("delta") or ""
             yield event
         store.add_message(session_id, "assistant", ctx.turn.get("final_text") or final)
-        yield {"type": "done", "demo": True, "drafts": ctx.turn.get("drafts") or []}
+        yield {
+            "type": "done",
+            "demo": True,
+            "drafts": ctx.turn.get("drafts") or [],
+            "out_of_scope": _explain_out_of_scope(ctx, message) if flow_id == "explain" else False,
+        }
         return
 
     history = store.history(session_id, limit=12)
@@ -323,13 +353,7 @@ def run_turn(
         final_text = reply["content"] or ""
         break
 
-    if flow_id == "explain" and _retrieval_empty(ctx):
-        final_text = EMPTY_RETRIEVAL_TEXT
-        yield {"type": "text", "delta": final_text}
-    elif flow_id == "explain" and "retrieval" not in ctx.turn:
-        final_text = NO_RETRIEVAL_TEXT
-        yield {"type": "text", "delta": final_text}
-    elif not final_text:
+    if not final_text:
         final_text = "（模型没有返回文本）"
         yield {"type": "text", "delta": final_text}
 
@@ -337,7 +361,11 @@ def run_turn(
     store.add_message(session_id, "assistant", final_text)
     if ctx.tool_log:
         store.set_last_tool_log(session_id, ctx.tool_log, draft_id=_first_draft_id(ctx))
-    yield {"type": "done", "drafts": ctx.turn.get("drafts") or []}
+    yield {
+        "type": "done",
+        "drafts": ctx.turn.get("drafts") or [],
+        "out_of_scope": _explain_out_of_scope(ctx, message) if flow_id == "explain" else False,
+    }
 
 
 def _first_draft_id(ctx: ToolContext) -> str:

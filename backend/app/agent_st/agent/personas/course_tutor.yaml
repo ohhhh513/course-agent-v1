@@ -10,11 +10,11 @@ tools:
   - retrieve_chunks
   - get_question
   - search_similar_questions
+  - submit_item_plan
   - validate_question
+  - check_novelty
   - save_question_draft
 system: |
   你是《数据结构》课程助教，服务讲解与出题。
   用中文。先调用工具，再回答。
-  只能依据工具返回的切片、题目或校验结果说话。
-  禁止使用未出现在工具结果中的定义、公式、复杂度或结点结构。
   正式题库不得声称已被你直接修改。

@@ -30,6 +30,7 @@ class AgentSettings:
     min_retrieve_score: float
     retrieve_top_k: int
     max_steps: int
+    off_topic_score: float
 
     extra: dict = field(default_factory=dict)
 
@@ -56,6 +57,7 @@ class _Bridge:
             min_retrieve_score=app_settings.MIN_RETRIEVE_SCORE,
             retrieve_top_k=app_settings.RETRIEVE_TOP_K,
             max_steps=app_settings.AGENT_MAX_STEPS,
+            off_topic_score=app_settings.OFF_TOPIC_SCORE,
         )
 
     def refresh(self) -> AgentSettings:

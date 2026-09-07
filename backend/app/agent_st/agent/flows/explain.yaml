@@ -10,9 +10,8 @@ tools:
 max_steps: 6
 steps:
   - 用 resolve_topic 定位课程大章与王道小节；上下文若有 question_id 必须传入
-  - 若 uncertain=true，先请用户指定章节或题号，不要全库检索
+  - 即使 uncertain=true，仍用用户原话调用 retrieve_chunks，不要拒绝检索
   - 若有 question_id，调用 get_question（默认不要 include_answer）
-  - 必须调用 retrieve_chunks，source_types 默认 question_analysis 与 textbook
-  - 若 empty=true，只回答「未检索到原文」，禁止用模型记忆补定义
-  - 按 explain.md 结构讲解，关键断言标注 [题号 id] 或 [小节]
-  - 询问是否要出同类题
+  - 必须调用 retrieve_chunks，source_types 默认 question_analysis、textbook、ppt
+  - 有命中则关键断言标注 [题号 id] 或 [小节]；命中不足时用【补充】声明非课程原文，禁止伪造引用
+  - 按 explain.md 结构讲解（结论 → 依据 → 可选补充 → 易错点）

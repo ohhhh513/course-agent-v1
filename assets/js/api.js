@@ -613,6 +613,18 @@ window.API = (function () {
     /** GET /agent/ingest/stats  RAG 知识库切片统计（教师） */
     ingestStats: (p) => request('GET', '/agent/ingest/stats', p, () => ({ chunks: 0 })),
 
+    /** GET /question/drafts  我的出题草稿箱  params: { status: all|draft|invalid|published } */
+    drafts: (p) => request('GET', '/question/drafts', p, () => ({ total: 0, list: [] })),
+
+    /** PUT /question/drafts/{draftId}  编辑草稿（保存时后端重新校验） */
+    draftUpdate: (p) => request('PUT', '/question/drafts/' + p.draftId, { payload: p.payload }, () => ({ updated: true })),
+
+    /** DELETE /question/drafts/{draftId}  删除草稿 */
+    draftDelete: (p) => request('DELETE', '/question/drafts/' + p.draftId, p, () => ({ deleted: true })),
+
+    /** POST /question/drafts/{draftId}/publish  发布草稿 → 正式题库 */
+    draftPublish: (p) => request('POST', '/question/drafts/' + p.draftId + '/publish', p, () => ({ published: true })),
+
     /** GET /question/bank  题库列表  params: { kpId, type, status, difficulty, keyword, page } */
     bank: (p) => request('GET', '/question/bank', p, (q) => {
       let list = M().questionBank.slice();

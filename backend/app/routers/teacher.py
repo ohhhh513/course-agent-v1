@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, Query, Body, Form, UploadFile, File, HTT
 from sqlalchemy.orm import Session
 from sqlalchemy import func, desc
 from pydantic import BaseModel
-from typing import Optional, List
+from typing import Optional, List, Union
 
 from ..database import get_db
 from ..models.user import User, TeacherClass
@@ -1046,6 +1046,7 @@ question_router = APIRouter(prefix="/api/v1/question", tags=["AI 出题"])
 class GenQuestionReq(BaseModel):
     materialIds: Optional[List[str]] = None
     kpIds: Optional[List[str]] = None
+    exampleQuestionIds: Optional[List[Union[int, str]]] = None
     types: Optional[List[str]] = None
     difficulty: int = 3
     count: int = 3
@@ -1109,33 +1110,89 @@ def ai_generate_questions(
 
     事件序列：meta(batchId) → tool_start/tool_end → draft(每题落库即推) → done(draftIds)。
     草稿仅写入 st_question_drafts（按 user_id 归属个人），绝不写入 questions 正式题库。
+    入参：kpIds 0～N、exampleQuestionIds 0～3，两者数量之和必须大于 0。
     """
     from sse_starlette.sse import EventSourceResponse
     from ..agent_st.agent.runtime import run_turn
+    from ..agent_st.rag.bank import get_question as load_st_question
+    from ..agent_st.rag.kp_map import parse_example_question_ids, sections_for_kp_ids
+
+    kp_ids = [str(x) for x in (req.kpIds or []) if str(x).strip()]
+    example_ids = parse_example_question_ids(req.exampleQuestionIds)
+    if len(example_ids) > 3:
+        return fail("例题最多选择 3 道", 400)
+    if not kp_ids and not example_ids:
+        return fail("请至少指定一个知识点或一道例题", 400)
 
     count = max(1, min(req.count or 3, 10))
+    kp_rows = []
+    if kp_ids:
+        kp_rows = db.query(GraphNode).filter(
+            GraphNode.id.in_(kp_ids), GraphNode.graph_type == "knowledge"
+        ).all()
+    kp_names = [row.name for row in kp_rows]
+    if not kp_names:
+        kp_names = list(kp_ids)
+    kp_sections = sections_for_kp_ids(kp_ids)
+    chapter_nums: list[int] = []
+    for row in kp_rows:
+        m = re.search(r"第\s*([1-9])\s*章", row.chapter or "")
+        if m and int(m.group(1)) not in chapter_nums:
+            chapter_nums.append(int(m.group(1)))
+    example_section = ""
+    if example_ids:
+        first = load_st_question(example_ids[0], include_answer=False)
+        if first:
+            example_section = str(first.get("section") or "")
+
+    def _chapter_hint(seq: int) -> str:
+        if kp_sections:
+            return kp_sections[seq % len(kp_sections)]
+        if example_section:
+            return example_section
+        if chapter_nums:
+            return f"第{chapter_nums[seq % len(chapter_nums)]}章"
+        return ""
+
+    def _message(seq: int) -> str:
+        parts = [f"请出第 {seq}/{count} 道单选题。"]
+        if kp_names:
+            parts.append("指定知识点：" + "、".join(kp_names) + "。")
+        else:
+            parts.append("未指定知识点，请按例题所属章节出题。")
+        if example_ids:
+            parts.append("参考例题（仅作启发，必须较大变动）：" + "、".join(f"题{x}" for x in example_ids) + "。")
+        else:
+            parts.append("未指定例题，请根据知识点与课程资料从零出题；检索到的题库题只作防抄对照。")
+        parts.append(f"难度 {req.difficulty}/5。")
+        extra = (req.requirement or "").strip()
+        if extra:
+            parts.append(extra)
+        else:
+            parts.append("必须先构思并重算答案，禁止对原题做数值微扰。")
+        return "".join(parts)
 
     def gen():
         batch_id = "BT" + uuid.uuid4().hex[:10].upper()
         draft_ids: list[str] = []
         demo = False
-        # kp → 课程章号：正式图谱 chapter 形如 "第5章 图"，与原型 1-9 章号一致
-        chapter_nums: list[int] = []
-        if req.kpIds:
-            for row in db.query(GraphNode).filter(GraphNode.id.in_(req.kpIds)).all():
-                m = re.search(r"第\s*([1-9])\s*章", row.chapter or "")
-                if m and int(m.group(1)) not in chapter_nums:
-                    chapter_nums.append(int(m.group(1)))
         yield {"event": "meta", "data": json.dumps({"batchId": batch_id, "count": count}, ensure_ascii=False)}
         for i in range(count):
-            context = {"batch_id": batch_id, "difficulty": req.difficulty, "seq": i + 1}
-            if chapter_nums:
-                context["chapter"] = f"第{chapter_nums[i % len(chapter_nums)]}章"
-            hint = req.requirement or "请出一道与课程资料相关的单选题，题目必须能被 validate_question 校验通过。"
-            message = f"请出第 {i + 1}/{count} 道题。{hint}难度要求 {req.difficulty}/5。"
+            chapter = _chapter_hint(i)
+            context = {
+                "batch_id": batch_id,
+                "difficulty": req.difficulty,
+                "seq": i + 1,
+                "kp_ids": kp_ids,
+                "kp_names": kp_names,
+                "kp_sections": kp_sections,
+                "example_question_ids": example_ids,
+            }
+            if chapter:
+                context["chapter"] = chapter
             try:
                 for ev in run_turn(
-                    message=message,
+                    message=_message(i + 1),
                     flow_id="generate_items",
                     context=context,
                     user_id=user.user_id,
@@ -1149,7 +1206,6 @@ def ai_generate_questions(
                     elif etype == "done":
                         demo = demo or bool(ev.get("demo"))
                     elif etype in ("text", "tool_start", "tool_end", "citations"):
-                        # 出题过程事件照常转发（content 用 question/gen 前端折叠展示过程日志）
                         yield {"event": etype if etype != "text" else "log",
                                "data": json.dumps(ev, ensure_ascii=False)}
                     elif etype == "error":
@@ -1171,6 +1227,192 @@ def ai_generate_questions_stream(
 ):
     """/gen 的语义化别名，行为完全一致"""
     return ai_generate_questions(req=req, db=db, user=user)
+
+
+# ========== /question/drafts 草稿箱（教师个人，发布才进正式题库） ==========
+
+def _owned_draft(draft_id: str, user: User, db: Session):
+    from ..models.agent_st import STQuestionDraft
+    row = db.query(STQuestionDraft).filter(STQuestionDraft.draft_id == draft_id).first()
+    if not row:
+        return None, None, fail("草稿不存在", 404)
+    if row.user_id and user.user_id and row.user_id != user.user_id:
+        return None, None, fail("无权操作他人的草稿", 403)
+    try:
+        payload = json.loads(row.payload_json or "{}")
+    except json.JSONDecodeError:
+        payload = {}
+    return row, payload, None
+
+
+class DraftUpdateReq(BaseModel):
+    payload: dict
+
+
+@question_router.get("/drafts")
+def draft_list(
+    status: str = Query("all"),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """当前教师的出题草稿箱"""
+    from ..models.agent_st import STQuestionDraft
+    q = db.query(STQuestionDraft).filter(STQuestionDraft.user_id == user.user_id)
+    if status and status != "all":
+        q = q.filter(STQuestionDraft.status == status)
+    rows = q.order_by(STQuestionDraft.created_at.desc()).all()
+    items = []
+    for r in rows:
+        try:
+            payload = json.loads(r.payload_json or "{}")
+        except json.JSONDecodeError:
+            payload = {}
+        items.append({
+            "draftId": r.draft_id,
+            "status": r.status,
+            "createdAt": fmt_dt(r.created_at, "%m-%d %H:%M"),
+            "errors": json.loads(r.errors_json or "[]"),
+            "id": payload.get("id"),
+            "chapter": payload.get("chapter"),
+            "stem": payload.get("question"),
+            "answer": payload.get("answer"),
+            "publishedQId": payload.get("_published_q_id"),
+            "payload": payload,
+        })
+    return ok({"total": len(items), "list": items})
+
+
+@question_router.put("/drafts/{draft_id}")
+def draft_update(
+    draft_id: str,
+    req: DraftUpdateReq,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """编辑草稿（题干/选项/答案/解析/章节/图规格），保存时重新校验"""
+    from ..agent_st.rag.validate import validate_question
+    row, payload, err = _owned_draft(draft_id, user, db)
+    if err:
+        return err
+    new_payload = dict(req.payload or {})
+    # 保留系统字段
+    new_payload["id"] = payload.get("id")
+    if payload.get("_published_q_id"):
+        new_payload["_published_q_id"] = payload["_published_q_id"]
+    check = validate_question(new_payload)
+    row.payload_json = json.dumps(new_payload, ensure_ascii=False)
+    row.status = "draft" if check["ok"] else "invalid"
+    row.errors_json = json.dumps(check["errors"], ensure_ascii=False)
+    db.commit()
+    return ok({"draftId": draft_id, "status": row.status, "errors": check["errors"]})
+
+
+@question_router.delete("/drafts/{draft_id}")
+def draft_delete(
+    draft_id: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    row, _, err = _owned_draft(draft_id, user, db)
+    if err:
+        return err
+    db.delete(row)
+    db.commit()
+    return ok({"draftId": draft_id, "deleted": True})
+
+
+@question_router.post("/drafts/{draft_id}/publish")
+def draft_publish(
+    draft_id: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """草稿发布 → questions 正式题库（status=published，与正常出题流程一致）"""
+    from ..models.question import Question
+    from ..agent_st.rag.validate import validate_question
+    from ..agent_st.rag.kp_map import kps_for_section
+    from ..agent_st.rag.chapter_map import map_section
+
+    row, payload, err = _owned_draft(draft_id, user, db)
+    if err:
+        return err
+    if row.status == "published":
+        return fail("该草稿已发布过")
+    check = validate_question(payload)
+    if not check["ok"]:
+        return fail("草稿校验未通过：" + "；".join(check["errors"]))
+
+    # 选项：原型 {A..D} map → Question 的 [{key,text,right}]
+    options_map = payload.get("options") or {}
+    options = [
+        {"key": k, "text": options_map.get(k, ""), "right": payload.get("answer") == k}
+        for k in ("A", "B", "C", "D")
+    ]
+
+    # 图规格 → figure_json
+    figure, figure_json = {}, None
+    if payload.get("graph"):
+        figure["graph"] = payload.get("graph")
+    if payload.get("options_graph"):
+        figure["options_graph"] = payload.get("options_graph")
+    has_image = bool(payload.get("has_image"))
+    if figure:
+        figure["has_image"] = has_image
+        figure_json = json.dumps(figure, ensure_ascii=False)
+
+    # 知识点：小节前缀 → 映射 KP（首项为主）；无映射回退该章第一个知识点
+    prefix = str(payload.get("chapter") or "").split(" ")[0]
+    kps = kps_for_section(prefix)
+    chapter = map_section(prefix)
+    if not kps:
+        first_node = (
+            db.query(GraphNode)
+            .filter(GraphNode.graph_type == "knowledge", GraphNode.chapter.like(f"第{chapter['id']}章%"))
+            .first()
+        )
+        kps = [first_node.id] if first_node else []
+    kp_names = {
+        r[0]: r[1]
+        for r in db.query(GraphNode.id, GraphNode.name)
+        .filter(GraphNode.graph_type == "knowledge", GraphNode.id.in_(kps)).all()
+    } if kps else {}
+    kp_id = kps[0] if kps else None
+    kp_path = [chapter["title"]] + [kp_names.get(k, k) for k in kps]
+
+    # q_id 分配：AI + 自增三位（与 KHD 序列隔离）
+    existing = [
+        int(re.sub(r"\D", "", r[0]))
+        for r in db.query(Question.q_id).filter(Question.q_id.like("AI%")).all()
+        if re.sub(r"\D", "", r[0]).isdigit()
+    ]
+    q_id = f"AI{(max(existing) + 1) if existing else 1:03d}"
+
+    db.add(Question(
+        q_id=q_id,
+        course_id="C2026DS001",
+        kp_id=kp_id,
+        type="single",
+        difficulty=3,  # 草稿未携带难度，默认 3；可在题库管理再调
+        score=5,
+        status="published",
+        stem=payload.get("question") or "",
+        options=json.dumps(options, ensure_ascii=False),
+        answer=str(payload.get("answer") or ""),
+        analysis=payload.get("analysis") or "",
+        kp_path=json.dumps(kp_path, ensure_ascii=False),
+        pre_kp="[]",
+        post_kp="[]",
+        is_key=0,
+        source_ref_file="ai_draft",
+        source_ref_locator=f"草稿 {draft_id}",
+        figure_json=figure_json,
+        has_image=has_image,
+    ))
+    row.status = "published"
+    payload["_published_q_id"] = q_id
+    row.payload_json = json.dumps(payload, ensure_ascii=False)
+    db.commit()
+    return ok({"draftId": draft_id, "qId": q_id, "kpId": kp_id})
 
 
 @question_router.get("/bank")

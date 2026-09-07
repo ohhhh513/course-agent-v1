@@ -174,6 +174,9 @@ def test_runtime_demo_explain(st_env):
     assert types[-1] == "done"
     done = events[-1]
     assert done["demo"] is True
+    assert done.get("out_of_scope") is False
+    text = "".join(e.get("delta") or "" for e in events if e["type"] == "text")
+    assert "我不会用记忆补定义" not in text
 
 
 def test_runtime_demo_generate_writes_draft(st_env):
@@ -188,6 +191,8 @@ def test_runtime_demo_generate_writes_draft(st_env):
     d = draft_events[0]
     assert d["draft_id"].startswith("QD")
     assert d["payload"]["id"] >= 90001
+    text = "".join(e.get("delta") or "" for e in events if e["type"] == "text")
+    assert "较大变动" in text
     # 草稿落库且归属生成用户（查询必须走被替换的临时库 session）
     db = persistence.SessionLocal()
     row = db.query(STQuestionDraft).filter(STQuestionDraft.draft_id == d["draft_id"]).first()
@@ -203,3 +208,146 @@ def test_session_isolation_between_users(st_env):
     sid1 = next(e["session_id"] for e in ev1 if e["type"] == "session")
     sid2 = next(e["session_id"] for e in ev2 if e["type"] == "session")
     assert sid1 != sid2
+
+
+# ---------------- 较大变动 / 讲解补充 ----------------
+def test_parse_example_question_ids():
+    from app.agent_st.rag.kp_map import parse_example_question_id, parse_example_question_ids, sections_for_kp_ids
+
+    assert parse_example_question_id(12) == 12
+    assert parse_example_question_id("KHD012") == 12
+    assert parse_example_question_id("KHD12") == 12
+    assert parse_example_question_ids(["KHD001", 1, "2", 2]) == [1, 2]
+    assert "6.4" in sections_for_kp_ids(["KP51"])
+
+
+def test_novelty_rejects_numeric_micro_edit():
+    from app.agent_st.rag.novelty import check_novelty
+
+    src = {"id": 1, "question": "从 1，3，6 中选一个最大数", "graph": None}
+    cand = {"id": 90001, "question": "从 1，2，6 中选一个最大数", "graph": None}
+    result = check_novelty(cand, [src])
+    assert not result["ok"]
+    assert any("微扰" in e or "变动不足" in e for e in result["errors"])
+
+
+def test_novelty_accepts_changed_asked_target():
+    from app.agent_st.rag.novelty import check_novelty
+
+    graph = {
+        "type": "weighted_undirected_graph",
+        "nodes": ["a", "b", "c", "d"],
+        "edges": [
+            {"from": "a", "to": "b", "weight": 4},
+            {"from": "b", "to": "c", "weight": 1},
+            {"from": "a", "to": "c", "weight": 5},
+            {"from": "c", "to": "d", "weight": 2},
+        ],
+    }
+    src = {"id": 8, "question": "对下图使用 Kruskal 算法，加入生成树的第一条边是(  )。", "graph": graph}
+    cand = {
+        "id": 90001,
+        "question": "对下图使用 Kruskal 算法，最小生成树的总权值是(  )。",
+        "graph": graph,
+    }
+    result = check_novelty(cand, [src])
+    assert result["ok"], result["errors"]
+
+
+def test_novelty_rejects_tiny_weight_tweak():
+    from app.agent_st.rag.novelty import check_novelty
+
+    src_graph = {
+        "type": "weighted_undirected_graph",
+        "nodes": ["a", "b", "c", "d"],
+        "edges": [
+            {"from": "a", "to": "b", "weight": 4},
+            {"from": "b", "to": "c", "weight": 1},
+            {"from": "a", "to": "c", "weight": 5},
+            {"from": "c", "to": "d", "weight": 2},
+        ],
+    }
+    cand_graph = {
+        "type": "weighted_undirected_graph",
+        "nodes": ["a", "b", "c", "d"],
+        "edges": [
+            {"from": "a", "to": "b", "weight": 4},
+            {"from": "b", "to": "c", "weight": 1},
+            {"from": "a", "to": "c", "weight": 6},
+            {"from": "c", "to": "d", "weight": 2},
+        ],
+    }
+    stem = "对下图使用 Kruskal 算法，加入生成树的第一条边是(  )。"
+    result = check_novelty(
+        {"id": 90001, "question": stem, "graph": cand_graph},
+        [{"id": 8, "question": stem, "graph": src_graph}],
+    )
+    assert not result["ok"]
+
+
+def test_novelty_accepts_multiple_weight_changes():
+    from app.agent_st.rag.novelty import check_novelty
+
+    src_graph = {
+        "type": "weighted_undirected_graph",
+        "nodes": ["a", "b", "c", "d"],
+        "edges": [
+            {"from": "a", "to": "b", "weight": 4},
+            {"from": "b", "to": "c", "weight": 1},
+            {"from": "a", "to": "c", "weight": 5},
+            {"from": "c", "to": "d", "weight": 2},
+        ],
+    }
+    cand_graph = {
+        "type": "weighted_undirected_graph",
+        "nodes": ["a", "b", "c", "d"],
+        "edges": [
+            {"from": "a", "to": "b", "weight": 8},
+            {"from": "b", "to": "c", "weight": 3},
+            {"from": "a", "to": "c", "weight": 1},
+            {"from": "c", "to": "d", "weight": 9},
+        ],
+    }
+    stem = "对下图使用 Kruskal 算法，加入生成树的第一条边是(  )。"
+    result = check_novelty(
+        {"id": 90001, "question": stem, "graph": cand_graph},
+        [{"id": 8, "question": stem, "graph": src_graph}],
+    )
+    assert result["ok"], result["errors"]
+
+
+def test_demo_explain_empty_uses_supplement(st_env):
+    from app.agent_st.agent import runtime
+    from app.agent_st.agent.context import ToolContext
+    from app.agent_st.agent.store import AgentStore
+
+    ctx = ToolContext(store=AgentStore(user_id="U_SUP"), flow_id="explain", extra={}, user_id="U_SUP")
+    ctx.turn["retrieval"] = {"empty": True, "hits": []}
+    ctx.turn["topic"] = {"uncertain": True, "course_title": "", "section": ""}
+    text = runtime._demo_explain("今天天气如何", ctx)
+    assert "【补充】" in text
+    assert "我不会用记忆补定义" not in text
+    assert runtime._explain_out_of_scope(ctx, "今天天气如何") is True
+    assert runtime._explain_out_of_scope(ctx, "请解释 KMP 的定义") is False
+
+
+def test_save_draft_requires_plan_and_novelty(st_env):
+    from app.agent_st.agent.context import ToolContext
+    from app.agent_st.agent.store import AgentStore
+    from app.agent_st.agent.tools.draft import save_question_draft
+
+    ctx = ToolContext(store=AgentStore(user_id="U_SAVE"), flow_id="generate_items", extra={}, user_id="U_SAVE")
+    result = save_question_draft(ctx, dict(VALID))
+    assert result.get("ok") is False
+    assert any("submit_item_plan" in e for e in result.get("errors") or [])
+
+
+def test_prompt_grounding_splits_by_flow():
+    from app.agent_st.agent.loader import build_system_prompt, load_flow, load_persona
+
+    persona = load_persona()
+    explain = build_system_prompt(persona, load_flow("explain"))
+    generate = build_system_prompt(persona, load_flow("generate_items"))
+    assert "【补充】" in explain
+    assert "check_novelty" in generate
+    assert "微扰动" in generate

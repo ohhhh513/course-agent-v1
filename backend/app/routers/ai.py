@@ -133,7 +133,7 @@ def ai_chat(
     content_parts: list[str] = []
     citations: list = []
     session_id = ""
-    out_of_scope = True
+    out_of_scope = False
     demo = False
     for ev in _agent_events(req, user):
         etype = ev.get("type")
@@ -145,7 +145,7 @@ def ai_chat(
             citations = ev.get("items") or []
         elif etype == "done":
             demo = bool(ev.get("demo"))
-    out_of_scope = not citations
+            out_of_scope = bool(ev.get("out_of_scope"))
     result = {
         "messageId": "MSG" + uuid.uuid4().hex[:12],
         "method": req.method,
@@ -169,7 +169,7 @@ async def ai_chat_stream(
 
     def gen():  # 同步生成器：sse_starlette 会放入线程池迭代，避免阻塞事件循环
         session_id = ""
-        out_of_scope = True
+        out_of_scope = False
         for ev in _agent_events(req, user):
             etype = ev.get("type")
             if etype == "session":
@@ -192,11 +192,11 @@ async def ai_chat_stream(
                 yield {"event": etype, "data": json.dumps(ev, ensure_ascii=False)}
             elif etype == "citations":
                 items = ev.get("items") or []
-                out_of_scope = not items
                 yield {"event": "citations", "data": json.dumps({"items": items}, ensure_ascii=False)}
             elif etype == "error":
                 yield {"event": "error", "data": json.dumps({"message": ev.get("message")}, ensure_ascii=False)}
             elif etype == "done":
+                out_of_scope = bool(ev.get("out_of_scope"))
                 done_payload = {"outOfScope": out_of_scope, "demo": bool(ev.get("demo")),
                                 "drafts": ev.get("drafts") or []}
                 yield {"event": "done", "data": json.dumps(done_payload, ensure_ascii=False)}

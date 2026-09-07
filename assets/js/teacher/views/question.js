@@ -7,18 +7,22 @@
     tab: 'gen',
     gen: { kpIds: [], difficulty: 3, count: 6 },
     bankFilter: 'all', bankKeyword: '', bankPage: 1, bankPageSize: 10,
+    draftFilter: 'all',
     render() {
       const el = U.$('#view-question');
       el.innerHTML = `
       <div class="tabs" id="qTabs" style="margin-bottom:16px">
         <button class="is-active" data-t="gen">${icon('sparkle')} AI 智能出题</button>
+        <button data-t="draft">${icon('pencil')} 草稿箱</button>
         <button data-t="bank">${icon('file')} 题库管理</button>
       </div>
       <div id="qBody"></div>`;
       U.$$('#qTabs button', el).forEach(b => b.addEventListener('click', () => {
         U.$$('#qTabs button', el).forEach(x => x.classList.remove('is-active'));
         b.classList.add('is-active'); this.tab = b.dataset.t;
-        this.tab === 'gen' ? this.renderGen() : this.renderBank();
+        if (this.tab === 'gen') this.renderGen();
+        else if (this.tab === 'draft') this.renderDrafts();
+        else this.renderBank();
       }));
       this.renderGen();
     },
@@ -174,7 +178,7 @@
                       ${icon('sparkle')}<div id="genProgressText">正在生成第1道题目</div>
                     </div>
                     <div class="callout callout--warn" style="margin:0 16px 12px">${icon('alert')}
-                      <div>草稿仅保存在你的个人出题历史中，<b>未进入正式题库</b>；确认无误后可通过「题库管理 → 批量导入」合并。</div></div>
+                      <div>草稿已存入<b>草稿箱</b>（未进入正式题库）；切换到「草稿箱」可查看、修改后一键发布。</div></div>
                   </div>`;
               }
               U.$('#genList', box).insertAdjacentHTML('beforeend', card(d, i));
@@ -197,7 +201,7 @@
               if (progressStatus) progressStatus.remove();
               const prog = U.$('#genProg', box);
               if (prog) prog.textContent = (d.count || this._drafts.length) + ' 题 · 完成';
-              Toast.ok('AI 出题完成', `${d.count || 0} 道草稿已存入你的出题历史`);
+              Toast.ok('AI 出题完成', `${d.count || 0} 道草稿已存入草稿箱`);
             },
           }).catch((e) => {
             this._genBusy = false;
@@ -241,6 +245,201 @@
       U.$('#gPack', box).addEventListener('click', () => {
         API.question.createPack({ kpIds: list.map(q => q.kpId), count: this.gen.count, difficulty: this.gen.difficulty }).then(r =>
           Toast.ok('靶向补练包已生成', '包号 ' + r.packId + ' · 已推送'));
+      });
+    },
+
+    /* ================= 草稿箱 ================= */
+
+    renderDrafts() {
+      const box = U.$('#qBody');
+      box.innerHTML = `
+      <div class="card">
+        <div class="card__head">
+          <h3>${icon('pencil')} 出题草稿箱</h3>
+          <span class="badge badge--outline">仅本人可见 · 发布后进入题库</span>
+          <span class="spacer"></span>
+          <div class="seg" id="draftSeg">
+            <button data-s="all" class="is-active">全部</button><button data-s="draft">待处理</button>
+            <button data-s="invalid">校验未过</button><button data-s="published">已发布</button>
+          </div>
+          <button class="btn btn--sm btn--outline" id="draftRefresh">${icon('refresh')} 刷新</button>
+        </div>
+        <div class="card__body" id="draftList" style="max-height:calc(100vh - var(--topbar-h) - 220px);overflow-y:auto"></div>
+      </div>`;
+      U.$$('#draftSeg button', box).forEach(b => b.addEventListener('click', () => {
+        U.$$('#draftSeg button', box).forEach(x => x.classList.remove('is-active'));
+        b.classList.add('is-active'); this.draftFilter = b.dataset.s; this.loadDrafts();
+      }));
+      U.$('#draftRefresh', box).addEventListener('click', () => this.loadDrafts());
+      this.loadDrafts();
+    },
+
+    loadDrafts() {
+      const list = U.$('#draftList');
+      list.innerHTML = `<div class="fz-12 t-dim" style="padding:14px">加载中…</div>`;
+      API.question.drafts({ status: this.draftFilter }).then(r => {
+        if (!r.list.length) {
+          list.innerHTML = `<div class="fz-12 t-dim" style="padding:20px;text-align:center">
+            ${icon('pencil')} 暂无草稿——去「AI 智能出题」生成，草稿会自动出现在这里</div>`;
+          return;
+        }
+        list.innerHTML = r.list.map((d, i) => this.draftCard(d, i)).join('');
+        // 图题渲染
+        r.list.forEach((d, i) => {
+          const p = d.payload || {};
+          if (p.graph) { const el = U.$('#draftFig' + i); if (el && window.DsFigure) DsFigure.mount(el, p.graph); }
+          if (p.options_graph) {
+            Object.keys(p.options_graph).forEach(k => {
+              const el = U.$(`#draftOptFig${i}${k}`);
+              if (el && window.DsFigure) DsFigure.mount(el, p.options_graph[k]);
+            });
+          }
+        });
+        // 编辑 / 发布 / 删除
+        U.$('[data-dedit]', list)?.addEventListener || null;
+        U.$$('#draftList [data-dedit]').forEach(b => b.addEventListener('click', () => {
+          const d = r.list.find(x => x.draftId === b.dataset.dedit);
+          this.openDraftEdit(d);
+        }));
+        U.$$('#draftList [data-dpub]').forEach(b => b.addEventListener('click', () => {
+          const draftId = b.dataset.dpub;
+          b.disabled = true; b.textContent = '发布中…';
+          API.question.draftPublish({ draftId }).then(res => {
+            Toast.ok('已发布进题库', '新题号 ' + res.qId + '，可在「题库管理」中查看');
+            this.loadDrafts();
+          }).catch(err => { b.disabled = false; b.textContent = '发布'; Toast.err('发布失败', err && err.message); });
+        }));
+        U.$$('#draftList [data-ddel]').forEach(b => b.addEventListener('click', () => {
+          if (!b.dataset.armed) {
+            b.dataset.armed = '1'; b.classList.add('is-arm'); b.textContent = '确认删除';
+            setTimeout(() => { b.dataset.armed = ''; b.classList.remove('is-arm'); b.textContent = '删除'; }, 3000);
+            return;
+          }
+          API.question.draftDelete({ draftId: b.dataset.ddel }).then(() => {
+            Toast.ok('草稿已删除'); this.loadDrafts();
+          }).catch(err => Toast.err('删除失败', err && err.message));
+        }));
+      }).catch(err => {
+        list.innerHTML = `<div class="fz-12 t-dim" style="padding:14px">加载失败：${U.esc(err.message || '')}</div>`;
+      });
+    },
+
+    draftCard(d, i) {
+      const p = d.payload || {};
+      const statusBadge = {
+        draft: '<span class="badge badge--ok">校验通过</span>',
+        invalid: '<span class="badge badge--danger">校验未过</span>',
+        published: `<span class="badge badge--brand">已发布 ${U.esc(d.publishedQId || '')}</span>`,
+      }[d.status] || `<span class="badge badge--outline">${U.esc(d.status)}</span>`;
+      const opts = ['A', 'B', 'C', 'D'].map(k => ({
+        key: k, text: (p.options || {})[k] || '', right: p.answer === k,
+      }));
+      const errs = (d.errors || []).map(e => `<div>${U.esc(e)}</div>`).join('');
+      const canPub = d.status === 'draft';
+      return `
+      <div class="gen-q" style="margin:0 16px 12px">
+        <div class="gen-q__head">
+          <span class="badge badge--brand">${i + 1}</span>
+          <b>单选题</b>
+          <span class="badge badge--outline">${U.esc(d.chapter || '')}</span>
+          ${statusBadge}
+          <span class="badge badge--outline mono">#${p.id || ''}</span>
+          <span class="spacer"></span>
+          <span class="fz-11 t-dim">${U.esc(d.createdAt || '')}</span>
+        </div>
+        <div class="gen-q__body">
+          <div>${U.esc(p.question || '')}</div>
+          <div id="draftFig${i}" style="margin:8px 0"></div>
+          <div class="gen-q__opts">${opts.map(o => {
+            const mini = p.options_graph && p.options_graph[o.key] ? `<div id="draftOptFig${i}${o.key}" style="margin:4px 0"></div>` : '';
+            return `<div class="gen-q__opt ${o.right ? 'is-answer' : ''}"><i>${o.key}</i> ${o.text ? U.esc(o.text) : ''}${o.right ? ' ✓ 正确答案' : ''}${mini}</div>`;
+          }).join('')}</div>
+          <div class="callout callout--brand" style="margin-top:10px;padding:9px 11px">${icon('bulb')}
+            <div><b>解析：</b>${U.esc(p.analysis || '暂无')}</div></div>
+          ${d.status === 'invalid' && errs ? `<div class="callout callout--danger" style="margin-top:8px;padding:7px 10px">${icon('alert')}<div>${errs}</div></div>` : ''}
+        </div>
+        <div class="row" style="padding:0 16px 12px;gap:8px">
+          ${d.status !== 'published' ? `<button class="btn btn--sm btn--outline" data-dedit="${d.draftId}">${icon('edit')} 编辑</button>` : ''}
+          ${canPub ? `<button class="btn btn--sm btn--primary" data-dpub="${d.draftId}">${icon('check')} 发布进题库</button>` : ''}
+          ${d.status !== 'published' ? `<button class="btn btn--sm btn--ghost" data-ddel="${d.draftId}" style="color:var(--danger)">删除</button>` : ''}
+          <span class="spacer"></span>
+          ${d.publishedQId ? `<span class="fz-11 t-dim">已入库题号 <b class="mono">${U.esc(d.publishedQId)}</b></span>` : ''}
+        </div>
+      </div>`;
+    },
+
+    openDraftEdit(d) {
+      const p = d.payload || {};
+      const opts = ['A', 'B', 'C', 'D'].map(k => ({ key: k, text: (p.options || {})[k] || '', right: p.answer === k }));
+      Modal.open({
+        title: icon('pencil') + ' 编辑草稿 · ' + U.esc(d.draftId), size: 'wide',
+        body: `
+        <div class="question-edit">
+          <div class="question-edit__summary">
+            <div class="question-edit__summary-main">
+              <span class="badge badge--brand">草稿</span>
+              <div><b>修改后保存会重新校验</b><span>校验未通过仍可保存，但发布前必须通过</span></div>
+            </div>
+            <span class="question-edit__summary-id">原始题号 <b class="mono">#${U.esc(p.id || '')}</b></span>
+          </div>
+          <section class="question-edit__section">
+            <div class="edit-grid">
+              <div class="edit-field"><label>章节（王道小节）</label>
+                <input class="input" id="dqChapter" value="${U.esc(p.chapter || '')}" placeholder="如 6.4 图的应用"></div>
+              <div class="edit-field"><label>答案</label>
+                <input class="input" id="dqAns" value="${U.esc(p.answer || '')}" placeholder="如 B"></div>
+            </div>
+          </section>
+          <section class="question-edit__section">
+            <div class="question-edit__section-head"><div><b>题干</b><span>${p.graph ? '本题含图，图结构暂不支持在线编辑' : ''}</span></div></div>
+            <div class="question-edit__section-body">
+              <textarea class="textarea question-edit__stem" id="dqStem">${U.esc(p.question || '')}</textarea>
+              ${p.graph ? '<div id="draftEditFig" style="margin:8px 0"></div>' : ''}
+            </div>
+          </section>
+          <section class="question-edit__section">
+            <div class="question-edit__section-head"><div><b>选项</b><span>勾选正确答案；含小图的选项会随内容保留</span></div></div>
+            <div class="question-edit__options" id="dqOpts">
+              ${opts.map(o => `
+                <div class="eq-opt">
+                  <span class="select eq-opt-key" style="border:none;background:transparent">${o.key}</span>
+                  <input class="input eq-opt-text" data-k="${o.key}" value="${U.esc(o.text)}" placeholder="选项 ${o.key}">
+                  <label class="question-edit__correct"><input type="checkbox" class="dq-opt-right" data-k="${o.key}" ${o.right ? 'checked' : ''}> <span>正确答案</span></label>
+                </div>`).join('')}
+            </div>
+          </section>
+          <section class="question-edit__section">
+            <div class="question-edit__section-head"><div><b>解析</b></div></div>
+            <div class="question-edit__section-body">
+              <textarea class="textarea question-edit__analysis" id="dqAnalysis">${U.esc(p.analysis || '')}</textarea>
+            </div>
+          </section>
+        </div>`,
+        footer: `<button class="btn" data-close>取消</button><button class="btn btn--primary" id="dqSave">保存草稿</button>`,
+        onMount(ov, close) {
+          if (p.graph && window.DsFigure) { const el = U.$('#draftEditFig', ov); if (el) DsFigure.mount(el, p.graph); }
+          // 正确答案单选语义：勾一个自动取消其它
+          U.$$('#dqOpts .dq-opt-right', ov).forEach(cb => cb.addEventListener('change', () => {
+            if (cb.checked) U.$$('#dqOpts .dq-opt-right', ov).forEach(x => { if (x !== cb) x.checked = false; });
+          }));
+          U.$('#dqSave', ov).addEventListener('click', () => {
+            const answer = U.$('#dqAns', ov).value.trim()
+              || (U.$$('#dqOpts .dq-opt-right', ov).find(x => x.checked) || {}).dataset?.k || '';
+            const newOpts = {};
+            U.$$('#dqOpts .eq-opt-text', ov).forEach(inp => { newOpts[inp.dataset.k] = inp.value; });
+            const payload = Object.assign({}, p, {
+              question: U.$('#dqStem', ov).value,
+              options: newOpts,
+              answer: answer || p.answer,
+              analysis: U.$('#dqAnalysis', ov).value,
+              chapter: U.$('#dqChapter', ov).value.trim() || p.chapter,
+            });
+            API.question.draftUpdate({ draftId: d.draftId, payload }).then(res => {
+              Toast.ok('草稿已保存', res.status === 'draft' ? '校验通过' : '校验未通过：' + (res.errors || []).join('；'));
+              close(); Question.loadDrafts();
+            }).catch(err => Toast.err('保存失败', err && err.message));
+          });
+        }
       });
     },
 

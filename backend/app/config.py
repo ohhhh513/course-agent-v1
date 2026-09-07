@@ -54,6 +54,9 @@ class Settings(BaseSettings):
     MIN_RETRIEVE_SCORE: float = 0.12
     RETRIEVE_TOP_K: int = 6
     AGENT_MAX_STEPS: int = 6
+    # 越界判定阈值：主题不确定且不像课程问题时，检索最高分低于该值即视为越界
+    # （生活类问题对课程切片的混合检索分通常 < 0.3，课程问题一般 > 0.4）
+    OFF_TOPIC_SCORE: float = 0.28
 
     # .env 与本文件同目录（backend/app/.env），兼容 backend/.env 与环境变量
     model_config = {"env_file": (str(BASE_DIR / ".env"), ".env")}

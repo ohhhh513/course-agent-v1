@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from pathlib import Path
-
 import yaml
 
 from app.agent_st.agent.config import AGENT_DIR
@@ -29,6 +27,27 @@ def load_flow(flow_id: str) -> dict:
     return load_yaml(f"flows/{flow_id}.yaml")
 
 
+EXPLAIN_GROUNDING = (
+    "讲解约束：必须先检索。命中的原文必须引用 [题号] 或 [小节]。"
+    "原文不足时可以用课程常识补充，但必须用【补充】显式标注「非课程原文」，"
+    "且不得伪造题号或小节。"
+)
+
+GENERATE_GROUNDING = (
+    "出题约束：必须按任务流调用工具，不要跳过构思与校验。"
+    "题面与 graph 不得把题库原题做数值/标签微扰动后当作新题。"
+    "没有工具结果时禁止编造 graph 结构或字段名。"
+    "保存前必须 submit_item_plan（含解题过程）、validate_question、check_novelty 均通过。"
+)
+
+
+def _grounding_for_flow(flow: dict) -> str:
+    flow_id = str(flow.get("id") or "")
+    if flow_id == "generate_items":
+        return GENERATE_GROUNDING
+    return EXPLAIN_GROUNDING
+
+
 def build_system_prompt(persona: dict, flow: dict, extra_context: dict | None = None) -> str:
     skill_names = flow.get("skills") or persona.get("skills") or []
     skills = [load_skill(name) for name in skill_names]
@@ -40,6 +59,6 @@ def build_system_prompt(persona: dict, flow: dict, extra_context: dict | None = 
             "\n\n".join(s for s in skills if s),
             "当前任务流（必须按步骤调用工具，不要跳过检索）：\n" + flow_text,
             "当前页面上下文：" + str(ctx),
-            "没有工具结果时禁止编造定义、题号或 graph 结构。",
+            _grounding_for_flow(flow),
         ]
     )

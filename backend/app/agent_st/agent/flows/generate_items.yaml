@@ -8,14 +8,18 @@ tools:
   - retrieve_chunks
   - get_question
   - search_similar_questions
+  - submit_item_plan
   - validate_question
+  - check_novelty
   - save_question_draft
-max_steps: 8
+max_steps: 12
 steps:
-  - resolve_topic 锁定章节；若用户给了源题 id 则 get_question 复制骨架
-  - search_similar_questions 取 2–3 道同章同 figure_mode 的题（不要看答案）
+  - resolve_topic；若 context 有 example_question_ids 则逐个 get_question（可带答案）
   - retrieve_chunks 取该小节解析/教材，题意不得超出资料
-  - 只输出闭集 JSON，然后 validate_question
-  - 校验失败则按 errors 修改，最多再试 2 次
+  - search_similar_questions 只作防抄黑名单，禁止当可微调骨架
+  - submit_item_plan：提问目标、实例草图、逐步解题与正确答案、干扰项易错点、相对对照题的变动
+  - 按易错点设计错误选项，只输出闭集 JSON
+  - validate_question；失败则按 errors 修改，最多再试 2 次
+  - check_novelty；失败必须加大变动后重做，禁止数值微扰
   - 通过后每题调用一次 save_question_draft
   - 提醒这是草稿，尚未进入正式题库
