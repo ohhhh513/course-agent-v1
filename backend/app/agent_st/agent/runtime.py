@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import queue
+import threading
 from collections.abc import Iterator
 
 from app.agent_st.agent import llm
@@ -226,23 +228,57 @@ def run_turn(
     final_text = ""
 
     for _ in range(max_steps):
-        # 真实 token 流式：本轮产出的文本 delta 先收集，确定非 tool_calls 轮后转发
-        buffer: list[Event] = []
+        # 真实 token 流式：complete_stream 在工作线程中生成，delta 经队列实时
+        # 转发给 SSE 生成器——token 到一个发一个，不再等整轮生成完毕（修复
+        # "一瞬间给出大段回复"的体验问题）。
+        q: "queue.Queue[tuple[str, object]]" = queue.Queue()
+        holder: dict = {}
 
-        def on_text_delta(t: str, _buf: list[Event] = buffer) -> None:
-            _buf.append({"type": "text", "delta": t})
+        def _worker(msgs=messages, _tools=tools, _q=q, _holder=holder):
+            try:
+                _holder["reply"] = llm.complete_stream(
+                    msgs, _tools,
+                    on_text_delta=lambda t: _q.put(("delta", t)),
+                    on_reasoning_delta=lambda t: _q.put(("think", t)),
+                )
+                _q.put(("done", None))
+            except Exception as exc:  # noqa: BLE001
+                _q.put(("error", exc))
 
-        try:
-            reply = llm.complete_stream(messages, tools, on_text_delta=on_text_delta)
-        except Exception as exc:  # noqa: BLE001
-            yield {"type": "error", "message": f"模型调用失败：{exc}"}
-            yield {"type": "done"}
-            return
+        threading.Thread(target=_worker, daemon=True).start()
+        reply: dict | None = None
+        round_text_parts: list[str] = []
+        round_think_parts: list[str] = []
+        while True:
+            try:
+                kind, payload = q.get(timeout=0.1)
+            except queue.Empty:
+                continue
+            if kind == "delta":
+                round_text_parts.append(payload)
+                yield {"type": "text", "delta": payload}
+            elif kind == "think":
+                round_think_parts.append(payload)
+                yield {"type": "think", "delta": payload}
+            elif kind == "error":
+                yield {"type": "error", "message": f"模型调用失败：{payload}"}
+                yield {"type": "done"}
+                return
+            else:
+                reply = holder.get("reply")
+                break
+        assert reply is not None
+
+        def _log_think(text: str) -> None:
+            text = (text or "").strip()
+            if text:
+                ctx.tool_log.append({"kind": "think", "text": text})
 
         if reply["tool_calls"]:
-            # 编排轮：过渡文本照常转发，随后执行工具
-            for ev in buffer:
-                yield ev
+            # 编排轮：思考内容与本轮过渡文本归入"思考"日志（前端在 tool_start 时
+            # 将过渡文本收进折叠面板），随后执行工具
+            _log_think("".join(round_think_parts))
+            _log_think("".join(round_text_parts))
             messages.append(
                 {
                     "role": "assistant",
@@ -265,7 +301,7 @@ def run_turn(
                 yield {"type": "tool_start", "name": tc["name"], "args": args}
                 result = execute(tc["name"], args, ctx)
                 ctx.tool_log.append(
-                    {"name": tc["name"], "args": args,
+                    {"kind": "tool", "name": tc["name"], "args": args,
                      "ok": not (isinstance(result, dict) and result.get("error"))}
                 )
                 preview = result if not isinstance(result, list) else result[:4]
@@ -282,9 +318,8 @@ def run_turn(
                     yield {"type": "draft", **result}
             continue
 
-        # 最终回答轮：delta 来自真实 token 流
-        for ev in buffer:
-            yield ev
+        # 最终回答轮：delta 已实时转发，无需重发；思考内容也入日志
+        _log_think("".join(round_think_parts))
         final_text = reply["content"] or ""
         break
 

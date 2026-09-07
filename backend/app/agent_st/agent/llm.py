@@ -47,13 +47,14 @@ def complete_stream(
     messages: list[dict],
     tools: list[dict] | None,
     on_text_delta=None,
+    on_reasoning_delta=None,
 ) -> dict:
     """真实 token 流式调用。
 
     边流式产出文本（经 on_text_delta 回调），边聚合 tool_calls 片段。
+    若模型返回 reasoning_content（如 deepseek 系思考模型的内部推理），
+    经 on_reasoning_delta 实时回调，供前端"思考"面板展示。
     返回值形状与 complete() 一致：{"content", "tool_calls"}。
-    若本次产生了 tool_calls，说明这是一次编排轮（而非最终回答），
-    期间流出的文本是模型的过渡说明，调用方照常转发即可。
     """
     settings = get_settings()
     client = _client()
@@ -72,6 +73,10 @@ def complete_stream(
         delta = chunk.choices[0].delta
         if delta is None:
             continue
+        # 思考模型的内部推理（deepseek: reasoning_content）——实时转发
+        reasoning = getattr(delta, "reasoning_content", None) or getattr(delta, "reasoning", None)
+        if reasoning and on_reasoning_delta:
+            on_reasoning_delta(reasoning)
         if delta.content:
             content_parts.append(delta.content)
             if on_text_delta:

@@ -156,6 +156,7 @@ window.API = (function () {
           case 'tool_start':  h.onToolStart && h.onToolStart(data); break;
           case 'tool_end':    h.onToolEnd && h.onToolEnd(data); break;
           case 'content':     h.onContent && h.onContent(data); break;
+          case 'think':       h.onThink && h.onThink(data); break;
           case 'citations':   h.onCitations && h.onCitations(data); break;
           case 'draft':       h.onDraft && h.onDraft(data); break;
           case 'log':         h.onLog && h.onLog(data); break;
@@ -338,14 +339,14 @@ window.API = (function () {
      四、AI 智能辅导与答疑
      ====================================================================== */
   const ai = {
-    /** GET /ai/methods  可用教学法列表 */
-    methods: (p) => request('GET', '/ai/methods', p, () => M().teachingMethods),
-
     /** GET /ai/sessions  历史会话列表 */
     sessions: (p) => request('GET', '/ai/sessions', p, () => ({ total: M().chatHistory.length, list: M().chatHistory })),
 
     /** GET /ai/sessions/{sessionId}/messages  会话消息（含溯源引用） */
     messages: (p) => request('GET', `/ai/sessions/${p.sessionId || 'new'}/messages`, p, () => M().chatMessages),
+
+    /** DELETE /ai/sessions/{sessionId}  删除会话（仅本人会话，含全部消息） */
+    deleteSession: (p) => request('DELETE', `/ai/sessions/${p.sessionId}`, p, () => ({ deleted: true })),
 
     /** GET /ai/suggest-questions  猜你想问（基于薄弱点 + 高频问题） */
     suggestQuestions: (p) => request('GET', '/ai/suggest-questions', p, () => M().studentDashboard.suggestedQuestions),

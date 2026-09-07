@@ -51,6 +51,26 @@ def map_chapter(section: str):
     return None
 
 
+MAPPING_PATH = BACKEND_DIR / "kp_section_mapping.json"
+
+
+def load_section_kp_mapping() -> dict:
+    """加载人工维护的 王道小节前缀 → KP id 列表 映射（backend/kp_section_mapping.json）"""
+    if not MAPPING_PATH.exists():
+        return {}
+    try:
+        raw = json.loads(MAPPING_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        print(f"[warn] 映射文件读取失败，全部使用章级代表知识点：{exc}")
+        return {}
+    return {str(k): v for k, v in raw.items()
+            if not k.startswith("_") and isinstance(v, list) and v}
+
+
+def section_prefix_of(chapter: str) -> str:
+    return str(chapter or "").split(" ")[0]
+
+
 def ensure_bank_file() -> Path:
     ST_BANK_DIR.mkdir(parents=True, exist_ok=True)
     if not BANK_PATH.exists():
@@ -69,6 +89,20 @@ def main():
 
     init_db()  # 确保 figure_json/has_image 列已迁移
     db = SessionLocal()
+
+    # 细粒度知识点映射：小节前缀 → KP 列表；KP 名称取自知识图谱（用于 kp_path）
+    section_kp = load_section_kp_mapping()
+    kp_names = {}
+    if section_kp:
+        from app.models.graph import GraphNode
+        need = {k for kps in section_kp.values() for k in kps} | {c[3] for c in CHAPTERS}
+        for kp_id, name in db.query(GraphNode.id, GraphNode.name).filter(
+                GraphNode.graph_type == "knowledge", GraphNode.id.in_(need)).all():
+            kp_names[kp_id] = name
+        missing = need - set(kp_names)
+        if missing:
+            print(f"[warn] 映射中的 KP 在图谱中不存在：{sorted(missing)}（相关小节将回退章级代表知识点）")
+
     created = updated = skipped = 0
     try:
         for item in items:
@@ -82,7 +116,11 @@ def main():
                 skipped += 1
                 print(f"  跳过无法识别章节的题 #{qid_num}: {item.get('chapter')}")
                 continue
-            _, title, kp, diff = mapped
+            _, title, chapter_kp, diff = mapped
+            prefix = section_prefix_of(item.get("chapter"))
+            # 细粒度映射优先；未维护的小节回退章级代表知识点
+            kps = [k for k in section_kp.get(prefix, []) if k in kp_names] or [chapter_kp]
+            kp = kps[0]
             q_id = f"KHD{qid_num:03d}"
 
             options_src = item.get("options") or {}
@@ -114,7 +152,7 @@ def main():
                 options=json.dumps(options, ensure_ascii=False),
                 answer=str(item.get("answer") or ""),
                 analysis=item.get("analysis") or "",
-                kp_path=json.dumps([title], ensure_ascii=False),
+                kp_path=json.dumps([title] + [kp_names[k] for k in kps], ensure_ascii=False),
                 pre_kp="[]",
                 post_kp="[]",
                 is_key=0,

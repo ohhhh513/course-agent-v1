@@ -1063,3 +1063,67 @@
   min-height: 340px;
   overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable;
 }
+
+/* 思考与工具调用折叠面板（AI 智能答疑） */
+.tools {
+  margin: 0 0 9px; border: 1px solid var(--border); border-radius: var(--r-sm);
+  background: var(--surface); overflow: hidden;
+}
+.tools__head {
+  display: flex; align-items: center; gap: 7px; width: 100%;
+  padding: 7px 11px; font-size: 12px; font-weight: 600; color: var(--text-2);
+  background: var(--surface-2); transition: background var(--t-fast);
+}
+.tools__head:hover { background: var(--surface-3); }
+.tools__head svg { width: 14px; height: 14px; color: var(--brand-400); flex: 0 0 14px; }
+.tools__head .caret { margin-left: auto; transition: transform var(--t-fast); }
+.tools.is-open .tools__head .caret { transform: rotate(180deg); }
+.tools__body { display: none; padding: 9px 11px; border-top: 1px solid var(--border-soft); }
+.tools.is-open .tools__body { display: block; }
+.tools__think {
+  display: flex; gap: 6px; align-items: flex-start;
+  padding: 7px 9px; border-radius: var(--r-sm); background: var(--surface-2);
+  font-size: 12px; color: var(--text-2); line-height: 1.7; font-style: italic;
+}
+.tools__think svg { width: 13px; height: 13px; flex: 0 0 13px; color: var(--warn); margin-top: 2px; }
+.tools__think + .tools__item, .tools__item + .tools__item, .tools__item + .tools__think, .tools__think + .tools__think { margin-top: 6px; }
+.tools__item { display: flex; align-items: center; gap: 7px; font-size: 12px; color: var(--text-2); }
+.tools__dot { flex: 0 0 7px; width: 7px; height: 7px; border-radius: 50%; background: var(--text-3); }
+.tools__dot.is-run { background: var(--warn); animation: tools-pulse 1s infinite; }
+.tools__dot.is-ok { background: var(--ok); }
+.tools__dot.is-bad { background: var(--danger); }
+@keyframes tools-pulse { 50% { opacity: .35; } }
+.tools__item b { color: var(--text); font-weight: 600; }
+.tools__state { font-size: 11px; color: var(--text-3); flex: 0 0 auto; }
+.tools__args {
+  font-family: var(--font-num, Consolas, monospace); font-size: 11px; color: var(--text-3);
+  background: var(--surface-2); border-radius: 4px; padding: 1px 6px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 55%;
+}
+
+/* 答疑右栏：与左侧聊天区等高，历史会话独立滚动 */
+.chat-shell > .stack {
+  height: calc(100vh - var(--topbar-h) - 44px); min-height: 520px;
+  overflow: hidden;
+}
+.chat-shell > .stack .card:last-child {
+  flex: 1 1 auto; min-height: 0;
+  display: flex; flex-direction: column; overflow: hidden;
+}
+.chat-shell > .stack .card:last-child .card__body {
+  flex: 1 1 auto; min-height: 0; overflow-y: auto;
+}
+/* 历史会话条目：悬停出现删除按钮 */
+#sessBox .list__item { position: relative; padding-right: 30px; }
+#sessBox .list__item .list__main { padding-right: 0; }
+.sess-del {
+  position: absolute; right: 8px; top: 50%; transform: translateY(-50%);
+  width: 24px; height: 24px; border: none; border-radius: 6px;
+  background: transparent; color: var(--text-3); cursor: pointer;
+  display: none; align-items: center; justify-content: center;
+  transition: background var(--t-fast), color var(--t-fast);
+}
+.sess-del svg { width: 13px; height: 13px; }
+#sessBox .list__item:hover .sess-del { display: flex; }
+.sess-del:hover { background: var(--danger-soft, #fee2e2); color: var(--danger); }
+.sess-del.is-arm { display: flex; background: var(--danger); color: #fff; }

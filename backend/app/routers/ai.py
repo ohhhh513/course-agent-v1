@@ -12,11 +12,11 @@ from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from typing import Optional
 
-from ..database import get_db, SessionLocal
+from ..database import get_db
 from ..models.ai import ChatSession, ChatMessage
 from ..models.intervention import TeacherClassDashboard
 from ..middleware.auth import get_current_user
-from ..schemas.common import ok
+from ..schemas.common import ok, fail
 from ..utils import loads, fmt_dt
 from ..agent_st.agent.runtime import run_turn
 from ..agent_st.persistence import ChatMessage as STChatMessage
@@ -38,20 +38,6 @@ class FeedbackReq(BaseModel):
 
 
 # ========= 路由实现 =========
-@router.get("/methods")
-def ai_methods(
-    db: Session = Depends(get_db),
-    user=Depends(get_current_user),
-):
-    return ok([
-        {"key": "lecture", "name": "讲授法", "desc": "系统讲解概念与原理，结构清晰", "icon": "book"},
-        {"key": "guided", "name": "引导式", "desc": "不直接给答案，层层提问引导思考", "icon": "compass"},
-        {"key": "case", "name": "案例式", "desc": "结合实际工程案例说明", "icon": "briefcase"},
-        {"key": "heuristic", "name": "启发式", "desc": "从反例与矛盾中启发理解", "icon": "bulb"},
-        {"key": "fun", "name": "趣味式", "desc": "类比与故事化表达，降低认知门槛", "icon": "smile"},
-    ])
-
-
 @router.get("/sessions")
 def ai_sessions(
     db: Session = Depends(get_db),
@@ -68,6 +54,24 @@ def ai_sessions(
     ]
     # 不再兜底返回他人的 chat_history —— 新用户无会话则返回空
     return ok({"total": len(items), "list": items})
+
+
+@router.delete("/sessions/{session_id}")
+def ai_delete_session(
+    session_id: str,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    """删除会话（含全部消息），仅限本人会话"""
+    s = db.query(ChatSession).filter(ChatSession.session_id == session_id).first()
+    if not s:
+        return fail("会话不存在", 404)
+    if s.user_id and s.user_id != user.user_id:
+        return fail("无权删除他人的会话", 403)
+    db.query(ChatMessage).filter(ChatMessage.session_id == session_id).delete()
+    db.delete(s)
+    db.commit()
+    return ok({"sessionId": session_id, "deleted": True})
 
 
 @router.get("/sessions/{session_id}/messages")
@@ -119,23 +123,6 @@ def _agent_events(req: ChatReq, user):
     )
 
 
-def _set_ai_method(session_id: str, method: str) -> None:
-    """把教学法标记到最后一条 AI 消息（展示用，非关键路径）"""
-    db = SessionLocal()
-    try:
-        row = (
-            db.query(ChatMessage)
-            .filter(ChatMessage.session_id == session_id, ChatMessage.role == "ai")
-            .order_by(ChatMessage.id.desc())
-            .first()
-        )
-        if row:
-            row.method = method
-            db.commit()
-    finally:
-        db.close()
-
-
 @router.post("/chat")
 def ai_chat(
     req: ChatReq,
@@ -159,7 +146,6 @@ def ai_chat(
         elif etype == "done":
             demo = bool(ev.get("demo"))
     out_of_scope = not citations
-    _set_ai_method(session_id, req.method)
     result = {
         "messageId": "MSG" + uuid.uuid4().hex[:12],
         "method": req.method,
@@ -198,6 +184,10 @@ async def ai_chat_stream(
                 # content 事件统一 JSON 编码（delta 中可能含换行/markdown 符号，裸文本会破坏 SSE 解析）
                 yield {"event": "content", "data": json.dumps(
                     {"delta": ev.get("delta") or ""}, ensure_ascii=False)}
+            elif etype == "think":
+                # 模型内部推理（reasoning_content）→ 前端折叠面板实时展示
+                yield {"event": "think", "data": json.dumps(
+                    {"delta": ev.get("delta") or ""}, ensure_ascii=False)}
             elif etype in ("tool_start", "tool_end", "draft"):
                 yield {"event": etype, "data": json.dumps(ev, ensure_ascii=False)}
             elif etype == "citations":
@@ -210,7 +200,6 @@ async def ai_chat_stream(
                 done_payload = {"outOfScope": out_of_scope, "demo": bool(ev.get("demo")),
                                 "drafts": ev.get("drafts") or []}
                 yield {"event": "done", "data": json.dumps(done_payload, ensure_ascii=False)}
-        _set_ai_method(session_id, req.method)
 
     return EventSourceResponse(gen())
 
