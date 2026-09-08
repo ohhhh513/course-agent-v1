@@ -20,7 +20,7 @@ from ..models.graph import LearningPath, GraphNode
 from ..models.practice import AnswerRecord
 from ..middleware.auth import get_current_user
 from ..schemas.common import ok, list_response
-from ..utils import loads
+from ..utils import loads, fmt_dt
 
 intervention_router = APIRouter(prefix="/api/v1/intervention", tags=["教学干预"])
 report_router = APIRouter(prefix="/api/v1/report", tags=["学情报告"])
@@ -256,12 +256,12 @@ def confirm_intervention(
         db.commit()
         return ok({
             "ivId": new_iv.iv_id, "status": "running",
-            "pushedAt": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%S"),
+            "pushedAt": fmt_dt(datetime.utcnow(), "%Y-%m-%dT%H:%M:%S"),
         })
 
     iv = db.query(Intervention).filter(Intervention.iv_id == iv_id).first()
     if not iv:
-        return ok({"ivId": iv_id, "status": "running", "pushedAt": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%S")})
+        return ok({"ivId": iv_id, "status": "running", "pushedAt": fmt_dt(datetime.utcnow(), "%Y-%m-%dT%H:%M:%S")})
     iv.status = "running"
     iv.confirmed_at = datetime.utcnow()
     if req.steps:
@@ -269,7 +269,7 @@ def confirm_intervention(
     db.commit()
     return ok({
         "ivId": iv_id, "status": "running",
-        "pushedAt": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%S"),
+        "pushedAt": fmt_dt(datetime.utcnow(), "%Y-%m-%dT%H:%M:%S"),
     })
 
 
@@ -431,12 +431,12 @@ def report_list(
         detail = loads(r.detail_json) or {}
         meta = detail.get("meta") or {}
         sections = detail.get("sections") or []
-        start = meta.get("startDate") or (r.created_at.strftime("%Y-%m-%d") if r.created_at else "")
+        start = meta.get("startDate") or fmt_dt(r.created_at, "%Y-%m-%d")
         end = meta.get("endDate") or start
         period = f"{start} ~ {end}" if start or end else ""
         items.append({
             "reportId": r.report_id, "title": r.title, "status": r.status,
-            "createdAt": r.created_at.strftime("%Y-%m-%d") if r.created_at else "",
+            "createdAt": fmt_dt(r.created_at, "%Y-%m-%d"),
             "scope": meta.get("chapter") or "全课程",
             "period": period,
             "creator": meta.get("generator") or "系统",
@@ -595,7 +595,7 @@ def report_detail(
     })
 
 
-# ====== 报告导出（真实生成 .docx / .html） ======
+# ====== 报告导出（直接返回文件流） ======
 @report_router.post("/{report_id}/export")
 def export_report(
     report_id: str,
@@ -603,8 +603,8 @@ def export_report(
     db: Session = Depends(get_db),
     user=Depends(get_current_user),
 ):
-    """导出报告为 .docx 或 .html 文件 — 真实生成"""
-    import os, tempfile, uuid, html as _html
+    """导出报告为 .pdf、.html 或 .docx，并直接交给浏览器下载"""
+    import io, html as _html
     fmt = (req.format or "docx").lower()
 
     r = db.query(Report).filter(Report.report_id == report_id).first()
@@ -634,18 +634,103 @@ def export_report(
         parts.append("</body></html>")
         return "".join(parts)
 
-    # html / pdf：统一生成 HTML（pdf 暂无转换器，提供可打印网页）
-    if fmt in ("html", "pdf"):
-        html = _write_html()
-        fname = f"report_{report_id}_{uuid.uuid4().hex[:8]}.html"
-        fpath = os.path.join(tempfile.gettempdir(), fname)
-        with open(fpath, "w", encoding="utf-8") as f:
-            f.write(html)
-        return ok({
-            "url": f"/api/v1/report/files/{fname}",
-            "format": fmt,
-            "filePath": fpath,
-        })
+    def _wrap_text(value, width):
+        """按字符换行，兼容中文和英文报告内容。"""
+        text = str(value or "")
+        result = []
+        for line in text.splitlines() or [""]:
+            if not line:
+                result.append("")
+                continue
+            while len(line) > width:
+                result.append(line[:width])
+                line = line[width:]
+            result.append(line)
+        return result
+
+    def _write_pdf():
+        """使用系统中文字体生成 PDF，避免阅读器无法识别未嵌入的 CMap。"""
+        import os
+        from reportlab.lib.pagesizes import A4
+        from reportlab.pdfbase import pdfmetrics
+        from reportlab.pdfbase.ttfonts import TTFont
+        from reportlab.pdfgen import canvas as pdf_canvas
+
+        font_candidates = [
+            os.path.join(os.environ.get("WINDIR", r"C:\Windows"), "Fonts", "simhei.ttf"),
+            os.path.join(os.environ.get("WINDIR", r"C:\Windows"), "Fonts", "msyh.ttc"),
+            "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+            "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
+        ]
+        font_path = next((path for path in font_candidates if os.path.isfile(path)), None)
+        if not font_path:
+            raise RuntimeError("未找到可用的中文字体，请确认系统已安装 SimHei 或 Microsoft YaHei")
+
+        font_name = "ReportCJK"
+        if font_path.lower().endswith(".ttc"):
+            pdfmetrics.registerFont(TTFont(font_name, font_path, subfontIndex=0))
+        else:
+            pdfmetrics.registerFont(TTFont(font_name, font_path))
+
+        meta = detail.get("meta") or {}
+        period = meta.get("period") or ""
+        if not period:
+            start = meta.get("startDate") or ""
+            end = meta.get("endDate") or ""
+            period = f"{start} ~ {end}" if start or end else "—"
+
+        lines = []
+
+        def add_text(value, size=11, width=46, leading=17):
+            for line in _wrap_text(value, width):
+                lines.append((line, size, leading))
+
+        add_text(title, size=17, width=32, leading=25)
+        lines.append(("", 11, 10))
+        add_text(f"班级：{meta.get('className') or '—'}")
+        add_text(f"统计范围：{meta.get('chapter') or '全课程'}")
+        add_text(f"时间区间：{period}")
+        add_text(f"生成者：{meta.get('generator') or '系统'}")
+        lines.append(("", 11, 12))
+
+        for sec in sections:
+            add_text(sec.get("title", ""), size=13, width=40, leading=21)
+            for paragraph in sec.get("paragraphs", []) or []:
+                add_text(paragraph)
+            for bullet in sec.get("bullets", []) or []:
+                add_text(f"- {bullet}")
+            lines.append(("", 11, 10))
+
+        buffer = io.BytesIO()
+        pdf = pdf_canvas.Canvas(buffer, pagesize=A4)
+        _, page_height = A4
+        y = page_height - 48
+        for text, size, leading in lines or [("", 11, 17)]:
+            if y - leading < 48:
+                pdf.showPage()
+                y = page_height - 48
+            pdf.setFont(font_name, size)
+            if text:
+                pdf.drawString(48, y, text)
+            y -= leading
+        pdf.save()
+        return buffer.getvalue()
+
+    if fmt == "html":
+        filename = f"report_{report_id}.html"
+        return StreamingResponse(
+            iter([_write_html().encode("utf-8")]),
+            media_type="text/html",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+
+    if fmt == "pdf":
+        filename = f"report_{report_id}.pdf"
+        return StreamingResponse(
+            iter([_write_pdf()]),
+            media_type="application/pdf",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
 
     # docx
     try:
@@ -664,16 +749,12 @@ def export_report(
         doc.save(buf)
         buf.seek(0)
 
-        fname = f"report_{report_id}_{uuid.uuid4().hex[:8]}.docx"
-        fpath = os.path.join(tempfile.gettempdir(), fname)
-        with open(fpath, "wb") as f:
-            f.write(buf.read())
-
-        return ok({
-            "url": f"/api/v1/report/files/{fname}",
-            "format": fmt,
-            "filePath": fpath,
-        })
+        filename = f"report_{report_id}.docx"
+        return StreamingResponse(
+            iter([buf.read()]),
+            media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
     except ImportError:
         return ok({
             "url": f"/api/v1/report/{report_id}",

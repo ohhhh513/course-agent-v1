@@ -4,7 +4,7 @@
 不读取任何预置 JSON 快照。每个用户看到的都是自己的真实学习数据。
 """
 import json
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from collections import defaultdict
 from fastapi import APIRouter, Depends, Query, HTTPException
 from sqlalchemy import func, desc
@@ -18,9 +18,21 @@ from ..models.practice import AnswerRecord, PracticeSession
 from ..models.checkin import StudyCheckin
 from ..middleware.auth import get_current_user
 from ..schemas.common import ok, fail, list_response
-from ..utils import loads
+from ..utils import loads, fmt_dt
 
 router = APIRouter(prefix="/api/v1/student", tags=["学生端"])
+
+# 东八区（中国），无夏令时；数据库存的是 UTC，展示前统一转成本地时间
+_CN_TZ = timezone(timedelta(hours=8))
+
+
+def _to_local(dt: datetime | None) -> datetime | None:
+    """把库中 naive UTC 时间转成东八区 naive 本地时间。"""
+    if not dt:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(_CN_TZ).replace(tzinfo=None)
 
 
 def _duration_to_seconds(s: str) -> int:
@@ -221,6 +233,7 @@ def student_dashboard(
             "title": f"完成 {ar.kp_id or '未知'} 相关题目",
             "meta": f"{'正确' if ar.is_correct else '错误'}",
             "time": _fmt_time(ar.created_at),
+            "time_sort": ar.created_at,
             "level": "ok" if ar.is_correct else "warn",
         })
     for ps in db.query(PracticeSession).filter(PracticeSession.user_id == uid).order_by(desc(PracticeSession.created_at)).limit(2).all():
@@ -229,6 +242,7 @@ def student_dashboard(
             "title": f"{ps.mode}练习",
             "meta": f"{ps.correct}/{ps.total} 正确 · {ps.duration_seconds//60}分钟",
             "time": _fmt_time(ps.created_at),
+            "time_sort": ps.created_at,
             "level": "ok" if ps.accuracy and ps.accuracy >= 70 else "warn",
         })
     recent.sort(key=lambda x: x.get("time_sort", datetime.min), reverse=True)
@@ -309,16 +323,18 @@ def _calc_max_streak(date_set: set) -> int:
 def _fmt_time(dt: datetime) -> str:
     if not dt:
         return ""
-    now = datetime.now()
-    delta = now - dt
-    if delta.days == 0:
-        return f"今天 {dt.strftime('%H:%M')}"
-    elif delta.days == 1:
-        return f"昨天 {dt.strftime('%H:%M')}"
-    elif delta.days < 7:
-        return f"{delta.days} 天前"
+    local = _to_local(dt)
+    now = datetime.now(_CN_TZ).replace(tzinfo=None)
+    today = now.date()
+    d = local.date()
+    if d == today:
+        return f"今天 {local.strftime('%H:%M')}"
+    elif d == today - timedelta(days=1):
+        return f"昨天 {local.strftime('%H:%M')}"
+    elif (today - d).days < 7:
+        return f"{(today - d).days} 天前"
     else:
-        return dt.strftime("%m-%d %H:%M")
+        return local.strftime("%m-%d %H:%M")
 
 
 # =============================================================================
@@ -774,15 +790,16 @@ def growth(
         if r.kp_id:
             week_data[key]["kps"].add(r.kp_id)
 
-    # 有序周（确保连续 8 周）
+    # 有序周：以“当前周周一(8/31)”为第1周起点，往后排（第1周→第8周，时间前进）
+    first_monday = today - timedelta(days=today.isoweekday() - 1)
     weeks = []
-    for i in range(7, -1, -1):
-        wd = today - timedelta(weeks=i)
-        iso_year, iso_week, _ = wd.isocalendar()
+    for i in range(0, 8):
+        monday = first_monday + timedelta(weeks=i)
+        iso_year, iso_week, _ = monday.isocalendar()
         key = f"{iso_year}-W{iso_week:02d}"
         w = week_data.get(key, {"correct": 0, "total": 0, "kps": set()})
         weeks.append({
-            "label": f"第{8-i}周",
+            "label": f"第{i+1}周·{monday.strftime('%m/%d')}",
             "correct": w["correct"], "total": w["total"],
             "kp_count": len(w["kps"]),
         })
@@ -902,7 +919,7 @@ def student_alerts(
             "kpId": a.kp_id, "kp": a.kp_name,
             "detail": loads(a.detail_json) or {},
             "suggestions": loads(a.suggestions_json) or [],
-            "createdAt": a.created_at.strftime("%Y-%m-%d %H:%M") if a.created_at else "",
+            "createdAt": fmt_dt(a.created_at),
             "status": a.status,
         }
 
@@ -943,7 +960,7 @@ def student_messages(
         {
             "msgId": m.msg_id, "from": m.from_user, "fromName": m.from_name,
             "title": m.title, "content": m.content,
-            "time": m.created_at.strftime("%Y-%m-%d %H:%M") if m.created_at else "",
+            "time": fmt_dt(m.created_at),
             "read": bool(m.read),
         }
         for m in rows

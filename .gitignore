@@ -26,18 +26,24 @@ ENV/
 !.env.example
 *.key
 *.pem
+/.workbuddy
+/.cursor
 
 # ---------- 数据库 ----------
 backend/app/data/*.db
 backend/app/data/*.db-*
-backend/app/data/*.db.bak.*
+backend/app/data/*.db.*      # 覆盖 .bak.* 与 before_*_20260906 等历史备份命名
 backend/app/data/*.sqlite
 backend/app/data/*.sqlite3
-# 交付基准备份需要入仓库，供团队恢复初始状态
+# 基准快照需要入仓库，供团队恢复/同步（日常 db 改动不入仓库）
 !backend/app/data/course_agent.db.bak.final_delivery
+!backend/app/data/course_agent.db.bak.baseline
+# 教师个人出题草稿 sidecar（个人数据，不入仓库）
+backend/app/data/st/drafts/
 
 # ---------- 向量库 / AI 索引（由 P1 生成，不入仓库） ----------
 backend/app/data/vector/
+backend/app/data/st/*.db
 *.faiss
 *.index
 
@@ -45,7 +51,10 @@ backend/app/data/vector/
 assets/resources/data-structures-1-9/
 assets/resources/covers/
 assets/resources/uploads/*
+assets/resources/data-structures-1-9
 !assets/resources/uploads/.gitkeep
+# 课程资源实际存放目录（项目根，由 main.py 静态挂载到 /assets/resources）
+resources/
 
 # ---------- 日志 ----------
 *.log
@@ -56,6 +65,7 @@ logs/
 backend/tests/results/
 backend/tests/*.png
 !backend/tests/e2e_smoke.js
+backend/data/.pytest-tmp-*/
 
 # ---------- 编辑器 / 系统 ----------
 .vscode/

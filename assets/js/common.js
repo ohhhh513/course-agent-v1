@@ -92,7 +92,11 @@ const U = {
   },
   levelName: { excellent: '优秀', good: '良好', fair: '待加强', weak: '薄弱', none: '未学习' },
   levelColor: { excellent: 'var(--lv-excellent)', good: 'var(--lv-good)', fair: 'var(--lv-fair)', weak: 'var(--lv-weak)', none: 'var(--lv-none)' },
-  levelBar: { excellent: 'is-ok', good: 'is-good', fair: 'is-fair', weak: 'is-weak', none: 'is-none' },
+  levelBar: {
+    excellent: 'is-ok', good: 'is-good', fair: 'is-fair', weak: 'is-weak', none: 'is-none',
+    dashRed: 'is-dash-red', dashBrown: 'is-dash-brown',
+    dashLightGreen: 'is-dash-light-green', dashGreen: 'is-dash-green',
+  },
   levelBadge: { excellent: 'badge--ok', good: 'badge--ok', fair: 'badge--warn', weak: 'badge--danger', none: 'badge--outline' },
 
   alertName: { red: '紧急', yellow: '关注', green: '正常' },

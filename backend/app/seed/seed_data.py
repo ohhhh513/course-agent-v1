@@ -21,8 +21,8 @@ from app.middleware.auth import hash_password
 from app.models.user import User, ClassInfo, TeacherClass
 from app.models.course import Course, Resource
 from app.models.graph import GraphNode, GraphLink, KpDetail, LearningPath
-from app.models.question import Question
-from app.models.practice import PracticeSession, AnswerRecord
+from app.models.question import Question  # noqa: F401  （题库不再由 seed 灌入，见第 3 节说明）
+from app.models.practice import PracticeSession
 from app.models.ai import ChatSession, ChatMessage
 from app.models.alert import Alert
 from app.models.intervention import (
@@ -31,9 +31,8 @@ from app.models.intervention import (
 from .mock_data import (
     DEFAULT_ACCOUNTS,
     MOCK_GRAPH_NODES, MOCK_GRAPH_LINKS, MOCK_KP_DETAIL,
-    MOCK_RESOURCES, MOCK_QUESTIONS,
+    MOCK_RESOURCES,
     MOCK_LEARNING_PATHS,
-    MOCK_ANSWER_RECORDS,
     MOCK_PRACTICE_SESSIONS,
     MOCK_CHAT_SESSIONS, MOCK_CHAT_MESSAGES,
     MOCK_ALERTS, MOCK_INTERVENTIONS,
@@ -100,13 +99,15 @@ def run_seed():
 
         # =========================================================
         # 3. 资源 & 题库
+        # ---------------------------------------------------------
+        # 注意：占位种子题（Q1024/Q2001-2010，数据均为人工编造）已从
+        # 正式版移除。正式题库由 backend/import_st_bank.py 从
+        # app/data/st/st_bank/after_class.json 导入（KHD 前缀 228 题）。
+        # 首次部署流程：启动一次建库 → 停止 → 运行 import_st_bank.py。
         # =========================================================
         for r in MOCK_RESOURCES:
             db.add(Resource(**r))
-        for q in MOCK_QUESTIONS:
-            db.add(Question(**q))
-        print(f"  -> resources: {len(MOCK_RESOURCES)}, "
-              f"questions: {len(MOCK_QUESTIONS)}")
+        print(f"  -> resources: {len(MOCK_RESOURCES)}（题库不灌入，由 import_st_bank.py 提供）")
 
         # =========================================================
         # 4. Transaction 数据（按 user_id 归属）
@@ -117,10 +118,8 @@ def run_seed():
             db.add(LearningPath(**lp))
         print(f"  -> learning_paths: {len(MOCK_LEARNING_PATHS)}")
 
-        # 4.2 答题记录（12 学生 × 15-25 条 ≈ 195 条）
-        for ar in MOCK_ANSWER_RECORDS:
-            db.add(AnswerRecord(**ar))
-        print(f"  -> answer_records: {len(MOCK_ANSWER_RECORDS)}")
+        # 4.2 答题记录 —— 不再灌入：MOCK_ANSWER_RECORDS 全部围绕已移除的
+        # 占位种子题生成，且学情/错题本应由真实答题产生（数据来自 practice 接口）
 
         # 4.3 练习会话（12 学生 × 2-4 条 ≈ 38 条）
         for ps in MOCK_PRACTICE_SESSIONS:

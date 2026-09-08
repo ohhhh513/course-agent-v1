@@ -1,7 +1,7 @@
 """
 练习与会话模型
 """
-from sqlalchemy import Column, String, Integer, Float, Text, DateTime, ForeignKey
+from sqlalchemy import Column, String, Integer, Float, Text, DateTime, ForeignKey, Boolean
 from datetime import datetime
 from ..database import Base
 
@@ -37,6 +37,7 @@ class AnswerRecord(Base):
     my_answer = Column(String(128), default="")
     correct_answer = Column(String(128), default="")
     is_correct = Column(Integer, default=0)                     # 0/1
+    mastered = Column(Boolean, default=False)                   # 错题是否已标记掌握
     duration_seconds = Column(Integer, default=0)
     error_type = Column(String(32), default="")
 

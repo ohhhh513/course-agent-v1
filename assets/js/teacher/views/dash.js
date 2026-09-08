@@ -4,6 +4,14 @@
      视图 1 · 教学驾驶舱
      ================================================================ */
   const Dash = {
+    rankingTone(value) {
+      const mastery = Number(value) || 0;
+      if (mastery <= 25) return { bar: 'dashRed', text: 't-dash-red' };
+      if (mastery < 50) return { bar: 'dashBrown', text: 't-dash-brown' };
+      if (mastery < 75) return { bar: 'dashLightGreen', text: 't-dash-light-green' };
+      return { bar: 'dashGreen', text: 't-dash-green' };
+    },
+
     render() {
       const el = U.$('#view-dashboard');
       el.innerHTML = U.skeleton(420);
@@ -55,13 +63,17 @@
             <div class="card__head"><h3>${icon('target')} 班级共性薄弱知识点排行</h3><span class="spacer"></span>
               <span class="badge badge--danger">Top 5</span></div>
             <div class="card__body">
-              ${d.kpRanking.map(k => `
+              ${d.kpRanking.map(k => {
+                const mastery = Math.max(0, Math.min(100, Number(k.mastery) || 0));
+                const tone = Dash.rankingTone(mastery);
+                return `
                 <div style="margin-bottom:15px">
                   <div class="row fz-13" style="margin-bottom:5px"><b>${U.esc(k.name)}</b><span class="spacer"></span>
-                    <span class="mono fz-12 ${k.mastery < 60 ? 't-danger' : 't-warn'}">${k.mastery}%</span></div>
-                  ${U.bar(k.mastery, k.mastery < 60 ? 'weak' : 'fair', 'sm')}
+                    <span class="mono fz-12 ${tone.text}">${mastery}%</span></div>
+                  ${U.bar(mastery, tone.bar, 'sm')}
                   <div class="fz-11 t-dim" style="margin-top:4px">${k.weakCount} / ${k.students} 名学生未达标</div>
-                </div>`).join('')}
+                </div>`;
+              }).join('')}
             </div>
           </div>
           <div class="card">

@@ -13,7 +13,7 @@
     render() {
       const el = U.$('#view-resource');
       el.innerHTML = `
-      <div class="card">
+      <div class="card" style="height:calc(100vh - var(--topbar-h) - 44px)">
         <div class="card__head">
           <h3>${icon('folder')} 资源管理</h3>
           <span class="spacer"></span>
@@ -22,7 +22,7 @@
           </div>
           <button class="btn btn--primary" id="trUpload" type="button">${icon('upload')} 上传资源</button>
         </div>
-        <div class="card__body">
+        <div class="card__body" style="min-height:0;overflow-y:auto">
           <div class="res-grid" id="trGrid">${U.skeleton(200)}</div>
         </div>
       </div>`;

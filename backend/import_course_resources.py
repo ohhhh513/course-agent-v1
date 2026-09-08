@@ -2,7 +2,7 @@
 将课程资源（位于项目内的 assets/resources/data-structures-1-9/）导入系统，
 并把知识图谱扩展为 9 章结构（匹配严蔚敏《数据结构》体系），同时完成资源挂靠。
 
-执行: cd backend && python3.12 import_course_resources.py
+执行: cd backend && python3.11 import_course_resources.py
 说明: SOURCE_DIR / TARGET_DIR 均相对项目根目录解析，不再写死本机绝对路径。
 """
 import os
@@ -23,8 +23,9 @@ from app.media_utils import (
 
 DB_PATH = BACKEND_DIR / "app" / "data" / "course_agent.db"
 # 相对项目根目录（course-agent）解析，避免依赖本机绝对路径
-SOURCE_DIR = BASE_DIR / "assets" / "resources" / "data-structures-1-9"
-TARGET_DIR = BASE_DIR / "assets" / "resources" / "data-structures-1-9"
+# 课程资源实际放在项目根 resources/（由 main.py 挂载到 /assets/resources）
+SOURCE_DIR = BASE_DIR / "resources" / "data-structures-1-9"
+TARGET_DIR = BASE_DIR / "resources" / "data-structures-1-9"
 COURSE_ID = "C2026DS001"
 
 # 9 章名称（与清单一致）
@@ -328,12 +329,16 @@ def import_resources(cur, con):
             kp_id = decide_kp_id(title, chapter)
 
         chapter_name = CHAPTER_NAMES[chapter]
+        # 资源分类：挂到具体知识点 → knowledge；章节级/教材兜底 → other（课外/教材）
+        category = "knowledge" if kp_id else "other"
 
         # 复制文件到目标目录，保持子目录结构
+        # （资源已在目标位置时跳过复制，避免 SameFileError，保证脚本可重复执行）
         rel = src.relative_to(SOURCE_DIR)
         dest = TARGET_DIR / rel
         dest.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(src, dest)
+        if src.resolve() != dest.resolve():
+            shutil.copy2(src, dest)
 
         # URL 使用正斜杠
         url = "/assets/resources/data-structures-1-9/" + "/".join(rel.parts)
@@ -347,7 +352,7 @@ def import_resources(cur, con):
             INSERT INTO resources
             (res_id, course_id, title, type, kp, kp_id, category, duration, pages, count, source, views, url)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, '本地资源', 0, ?)
-        """, (res_id, COURSE_ID, title, rtype, chapter_name, kp_id, "other", duration, pages, url))
+        """, (res_id, COURSE_ID, title, rtype, chapter_name, kp_id, category, duration, pages, url))
 
         # 生成封面
         generate_cover(res_id, title, rtype)

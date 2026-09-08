@@ -3,13 +3,15 @@
 全部从真实 DB 动态聚合，不再依赖 teacher_class_data 静态快照
 """
 import json
-from datetime import datetime, date, timedelta
+import re
+import uuid
+from datetime import datetime, timedelta, timezone
 from collections import defaultdict
 from fastapi import APIRouter, Depends, Query, Body, Form, UploadFile, File, HTTPException
 from sqlalchemy.orm import Session
 from sqlalchemy import func, desc
 from pydantic import BaseModel
-from typing import Optional, List
+from typing import Optional, List, Union
 
 from ..database import get_db
 from ..models.user import User, TeacherClass
@@ -20,7 +22,10 @@ from ..models.graph import LearningPath, GraphNode
 from ..models.course import Resource, ResourceProgress
 from ..middleware.auth import get_current_user
 from ..schemas.common import ok, fail, list_response
-from ..utils import loads
+from ..utils import (
+    loads,
+    fmt_dt,
+)
 from ..media_utils import (
     BASE_DIR, UPLOADS_DIR, COVERS_DIR, mp4_duration, pdf_pages, pptx_pages,
     guess_type, parse_chapter, parse_title, save_upload_file, generate_cover,
@@ -28,6 +33,30 @@ from ..media_utils import (
 from ..routers.practice import _calc_question_stats
 
 router = APIRouter(prefix="/api/v1/teacher", tags=["教师端"])
+
+# 教师端时间处理：数据库保存 naive UTC，接口展示和日期统计使用中国标准时间。
+_CN_TZ = timezone(timedelta(hours=8))
+
+
+def format_china_time(dt, fmt: str = "%Y-%m-%d %H:%M") -> str:
+    return fmt_dt(dt, fmt)
+
+
+def utc_now_naive() -> datetime:
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def china_now() -> datetime:
+    return datetime.now(_CN_TZ).replace(tzinfo=None)
+
+
+def china_day_bounds_utc(day) -> tuple[datetime, datetime]:
+    local_start = datetime.combine(day, datetime.min.time()).replace(tzinfo=_CN_TZ)
+    local_end = datetime.combine(day, datetime.max.time()).replace(tzinfo=_CN_TZ)
+    return (
+        local_start.astimezone(timezone.utc).replace(tzinfo=None),
+        local_end.astimezone(timezone.utc).replace(tzinfo=None),
+    )
 
 
 # ------- Pydantic 请求体 -------
@@ -144,13 +173,14 @@ def teacher_dashboard(
 
     # 今日活跃学生数 + 提交次数
     # 活跃 = 今日有 PracticeSession 提交 或 今日有 AnswerRecord 答题
-    today = date.today()
-    today_start = datetime.combine(today, datetime.min.time())
+    today = china_now().date()
+    today_start, today_end = china_day_bounds_utc(today)
 
     # PracticeSession 提交
     today_sessions = db.query(PracticeSession).filter(
         PracticeSession.user_id.in_(student_ids),
         PracticeSession.finished_at >= today_start,
+        PracticeSession.finished_at <= today_end,
     ).all()
     active_from_session = set(p.user_id for p in today_sessions)
     submit_today = len(today_sessions)
@@ -159,6 +189,7 @@ def teacher_dashboard(
     today_answers = db.query(AnswerRecord).filter(
         AnswerRecord.user_id.in_(student_ids),
         AnswerRecord.created_at >= today_start,
+        AnswerRecord.created_at <= today_end,
     ).all()
     active_from_answer = set(a.user_id for a in today_answers)
     submit_today += len(today_answers)
@@ -166,33 +197,52 @@ def teacher_dashboard(
     # 合并活跃学生
     active_user_ids = active_from_session | active_from_answer
 
-    # kp 聚合（给 kpRanking 用）
-    # 每个学生每个知识点的掌握率（无学习记录视为 0），分母统一为全班人数 n，
-    # 避免「未达标人数 / 学习过人数」与班级总人数口径不一致导致「数量对不上」。
-    kp_stu = defaultdict(dict)  # kp_id -> {user_id: (mastery, status)}
-    for r in all_lp:
-        kp_stu[r.kp_id][r.user_id] = (r.mastery or 0, r.status)
-
     kp_id_name = {n.id: n.name for n in db.query(GraphNode).filter(GraphNode.graph_type == "knowledge").all()}
 
-    # kpRanking 前端期望: [{ name, mastery, weakCount, students }]
+    # kpRanking：只统计实际练习过该知识点题目的学生。
+    # 先计算「学生 × 知识点」正确率，再对参与过该知识点练习的学生做非加权平均；
+    # 没有任何答题记录的知识点不进入排行，避免未练习学生被当成 0 分拉低结果。
+    kp_answer_rows = db.query(
+        AnswerRecord.kp_id,
+        AnswerRecord.user_id,
+        func.count(AnswerRecord.id).label("total"),
+        func.sum(AnswerRecord.is_correct).label("correct"),
+    ).filter(
+        AnswerRecord.user_id.in_(student_ids),
+        AnswerRecord.kp_id.isnot(None),
+        AnswerRecord.kp_id != "",
+    ).group_by(
+        AnswerRecord.kp_id,
+        AnswerRecord.user_id,
+    ).all()
+
+    kp_students = defaultdict(list)  # kp_id -> [{mastery, total}]
+    for row in kp_answer_rows:
+        total = int(row.total or 0)
+        if total <= 0:
+            continue
+        correct = int(row.correct or 0)
+        kp_students[row.kp_id].append({
+            "mastery": correct / total * 100,
+            "total": total,
+        })
+
+    # 前端期望: [{ name, mastery, weakCount, students }]
     kp_ranking = []
-    for kp_id, stu_map in kp_stu.items():
-        # 全班每人该知识点掌握率（未学习者记为 0，也即未达标）
-        rows = [stu_map.get(sid, (0, "todo")) for sid in student_ids]
-        masteries = [m for m, _ in rows]
-        done_cnt = sum(1 for _, s in rows if s == "done")
-        weak_cnt = sum(1 for m in masteries if m < 60)   # 未达标：全班掌握率 < 60（含未学习）
-        avg_m = round(sum(masteries) / len(masteries), 1) if masteries else 0
+    for kp_id, student_rows in kp_students.items():
+        masteries = [row["mastery"] for row in student_rows]
+        weak_cnt = sum(1 for mastery in masteries if mastery < 60)
+        active_students = len(student_rows)
+        avg_m = round(sum(masteries) / active_students, 1) if active_students else 0
         kp_ranking.append({
             "kpId": kp_id,
             "kpName": kp_id_name.get(kp_id, kp_id),
             "name": kp_id_name.get(kp_id, kp_id),          # 前端取 k.name
-            "completionRate": round(done_cnt / n * 100, 1) if n else 0,
+            "completionRate": round(active_students / n * 100, 1) if n else 0,
             "avgMastery": avg_m,
-            "mastery": avg_m,                                # 前端取 k.mastery（全班均值）
-            "weakCount": weak_cnt,                          # 前端取 k.weakCount（全班未达标人数）
-            "students": n,                                  # 前端取 k.students（全班人数，与 donut 一致）
+            "mastery": avg_m,                                # 前端取 k.mastery（练习学生平均掌握率）
+            "weakCount": weak_cnt,                          # 前端取 k.weakCount（练习学生中未达标人数）
+            "students": active_students,                    # 前端取 k.students（实际练习学生数）
         })
     kp_ranking.sort(key=lambda x: x["mastery"])  # 低的在前面
     kp_ranking = kp_ranking[:5]                    # Top 5
@@ -210,7 +260,8 @@ def teacher_dashboard(
                 "type": "alert", "level": level,
                 "text": f"新增预警：{stu_name} · {kp_name}",
                 "meta": a.title or a.type or a.desc or "未处理",
-                "time": (a.created_at or datetime.now()).strftime("%H:%M"),
+                "time": format_china_time(a.created_at, "%H:%M") or china_now().strftime("%H:%M"),
+                "_time_sort": a.created_at or datetime.min,
             })
     # 再加最近的答题事件
     recent_ans = db.query(AnswerRecord).filter(
@@ -224,11 +275,14 @@ def teacher_dashboard(
             "level": "ok" if ar.is_correct else "warn",
             "text": f"{stu_name} 提交了「{kp_name}」相关题目",
             "meta": "回答正确" if ar.is_correct else "回答错误",
-            "time": (ar.created_at or datetime.now()).strftime("%H:%M"),
+            "time": format_china_time(ar.created_at, "%H:%M") or china_now().strftime("%H:%M"),
+            "_time_sort": ar.created_at or datetime.min,
         })
-    # 按 time 字符串降序取前 6
-    live.sort(key=lambda x: x["time"], reverse=True)
+    # 按数据库中的 UTC 时间排序，展示时再转换为中国时间。
+    live.sort(key=lambda x: x.get("_time_sort", datetime.min), reverse=True)
     live = live[:6]
+    for item in live:
+        item.pop("_time_sort", None)
 
     # ==== todos：前端期望 [{ level, type, title, desc, action, target }] ====
     todos = []
@@ -282,7 +336,7 @@ def teacher_dashboard(
             "alertRatio": alert_ratio,                    # 对齐前端
             "activeToday": len(active_user_ids),          # 今日活跃学生数
             "submitToday": submit_today,                  # 今日提交次数
-            "updatedAt": datetime.now().strftime("%Y-%m-%d %H:%M"),
+            "updatedAt": china_now().strftime("%Y-%m-%d %H:%M"),
         },
         "kpRanking": kp_ranking,
         "liveFeed": live,
@@ -336,12 +390,12 @@ def students(
 
     def _fmt_last(ts):
         if not ts: return "无活动"
-        delta = (datetime.utcnow() - ts).total_seconds()
+        delta = (utc_now_naive() - ts).total_seconds()
         if delta < 60: return "刚刚"
         if delta < 3600: return f"{int(delta // 60)} 分钟前"
         if delta < 86400: return f"{int(delta // 3600)} 小时前"
         if delta < 7 * 86400: return f"{int(delta // 86400)} 天前"
-        return ts.strftime("%m-%d")
+        return format_china_time(ts, "%m-%d")
 
     items = []
     for s in students:
@@ -577,20 +631,20 @@ def student_profile(
     _hour_counts = [0] * 24
     for a in ans_rows:
         if a.created_at:
-            _hour_counts[a.created_at.hour] += 1
+            local_hour = format_china_time(a.created_at, "%H")
+            _hour_counts[int(local_hour)] += 1
     study_time_dist = {
         "xAxis": [b[0] for b in _buckets],
         "data": [sum(_hour_counts[b[1]:b[2]]) for b in _buckets],
     }
 
     # activityTrend：近 14 天
-    today = date.today()
+    today = china_now().date()
     act_x, act_min, act_q = [], [], []
     total_minutes = 0
     for offset in range(13, -1, -1):
         d = today - timedelta(days=offset)
-        day_start = datetime.combine(d, datetime.min.time())
-        day_end = datetime.combine(d, datetime.max.time())
+        day_start, day_end = china_day_bounds_utc(d)
         day_ps = [p for p in db.query(PracticeSession).filter(PracticeSession.user_id == user_id).all()
                   if p.finished_at and day_start <= p.finished_at <= day_end]
         mins = sum(p.duration_seconds or 0 for p in day_ps) // 60
@@ -690,7 +744,7 @@ def teacher_alerts(
             "kpId": a.kp_id or "",
             "detail": loads(a.detail_json) or {},
             "trendData": trend_data,
-            "createdAt": a.created_at.strftime("%Y-%m-%d %H:%M") if a.created_at else "",
+            "createdAt": format_china_time(a.created_at, "%Y-%m-%d %H:%M"),
             "status": "open" if a.status in ("read", "pending") else a.status,
             "note": a.note or "",
         }
@@ -719,7 +773,7 @@ def review_alert(
     alert.status = "ignored" if req.action == "ignore" else "reviewed"
     if req.note:
         alert.note = req.note
-    alert.reviewed_at = datetime.utcnow()
+    alert.reviewed_at = utc_now_naive()
     db.commit()
     return ok({"alertId": alert_id, "status": alert.status, "note": alert.note or ""})
 
@@ -752,7 +806,7 @@ def send_message(
     )
     db.add(msg)
     db.commit()
-    return ok({"msgId": msg.msg_id, "to": req.userId, "sentAt": msg.created_at.strftime("%Y-%m-%dT%H:%M:%S")})
+    return ok({"msgId": msg.msg_id, "to": req.userId, "sentAt": format_china_time(msg.created_at, "%Y-%m-%dT%H:%M:%S")})
 
 
 # ========== /analysis/* 错题归因（动态计算） ==========
@@ -781,8 +835,8 @@ def analysis_errors(
         lp_kps = [r[0] for r in db.query(LearningPath.kp_id).filter(
             LearningPath.user_id.in_(student_ids), LearningPath.chapter == chapter).distinct().all()]
         if lp_kps: q = q.filter(AnswerRecord.kp_id.in_(lp_kps))
-    if timeRange == "7d": q = q.filter(AnswerRecord.created_at >= datetime.utcnow() - timedelta(days=7))
-    elif timeRange == "30d": q = q.filter(AnswerRecord.created_at >= datetime.utcnow() - timedelta(days=30))
+    if timeRange == "7d": q = q.filter(AnswerRecord.created_at >= utc_now_naive() - timedelta(days=7))
+    elif timeRange == "30d": q = q.filter(AnswerRecord.created_at >= utc_now_naive() - timedelta(days=30))
 
     rows = q.all()
     total = len(rows)
@@ -992,6 +1046,7 @@ question_router = APIRouter(prefix="/api/v1/question", tags=["AI 出题"])
 class GenQuestionReq(BaseModel):
     materialIds: Optional[List[str]] = None
     kpIds: Optional[List[str]] = None
+    exampleQuestionIds: Optional[List[Union[int, str]]] = None
     types: Optional[List[str]] = None
     difficulty: int = 3
     count: int = 3
@@ -1051,37 +1106,313 @@ def ai_generate_questions(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    """AI 生成习题 —— 从题库按 kp/type/difficulty 筛选，随机组合返回"""
-    import uuid, random
-    q = db.query(Question)
-    if req.kpIds: q = q.filter(Question.kp_id.in_(req.kpIds))
-    if req.types: q = q.filter(Question.type.in_(req.types))
-    if req.difficulty: q = q.filter(Question.difficulty == req.difficulty)
-    pool = q.filter(Question.status == "published").all()
-    random.shuffle(pool)
-    picked = pool[: req.count] if pool else []
+    """AI 智能出题（SSE 流式）—— generate_items 流真实 LLM 生成。
 
-    kp_id_name = {n.id: n.name for n in db.query(GraphNode).filter(GraphNode.graph_type == "knowledge").all()}
+    事件序列：meta(batchId) → tool_start/tool_end → draft(每题落库即推) → done(draftIds)。
+    草稿仅写入 st_question_drafts（按 user_id 归属个人），绝不写入 questions 正式题库。
+    入参：kpIds 0～N、exampleQuestionIds 0～3，两者数量之和必须大于 0。
+    """
+    from sse_starlette.sse import EventSourceResponse
+    from ..agent_st.agent.runtime import run_turn
+    from ..agent_st.rag.bank import get_question as load_st_question
+    from ..agent_st.rag.kp_map import parse_example_question_ids, sections_for_kp_ids
 
-    questions = []
-    for x in picked:
-        questions.append({
-            "qId": x.q_id, "type": x.type, "difficulty": x.difficulty,
-            "stem": x.stem, "kpId": x.kp_id,
-            "kpPath": loads(x.kp_path) or [kp_id_name.get(x.kp_id, x.kp_id or "未知")],
-            "isKey": bool(x.is_key),
-            "status": "pending",
-            "options": loads(x.options) or [],
-            "analysis": x.analysis or "",
-            "classCorrectRate": round(_calc_question_stats(db, x.q_id)[0], 1),
+    kp_ids = [str(x) for x in (req.kpIds or []) if str(x).strip()]
+    example_ids = parse_example_question_ids(req.exampleQuestionIds)
+    if len(example_ids) > 3:
+        return fail("例题最多选择 3 道", 400)
+    if not kp_ids and not example_ids:
+        return fail("请至少指定一个知识点或一道例题", 400)
+
+    count = max(1, min(req.count or 3, 10))
+    kp_rows = []
+    if kp_ids:
+        kp_rows = db.query(GraphNode).filter(
+            GraphNode.id.in_(kp_ids), GraphNode.graph_type == "knowledge"
+        ).all()
+    kp_names = [row.name for row in kp_rows]
+    if not kp_names:
+        kp_names = list(kp_ids)
+    kp_sections = sections_for_kp_ids(kp_ids)
+    chapter_nums: list[int] = []
+    for row in kp_rows:
+        m = re.search(r"第\s*([1-9])\s*章", row.chapter or "")
+        if m and int(m.group(1)) not in chapter_nums:
+            chapter_nums.append(int(m.group(1)))
+    example_section = ""
+    if example_ids:
+        first = load_st_question(example_ids[0], include_answer=False)
+        if first:
+            example_section = str(first.get("section") or "")
+
+    def _chapter_hint(seq: int) -> str:
+        if kp_sections:
+            return kp_sections[seq % len(kp_sections)]
+        if example_section:
+            return example_section
+        if chapter_nums:
+            return f"第{chapter_nums[seq % len(chapter_nums)]}章"
+        return ""
+
+    def _message(seq: int) -> str:
+        parts = [f"请出第 {seq}/{count} 道单选题。"]
+        if kp_names:
+            parts.append("指定知识点：" + "、".join(kp_names) + "。")
+        else:
+            parts.append("未指定知识点，请按例题所属章节出题。")
+        if example_ids:
+            parts.append("参考例题（仅作启发，必须较大变动）：" + "、".join(f"题{x}" for x in example_ids) + "。")
+        else:
+            parts.append("未指定例题，请根据知识点与课程资料从零出题；检索到的题库题只作防抄对照。")
+        parts.append(f"难度 {req.difficulty}/5。")
+        extra = (req.requirement or "").strip()
+        if extra:
+            parts.append(extra)
+        else:
+            parts.append("必须先构思并重算答案，禁止对原题做数值微扰。")
+        return "".join(parts)
+
+    def gen():
+        batch_id = "BT" + uuid.uuid4().hex[:10].upper()
+        draft_ids: list[str] = []
+        demo = False
+        yield {"event": "meta", "data": json.dumps({"batchId": batch_id, "count": count}, ensure_ascii=False)}
+        for i in range(count):
+            chapter = _chapter_hint(i)
+            context = {
+                "batch_id": batch_id,
+                "difficulty": req.difficulty,
+                "seq": i + 1,
+                "kp_ids": kp_ids,
+                "kp_names": kp_names,
+                "kp_sections": kp_sections,
+                "example_question_ids": example_ids,
+            }
+            if chapter:
+                context["chapter"] = chapter
+            try:
+                for ev in run_turn(
+                    message=_message(i + 1),
+                    flow_id="generate_items",
+                    context=context,
+                    user_id=user.user_id,
+                ):
+                    etype = ev.get("type")
+                    if etype == "draft":
+                        did = ev.get("draft_id") or ""
+                        if did:
+                            draft_ids.append(did)
+                        yield {"event": "draft", "data": json.dumps(ev, ensure_ascii=False)}
+                    elif etype == "done":
+                        demo = demo or bool(ev.get("demo"))
+                    elif etype in ("text", "tool_start", "tool_end", "citations"):
+                        yield {"event": etype if etype != "text" else "log",
+                               "data": json.dumps(ev, ensure_ascii=False)}
+                    elif etype == "error":
+                        yield {"event": "error", "data": json.dumps(ev, ensure_ascii=False)}
+            except Exception as exc:  # noqa: BLE001  单题失败不中断整批
+                yield {"event": "error", "data": json.dumps({"message": f"第 {i + 1} 题生成失败：{exc}"}, ensure_ascii=False)}
+        yield {"event": "done", "data": json.dumps(
+            {"batchId": batch_id, "draftIds": draft_ids, "demo": demo, "count": len(draft_ids)},
+            ensure_ascii=False)}
+
+    return EventSourceResponse(gen())
+
+
+@question_router.post("/gen/stream")
+def ai_generate_questions_stream(
+    req: GenQuestionReq,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """/gen 的语义化别名，行为完全一致"""
+    return ai_generate_questions(req=req, db=db, user=user)
+
+
+# ========== /question/drafts 草稿箱（教师个人，发布才进正式题库） ==========
+
+def _owned_draft(draft_id: str, user: User, db: Session):
+    from ..models.agent_st import STQuestionDraft
+    row = db.query(STQuestionDraft).filter(STQuestionDraft.draft_id == draft_id).first()
+    if not row:
+        return None, None, fail("草稿不存在", 404)
+    if row.user_id and user.user_id and row.user_id != user.user_id:
+        return None, None, fail("无权操作他人的草稿", 403)
+    try:
+        payload = json.loads(row.payload_json or "{}")
+    except json.JSONDecodeError:
+        payload = {}
+    return row, payload, None
+
+
+class DraftUpdateReq(BaseModel):
+    payload: dict
+
+
+@question_router.get("/drafts")
+def draft_list(
+    status: str = Query("all"),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """当前教师的出题草稿箱"""
+    from ..models.agent_st import STQuestionDraft
+    q = db.query(STQuestionDraft).filter(STQuestionDraft.user_id == user.user_id)
+    if status and status != "all":
+        q = q.filter(STQuestionDraft.status == status)
+    rows = q.order_by(STQuestionDraft.created_at.desc()).all()
+    items = []
+    for r in rows:
+        try:
+            payload = json.loads(r.payload_json or "{}")
+        except json.JSONDecodeError:
+            payload = {}
+        items.append({
+            "draftId": r.draft_id,
+            "status": r.status,
+            "createdAt": fmt_dt(r.created_at, "%m-%d %H:%M"),
+            "errors": json.loads(r.errors_json or "[]"),
+            "id": payload.get("id"),
+            "chapter": payload.get("chapter"),
+            "stem": payload.get("question"),
+            "answer": payload.get("answer"),
+            "publishedQId": payload.get("_published_q_id"),
+            "payload": payload,
         })
-    return ok({
-        "taskId": "GT" + uuid.uuid4().hex[:10],
-        "count": len(questions),
-        "questions": questions,
-        "usedSkill": req.skillId or "SK004",
-        "elapsedMs": 4200,
-    })
+    return ok({"total": len(items), "list": items})
+
+
+@question_router.put("/drafts/{draft_id}")
+def draft_update(
+    draft_id: str,
+    req: DraftUpdateReq,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """编辑草稿（题干/选项/答案/解析/章节/图规格），保存时重新校验"""
+    from ..agent_st.rag.validate import validate_question
+    row, payload, err = _owned_draft(draft_id, user, db)
+    if err:
+        return err
+    new_payload = dict(req.payload or {})
+    # 保留系统字段
+    new_payload["id"] = payload.get("id")
+    if payload.get("_published_q_id"):
+        new_payload["_published_q_id"] = payload["_published_q_id"]
+    check = validate_question(new_payload)
+    row.payload_json = json.dumps(new_payload, ensure_ascii=False)
+    row.status = "draft" if check["ok"] else "invalid"
+    row.errors_json = json.dumps(check["errors"], ensure_ascii=False)
+    db.commit()
+    return ok({"draftId": draft_id, "status": row.status, "errors": check["errors"]})
+
+
+@question_router.delete("/drafts/{draft_id}")
+def draft_delete(
+    draft_id: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    row, _, err = _owned_draft(draft_id, user, db)
+    if err:
+        return err
+    db.delete(row)
+    db.commit()
+    return ok({"draftId": draft_id, "deleted": True})
+
+
+@question_router.post("/drafts/{draft_id}/publish")
+def draft_publish(
+    draft_id: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """草稿发布 → questions 正式题库（status=published，与正常出题流程一致）"""
+    from ..models.question import Question
+    from ..agent_st.rag.validate import validate_question
+    from ..agent_st.rag.kp_map import kps_for_section
+    from ..agent_st.rag.chapter_map import map_section
+
+    row, payload, err = _owned_draft(draft_id, user, db)
+    if err:
+        return err
+    if row.status == "published":
+        return fail("该草稿已发布过")
+    check = validate_question(payload)
+    if not check["ok"]:
+        return fail("草稿校验未通过：" + "；".join(check["errors"]))
+
+    # 选项：原型 {A..D} map → Question 的 [{key,text,right}]
+    options_map = payload.get("options") or {}
+    options = [
+        {"key": k, "text": options_map.get(k, ""), "right": payload.get("answer") == k}
+        for k in ("A", "B", "C", "D")
+    ]
+
+    # 图规格 → figure_json
+    figure, figure_json = {}, None
+    if payload.get("graph"):
+        figure["graph"] = payload.get("graph")
+    if payload.get("options_graph"):
+        figure["options_graph"] = payload.get("options_graph")
+    has_image = bool(payload.get("has_image"))
+    if figure:
+        figure["has_image"] = has_image
+        figure_json = json.dumps(figure, ensure_ascii=False)
+
+    # 知识点：小节前缀 → 映射 KP（首项为主）；无映射回退该章第一个知识点
+    prefix = str(payload.get("chapter") or "").split(" ")[0]
+    kps = kps_for_section(prefix)
+    chapter = map_section(prefix)
+    if not kps:
+        first_node = (
+            db.query(GraphNode)
+            .filter(GraphNode.graph_type == "knowledge", GraphNode.chapter.like(f"第{chapter['id']}章%"))
+            .first()
+        )
+        kps = [first_node.id] if first_node else []
+    kp_names = {
+        r[0]: r[1]
+        for r in db.query(GraphNode.id, GraphNode.name)
+        .filter(GraphNode.graph_type == "knowledge", GraphNode.id.in_(kps)).all()
+    } if kps else {}
+    kp_id = kps[0] if kps else None
+    kp_path = [chapter["title"]] + [kp_names.get(k, k) for k in kps]
+
+    # q_id 分配：AI + 自增三位（与 KHD 序列隔离）
+    existing = [
+        int(re.sub(r"\D", "", r[0]))
+        for r in db.query(Question.q_id).filter(Question.q_id.like("AI%")).all()
+        if re.sub(r"\D", "", r[0]).isdigit()
+    ]
+    q_id = f"AI{(max(existing) + 1) if existing else 1:03d}"
+
+    db.add(Question(
+        q_id=q_id,
+        course_id="C2026DS001",
+        kp_id=kp_id,
+        type="single",
+        difficulty=3,  # 草稿未携带难度，默认 3；可在题库管理再调
+        score=5,
+        status="published",
+        stem=payload.get("question") or "",
+        options=json.dumps(options, ensure_ascii=False),
+        answer=str(payload.get("answer") or ""),
+        analysis=payload.get("analysis") or "",
+        kp_path=json.dumps(kp_path, ensure_ascii=False),
+        pre_kp="[]",
+        post_kp="[]",
+        is_key=0,
+        source_ref_file="ai_draft",
+        source_ref_locator=f"草稿 {draft_id}",
+        figure_json=figure_json,
+        has_image=has_image,
+    ))
+    row.status = "published"
+    payload["_published_q_id"] = q_id
+    row.payload_json = json.dumps(payload, ensure_ascii=False)
+    db.commit()
+    return ok({"draftId": draft_id, "qId": q_id, "kpId": kp_id})
 
 
 @question_router.get("/bank")

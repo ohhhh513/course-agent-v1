@@ -8,7 +8,8 @@ REM  Course Agent - One-click Start
 REM ============================================================
 
 set "PORT=8000"
-set "PYTHON=C:\Users\CQYDDD\.local\bin\python3.12.exe"
+REM Python 解释器改为自动探测本机 Python 3.11（不再写死个人机器路径）：
+REM   1) PATH 中的 python3.11  2) py 启动器的 -3.11  3) PATH 中的 python（需为 3.11.x）
 set "PROJECT=%~dp0"
 set "BACKEND=%PROJECT%backend"
 
@@ -21,9 +22,21 @@ echo.
 REM --- 1. Check prerequisites ---
 echo  [1/5] Checking environment...
 
-if not exist "%PYTHON%" (
-    echo  [ERROR] Python not found at: %PYTHON%
-    echo          Please edit PYTHON at the top of this file.
+set "PYTHON="
+for /f "delims=" %%E in ('where python3.11 2^>nul') do if not defined PYTHON set "PYTHON=%%E"
+if not defined PYTHON (
+    for /f "delims=" %%E in ('py -3.11 -c "import sys;print(sys.executable)" 2^>nul') do if not defined PYTHON set "PYTHON=%%E"
+)
+if not defined PYTHON (
+    for /f "delims=" %%E in ('where python 2^>nul') do if not defined PYTHON (
+        "%%E" -c "import sys; exit(0 if sys.version_info[:2]==(3,11) else 1)" >nul 2>nul && set "PYTHON=%%E"
+    )
+)
+
+if not defined PYTHON (
+    echo  [ERROR] Python 3.11 not found on this machine.
+    echo          Please install Python 3.11 and make sure it is in PATH
+    echo          (or available via the "py" launcher as py -3.11^).
     pause
     exit /b 1
 )

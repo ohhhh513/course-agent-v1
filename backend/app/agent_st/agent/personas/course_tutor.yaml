@@ -1,0 +1,20 @@
+id: course_tutor
+display_name: 数据结构课助教
+default_flow: explain
+max_steps: 6
+skills:
+  - explain.md
+  - generate_items.md
+tools:
+  - resolve_topic
+  - retrieve_chunks
+  - get_question
+  - search_similar_questions
+  - submit_item_plan
+  - validate_question
+  - check_novelty
+  - save_question_draft
+system: |
+  你是《数据结构》课程助教，服务讲解与出题。
+  用中文。先调用工具，再回答。
+  正式题库不得声称已被你直接修改。

@@ -71,7 +71,35 @@ check("teacher/alerts", *req("GET", "/api/v1/teacher/alerts?classId=CL2301", t_t
 check("teacher/messages (POST send)", *req("POST", "/api/v1/teacher/messages", t_tok, {"userId": "S20260317", "content": "回归测试消息"}))
 check("question/gen/config", *req("GET", "/api/v1/question/gen/config?classId=CL2301", t_tok))
 check("question/bank", *req("GET", "/api/v1/question/bank?classId=CL2301", t_tok))
-check("question/gen (classCorrectRate)", *req("POST", "/api/v1/question/gen", t_tok, {"count": 1, "difficulty": 3}))
+
+
+def check_gen_sse():
+    """question/gen 已改为 SSE 流式出题（agent_st 集成）：
+    校验响应为 text/event-stream 且首个 meta 事件可读（不等待完整生成）。"""
+    body = json.dumps({"count": 1, "difficulty": 3}).encode()
+    r = urllib.request.Request(
+        B + "/api/v1/question/gen", data=body, method="POST",
+        headers={"Content-Type": "application/json", "Authorization": "Bearer " + t_tok},
+    )
+    try:
+        with urllib.request.urlopen(r, timeout=30) as resp:
+            ctype = resp.headers.get("Content-Type", "")
+            first = ""
+            for _ in range(10):  # 跳过空行 / sse ping 注释，直到首个 event 行
+                line = resp.readline().decode("utf-8", "ignore")
+                if line.startswith("event:"):
+                    first = line.strip()
+                    break
+            ok = "text/event-stream" in ctype and first.startswith("event:")
+            detail = f"ctype={ctype.split(';')[0]} first={first[:40]!r}"
+            return ok, detail
+    except Exception as exc:  # noqa: BLE001
+        return False, str(exc)
+
+
+_gen_ok, _gen_detail = check_gen_sse()
+print(f"  [{'PASS' if _gen_ok else 'FAIL'}] question/gen (SSE streaming) -> {_gen_detail}")
+results.append(("question/gen (SSE streaming)", _gen_ok, 200, "text/event-stream"))
 check("report/list", *req("GET", "/api/v1/report/list?classId=CL2301", t_tok))
 check("analysis/errors", *req("GET", "/api/v1/analysis/errors?classId=CL2301", t_tok))
 check("analysis/causes", *req("GET", "/api/v1/analysis/causes?classId=CL2301", t_tok))

@@ -9,4 +9,4 @@ for /f "tokens=5" %%a in ('netstat -ano ^| findstr :8000 ^| findstr LISTENING') 
 )
 
 echo === 启动后端 ===
-python3.12 -m uvicorn app.main:app --host 0.0.0.0 --port 8000
+python3.11 -m uvicorn app.main:app --host 0.0.0.0 --port 8000

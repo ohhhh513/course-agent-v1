@@ -1,7 +1,7 @@
 """
 题库/习题模型
 """
-from sqlalchemy import Column, String, Integer, Float, Text, ForeignKey
+from sqlalchemy import Column, String, Integer, Float, Boolean, Text, ForeignKey
 from ..database import Base
 
 
@@ -35,3 +35,7 @@ class Question(Base):
     # AI 生成题溯源
     source_ref_file = Column(String(32), default="")
     source_ref_locator = Column(String(32), default="")
+
+    # 图题（源自课后题库 / Agent 生成）：graph/options_graph/has_image 的声明式 SVG 绘图规格
+    figure_json = Column(Text, nullable=True)                  # JSON，NULL 表示纯文本题
+    has_image = Column(Boolean, default=False)                 # 是否为图题

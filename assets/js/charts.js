@@ -18,6 +18,7 @@ const Charts = (function () {
       split: cssVar('--chart-split'),
       surface: cssVar('--surface'),
       surface2: cssVar('--surface-2'),
+      surface3: cssVar('--surface-3'),
       border: cssVar('--border'),
       brand: cssVar('--brand-500') || '#6366f1',
       accent: cssVar('--accent-500') || '#8b5cf6',
@@ -26,6 +27,24 @@ const Charts = (function () {
       danger: cssVar('--danger') || '#ef4444',
       info: cssVar('--info') || '#38bdf8'
     };
+  }
+
+  // SPA 切换、卡片布局变化或字体加载完成后，图表容器的尺寸可能还会继续变化。
+  // 监听容器尺寸，避免 ECharts 按初始的窄尺寸完成布局后一直挤在左上角。
+  function watchSize(el, inst) {
+    const resize = () => {
+      if (!inst || (inst.isDisposed && inst.isDisposed())) return;
+      inst.resize();
+    };
+
+    requestAnimationFrame(resize);
+    setTimeout(resize, 60);
+    setTimeout(resize, 240);
+
+    if (typeof ResizeObserver === 'undefined') return null;
+    const observer = new ResizeObserver(resize);
+    observer.observe(el);
+    return observer;
   }
 
   function baseTooltip(t) {
@@ -43,24 +62,32 @@ const Charts = (function () {
     const el = typeof sel === 'string' ? document.querySelector(sel) : sel;
     if (!el || !window.echarts) return null;
     let rec = store.get(el);
+    if (rec && rec.observer) rec.observer.disconnect();
     if (rec && rec.instance) rec.instance.dispose();
     const inst = echarts.init(el, null, { renderer: 'canvas' });
     inst.setOption(builder(tokens()), true);
-    store.set(el, { instance: inst, builder });
-    // 修复 SPA view 切换后容器宽度未及时同步：等布局稳定后强制 resize（双重保险）
-    requestAnimationFrame(() => inst && inst.resize());
-    setTimeout(() => inst && inst.resize(), 60);
+    const next = { instance: inst, builder, observer: null };
+    store.set(el, next);
+    next.observer = watchSize(el, inst);
     return inst;
   }
 
   function resizeAll() { store.forEach(r => r.instance && r.instance.resize()); }
   function redrawAll() {
     store.forEach((r, el) => {
-      if (!document.body.contains(el)) return;
+      if (!document.body.contains(el)) {
+        if (r.observer) r.observer.disconnect();
+        if (r.instance) r.instance.dispose();
+        store.delete(el);
+        return;
+      }
+      if (r.observer) r.observer.disconnect();
       r.instance.dispose();
       const inst = echarts.init(el, null, { renderer: 'canvas' });
       inst.setOption(r.builder(tokens()), true);
-      store.set(el, { instance: inst, builder: r.builder });
+      const next = { instance: inst, builder: r.builder, observer: null };
+      store.set(el, next);
+      next.observer = watchSize(el, inst);
     });
   }
   window.addEventListener('resize', resizeAll);
@@ -269,16 +296,22 @@ const Charts = (function () {
     // ECharts heatmap 期望: [[colIdx, rowIdx, value], ...] 三元组格式
     const rawMatrix = data.data || [];
     const mask = data.startedMask || [];
-    const flatData = [];
+    const startedData = [];
+    const unstartedData = [];
+    const studentNames = (data.studentAxis || []).map(s => typeof s === 'object' ? s.name : s);
+    const maxStudentNameLength = studentNames.reduce((max, name) => Math.max(max, String(name || '').length), 0);
+    // 给 Y 轴学生姓名预留稳定空间，避免 containLabel 在窄尺寸初始化时把绘图区压成一小条。
+    const gridLeft = Math.min(150, Math.max(78, maxStudentNameLength * 13 + 24));
+    const gridTop = (data.kpAxis || []).length > 18 ? 96 : 76;
     for (let row = 0; row < rawMatrix.length; row++) {
       for (let col = 0; col < (rawMatrix[row] || []).length; col++) {
         const started = mask[row] ? mask[row][col] : true;
         const val = rawMatrix[row][col];
         if (started) {
-          flatData.push([col, row, val]);
+          startedData.push([col, row, val]);
         } else {
           // 未学习的格子：value = null → ECharts 渲染为灰色
-          flatData.push([col, row, null]);
+          unstartedData.push([col, row, 0]);
         }
       }
     }
@@ -294,31 +327,35 @@ const Charts = (function () {
           return `<b>${(data.studentAxis[p.value[1]] || {}).name || data.studentAxis[p.value[1]] || p.value[1]}</b><br/>${data.kpAxis[p.value[0]] || p.value[0]}<br/>${label}：<b style="font-size:14px">${p.value[2]}%</b>`;
         }
       }),
-      grid: { left: 4, right: 14, top: 56, bottom: 4, containLabel: true },
+      grid: { left: gridLeft, right: 24, top: gridTop, bottom: 18, containLabel: true },
       xAxis: {
         type: 'category', data: data.kpAxis, position: 'top',
         splitArea: { show: true, areaStyle: { color: ['transparent'] } },
         axisLine: { show: false }, axisTick: { show: false },
-        axisLabel: { color: t.text2, fontSize: 10.5, rotate: 38, interval: 0 }
+        axisLabel: { color: t.text2, fontSize: 10.5, rotate: 38, interval: 0, hideOverlap: true, margin: 10 }
       },
       yAxis: {
         type: 'category',
-        data: (data.studentAxis || []).map(s => typeof s === 'object' ? s.name : s),
+        data: studentNames,
         splitArea: { show: true, areaStyle: { color: ['transparent'] } },
         axisLine: { show: false }, axisTick: { show: false },
-        axisLabel: { color: t.text2, fontSize: 11.5 }
+        axisLabel: { color: t.text2, fontSize: 11.5, margin: 12 }
       },
       visualMap: {
-        min: 0, max: 100, calculable: true, orient: 'horizontal',
+        // 卡片标题右侧已有统一的低-高图例，隐藏 ECharts 内置图例可避免占用绘图区。
+        show: false, seriesIndex: 1, min: 0, max: 100, calculable: true, orient: 'horizontal',
         right: 14, top: 8, itemWidth: 12, itemHeight: 92,
         textStyle: { color: t.dim, fontSize: 10.5 },
         inRange: { color: ['#ef4444', '#f97316', '#f59e0b', '#a3e635', '#22c55e'] }
       },
       series: [{
-        type: 'heatmap', data: flatData,
+        type: 'heatmap', data: unstartedData, silent: true, z: 0,
+        itemStyle: { color: t.surface3, borderRadius: 3, borderColor: t.surface, borderWidth: 2 }
+      }, {
+        type: 'heatmap', data: startedData, z: 1,
         label: {
           show: true, color: '#0b1220', fontSize: 9.5, fontWeight: 600,
-          formatter: p => p.value[2] == null ? '' : p.value[2]
+          formatter: p => p.value[2]
         },
         itemStyle: { borderRadius: 3, borderColor: t.surface, borderWidth: 2 },
         emphasis: { itemStyle: { shadowBlur: 10, shadowColor: 'rgba(0,0,0,.4)', borderColor: t.brand, borderWidth: 2 } },
@@ -335,11 +372,12 @@ const Charts = (function () {
     return render(sel, (t) => ({
       tooltip: Object.assign(baseTooltip(t), { trigger: 'item', formatter: '{b}<br/>{c} 人 ({d}%)' }),
       legend: {
-        orient: 'vertical', right: 0, top: 'center',
-        textStyle: { color: t.text2, fontSize: 11.5 }, itemWidth: 10, itemHeight: 10, itemGap: 10
+        // 班级学情总览的环形图使用居中布局，避免窄容器下图形被挤到左侧。
+        orient: 'horizontal', left: 'center', bottom: 4,
+        textStyle: { color: t.text2, fontSize: 11.5 }, itemWidth: 10, itemHeight: 10, itemGap: 18
       },
       series: [{
-        type: 'pie', radius: ['52%', '76%'], center: ['34%', '50%'],
+        type: 'pie', radius: ['52%', '76%'], center: ['50%', '41%'],
         avoidLabelOverlap: false, padAngle: 2,
         itemStyle: { borderRadius: 5, borderColor: t.surface, borderWidth: 2 },
         label: {

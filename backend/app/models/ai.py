@@ -14,6 +14,7 @@ class ChatSession(Base):
     user_id = Column(String(64), ForeignKey("users.user_id"), index=True)
     title = Column(String(256), default="")
     kp_name = Column(String(64), default="")
+    flow_id = Column(String(16), default="explain")            # explain / generate_items
     rounds = Column(Integer, default=0)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -29,5 +30,7 @@ class ChatMessage(Base):
     method = Column(String(16), default="")                      # 教学法
     content = Column(Text, default="")
     citations = Column(Text, default="[]")                       # JSON
+    tool_log = Column(Text, default="[]")                        # JSON 工具调用日志（agent_st）
+    draft_id = Column(String(32), default="")                    # 关联的出题草稿（如有）
     time_str = Column(String(32), default="")                    # 14:21
     created_at = Column(DateTime, default=datetime.utcnow)

@@ -31,6 +31,8 @@
       const box = U.$('#pBody');
       API.practice.modes().then(ms => {
         API.student.dashboard().then(d => {
+          // 记住薄弱知识点 kpId，供「薄弱点强化」/「靶向强化出题」按知识点组卷
+          this._weakKpIds = (d.weakPoints || []).map(w => w.kpId).filter(Boolean);
           box.innerHTML = `
           <div class="callout callout--brand" style="margin-bottom:16px">
             ${icon('sparkle')}
@@ -63,30 +65,32 @@
                   <div class="todo__ico todo__ico--${w.level}">${icon('target')}</div>
                   <div class="todo__main"><b>${U.esc(w.name)}</b>
                     <span>掌握率 ${w.masteryRate}% · 建议 ${Math.ceil((60 - w.masteryRate) / 5)} 组靶向练习</span></div>
-                  <button class="btn btn--sm btn--outline" data-weak-start>出题</button>
+                  <button class="btn btn--sm btn--outline" data-weak-start data-weak-kp="${U.esc(w.kpId)}">出题</button>
                 </div>`).join('')}
             </div>
           </div>`;
 
         U.$$('#modeGrid .card[data-mode]', box).forEach(c => c.addEventListener('click', () => {
           if (this.activeMode === c.dataset.mode) { this.collapsePanel(); return; }
-          this.expandPanel(c.dataset.mode, ms, c);
+          const opts = c.dataset.mode === 'weak' ? { kpIds: this._weakKpIds } : undefined;
+          this.expandPanel(c.dataset.mode, ms, c, opts);
         }));
         U.$$('[data-weak-start]', box).forEach(b => b.addEventListener('click', e => {
           e.stopPropagation();
-          this.expandPanel('weak', ms, box.querySelector('#modeGrid .card[data-mode="weak"]'));
+          const kp = b.dataset.weakKp;
+          this.expandPanel('weak', ms, box.querySelector('#modeGrid .card[data-mode="weak"]'), kp ? { kpIds: [kp] } : undefined);
         }));
         });
       });
     },
 
     /* --- 内联展开 / 收起 --- */
-    expandPanel(mode, ms, cardEl) {
+    expandPanel(mode, ms, cardEl, opts) {
       this.activeMode = mode;
       U.$$('#modeGrid .card[data-mode]').forEach(c => c.classList.toggle('is-active', c === cardEl));
       const panel = U.$('#modePanel');
       if (panel) panel.hidden = false;
-      this.start(mode, ms);
+      this.start(mode, ms, opts);
     },
     collapsePanel() {
       clearInterval(this._timer);
@@ -118,17 +122,45 @@
     },
 
     /* --- 开始练习 --- */
-    start(mode, ms) {
+    start(mode, ms, opts) {
       const m = (ms || []).find(x => x.key === mode);
       // 记录进入练习时的 tab，退出时按此恢复到对应列表
       this._startTab = this.tab;
-      API.practice.create({ mode, count: m ? m.count : 10 }).then(s => {
+      this._lastKpIds = (opts && opts.kpIds && opts.kpIds.length) ? opts.kpIds : undefined;
+      this._lastQIds = (opts && opts.qIds && opts.qIds.length) ? opts.qIds : undefined;
+      const body = { mode, count: (opts && opts.count) || (m ? m.count : 10) };
+      if (this._lastKpIds) body.kpIds = this._lastKpIds;
+      if (this._lastQIds) body.qIds = this._lastQIds;
+      API.practice.create(body).then(s => {
         this.mode = mode; this.qs = s.questions; this.idx = 0; this.answers = {};
         this.sessionId = s.sessionId;  // 保存真实 sessionId，后续 submit/finish 要用
         this.state = 'quiz';
         Toast.ok('已组卷 ' + this.qs.length + ' 题', m ? m.name : '');
         this.renderQuiz();
       });
+    },
+
+    /**
+     * 图题渲染（源自课后题库/智能出题的 figure 规格）
+     * figureMode 优先级：options_graph → graph（含 adjacency_matrix）→ has_image 纯文本提示
+     * 绘制由 assets/js/st/ds-figure.js 的 DsFigure 完成（含边权标签防遮挡）
+     */
+    mountQFigure(rootEl, figure) {
+      if (!rootEl || !figure || !window.DsFigure) return;
+      const figEl = rootEl.querySelector('#qFig') || rootEl.querySelector('#wrongFig');
+      if (figEl) {
+        if (figure.graph) {
+          DsFigure.mount(figEl, figure.graph);
+        } else if (figure.has_image) {
+          figEl.innerHTML = '<div class="callout callout--warn" style="padding:8px 12px">本题配图暂不绘制，请按纯文本作答。</div>';
+        }
+      }
+      if (figure.options_graph) {
+        Object.keys(figure.options_graph).forEach(k => {
+          const slot = rootEl.querySelector(`[data-optfig="${k}"]`);
+          if (slot) DsFigure.mount(slot, figure.options_graph[k]);
+        });
+      }
     },
 
     renderQuiz() {
@@ -156,11 +188,13 @@
 
         <div class="q-body">
           <div class="q-stem"><span class="q-no">${this.idx + 1}</span>${q.stem}</div>
+          <div class="q-figure" id="qFig"></div>
           <div class="opts" id="opts">
             ${q.options.map(o => `
               <button class="opt" data-k="${o.key}">
                 <span class="opt__key">${o.key}</span>
                 <span style="flex:1">${o.text}</span>
+                ${q.figure && q.figure.options_graph && q.figure.options_graph[o.key] ? `<div class="q-opt-fig" data-optfig="${o.key}"></div>` : ''}
               </button>`).join('')}
           </div>
           <div id="fbBox"></div>
@@ -183,6 +217,7 @@
       }, 1000);
 
       U.$('#qBack').addEventListener('click', () => { clearInterval(this._timer); this.collapsePanel(); });
+      this.mountQFigure(target, q.figure);
       U.$$('#opts .opt').forEach(o => o.addEventListener('click', () => {
         U.$$('#opts .opt').forEach(x => x.classList.remove('is-picked'));
         o.classList.add('is-picked');
@@ -297,6 +332,8 @@
           <div class="stat__hint">已回写目标图谱达成度</div></div>
       </div>
 
+      ${(r.masteredCount > 0) ? `<div class="callout" style="margin-bottom:16px">${icon('checkCircle')}<div><b>${r.masteredCount} 道答对题目已自动标记为「已掌握」</b><span class="fz-12 t-dim" style="margin-left:6px">可到错题本「已掌握」查看</span></div></div>` : ''}
+
       <div class="grid g-21" style="margin-bottom:16px">
         <div class="card">
           <div class="card__head"><h3>${icon('trend')} 薄弱点变化对比</h3><span class="spacer"></span>
@@ -352,7 +389,7 @@
           { horizontal: true, showLabel: true, labelFmt: '{c} 题' });
       }
 
-      U.$('#againBtn').addEventListener('click', () => API.practice.modes().then(ms => this.start(this.mode || 'weak', ms)));
+      U.$('#againBtn').addEventListener('click', () => API.practice.modes().then(ms => this.start(this.mode || 'weak', ms, { kpIds: this._lastKpIds, qIds: this._lastQIds })));
       U.$('#toWrong').addEventListener('click', () => {
         U.$$('#pTabs button').forEach(x => x.classList.toggle('is-active', x.dataset.t === 'wrong'));
         this.renderWrong();
@@ -405,8 +442,19 @@
         </div>`;
 
         U.$$('#wFilter button').forEach(b => b.addEventListener('click', () => this.renderWrong(b.dataset.f)));
-        U.$('#wPractice').addEventListener('click', () => API.practice.modes().then(ms => this.start('wrong', ms)));
-        U.$$('[data-redo]').forEach(b => b.addEventListener('click', () => API.practice.modes().then(ms => this.start('wrong', ms))));
+        U.$('#wPractice').addEventListener('click', () => {
+          // 一键重练：只重练当前 tab（待攻克/已掌握/全部）下显示的那些题
+          const qIds = r.list.map(w => w.qId);
+          if (!qIds.length) { Toast.error('当前分类下没有可重练的题目'); return; }
+          API.practice.modes().then(ms => this.start('wrong', ms, { qIds, count: qIds.length }));
+        });
+        U.$$('[data-redo]').forEach(b => b.addEventListener('click', e => {
+          e.stopPropagation();
+          API.practice.modes().then(ms => {
+            // 重做本题：只组卷这一个错题
+            this.start('wrong', ms, { qIds: [b.dataset.redo] });
+          });
+        }));
         U.$$('[data-mastered]').forEach(b => b.addEventListener('click', () => {
           API.practice.removeWrong({ qId: b.dataset.mastered }).then(() => {
             Toast.ok('已标记为掌握', '该题移出待攻克列表');
@@ -427,7 +475,8 @@
       API.practice.wrongDetail({ qId }).then(d => {
         const optHtml = d.options.map(o => {
           const isRight = o.key === d.answer;
-          return `<div class="opt${isRight ? ' is-right' : ''}"><span class="opt__key">${o.key}</span><span style="flex:1">${o.text}</span>${isRight ? '<span class="opt__flag badge badge--ok">正确答案</span>' : ''}</div>`;
+          const hasMini = d.figure && d.figure.options_graph && d.figure.options_graph[o.key];
+          return `<div class="opt${isRight ? ' is-right' : ''}"><span class="opt__key">${o.key}</span><span style="flex:1">${o.text}</span>${hasMini ? `<div class="q-opt-fig" data-optfig="${o.key}"></div>` : ''}${isRight ? '<span class="opt__flag badge badge--ok">正确答案</span>' : ''}</div>`;
         }).join('');
 
         Modal.open({
@@ -443,6 +492,7 @@
               </div>
 
               <div class="callout" style="margin-bottom:14px"><b style="font-size:14.5px;line-height:1.7">${d.stem}</b></div>
+              <div class="q-figure" id="wrongFig" style="margin:-6px 0 14px"></div>
 
               <h5 class="fz-12 t-dim" style="margin:0 0 6px">选项</h5>
               <div class="opts opts--readonly" style="margin-bottom:14px">${optHtml}</div>
@@ -494,9 +544,10 @@
               <button class="btn btn--primary" id="wdMastered">${icon('check')} 标记已掌握</button>
             `,
             onMount(ov, close) {
+              Practice.mountQFigure(ov, d.figure);
               U.$('#wdRedo', ov).addEventListener('click', () => {
                 close();
-                API.practice.modes().then(ms => Practice.start('wrong', ms));
+                API.practice.modes().then(ms => Practice.start('wrong', ms, { qIds: [qId] }));
               });
               U.$('#wdMastered', ov).addEventListener('click', () => {
                 API.practice.removeWrong({ qId }).then(() => {

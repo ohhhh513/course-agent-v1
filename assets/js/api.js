@@ -80,7 +80,118 @@ window.API = (function () {
     });
   }
 
+  /** 下载二进制文件，返回 { blob, filename }，供报告等导出接口使用。 */
+  function download(method, path, payload, resolver) {
+    if (config.mode === 'http') {
+      const isGet = method === 'GET';
+      let url = config.baseURL + path;
+      if (isGet && payload) {
+        const qs = new URLSearchParams(
+          Object.entries(payload).filter(([, v]) => v !== undefined && v !== null && v !== '')
+        ).toString();
+        if (qs) url += '?' + qs;
+      }
+      return fetch(url, {
+        method,
+        headers: { 'Content-Type': 'application/json', Authorization: config.token },
+        body: isGet ? undefined : JSON.stringify(payload || {})
+      }).then(async res => {
+        const contentType = res.headers.get('content-type') || '';
+        const blob = await res.blob();
+        if (!res.ok || contentType.includes('application/json')) {
+          let message = '文件导出失败';
+          try {
+            const data = JSON.parse(await blob.text());
+            message = data.message || data.detail || (data.data && data.data.error) || message;
+          } catch (e) {}
+          throw new Error(message);
+        }
+        const disposition = res.headers.get('content-disposition') || '';
+        const encoded = disposition.match(/filename\*=UTF-8''([^;]+)/i);
+        const plain = disposition.match(/filename="?([^";]+)"?/i);
+        let filename = encoded ? encoded[1] : (plain ? plain[1] : '');
+        if (encoded) {
+          try { filename = decodeURIComponent(filename); } catch (e) {}
+        }
+        return { blob, filename };
+      });
+    }
+    return new Promise((resolve, reject) => {
+      setTimeout(() => {
+        try { resolve(resolver ? resolver(payload || {}) : null); }
+        catch (e) { reject(e); }
+      }, delay());
+    });
+  }
+
   const M = () => window.MOCK;
+
+  /**
+   * SSE 流式请求（fetch + getReader 手动解析，可携带 JWT 头）
+   * @param {string} method   一般为 'POST'
+   * @param {string} path     形如 '/ai/chat/stream'
+   * @param {object} payload  请求体
+   * @param {object} handlers 事件回调：{ onMeta, onToolStart, onToolEnd, onContent,
+   *                                   onCitations, onDraft, onLog, onDone, onError }
+   *                           各回调接收解析后的 data 对象
+   * @returns {Promise<void>} 流结束后 resolve；HTTP 非 200 时 reject
+   */
+  function streamRequest(method, path, payload, handlers) {
+    const h = handlers || {};
+    let url = config.baseURL + path;
+    return fetch(url, {
+      method: method || 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: config.token },
+      body: JSON.stringify(payload || {})
+    }).then(res => {
+      if (!res.ok || !res.body) return res.json().then(r => { throw new Error(r.message || ('HTTP ' + res.status)); });
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder('utf-8');
+      let buf = '';
+      function dispatch(eventName, dataStr) {
+        let data;
+        try { data = dataStr ? JSON.parse(dataStr) : {}; } catch (e) { data = { raw: dataStr }; }
+        switch (eventName) {
+          case 'meta':        h.onMeta && h.onMeta(data); break;
+          case 'tool_start':  h.onToolStart && h.onToolStart(data); break;
+          case 'tool_end':    h.onToolEnd && h.onToolEnd(data); break;
+          case 'content':     h.onContent && h.onContent(data); break;
+          case 'think':       h.onThink && h.onThink(data); break;
+          case 'citations':   h.onCitations && h.onCitations(data); break;
+          case 'draft':       h.onDraft && h.onDraft(data); break;
+          case 'log':         h.onLog && h.onLog(data); break;
+          case 'error':       h.onError && h.onError(data); break;
+          case 'done':        h.onDone && h.onDone(data); break;
+          default:            h.onEvent && h.onEvent(eventName, data);
+        }
+      }
+      function parseSseBlock(block) {
+        let eventName = 'message';
+        const dataLines = [];
+        block.split(/\r?\n/).forEach(line => {
+          if (line.startsWith('event:')) eventName = line.slice(6).trim();
+          else if (line.startsWith('data:')) dataLines.push(line.slice(5).replace(/^ /, ''));  // 仅去掉字段名后的一个空格，保留 delta 内的前导空格
+        });
+        if (dataLines.length) dispatch(eventName, dataLines.join('\n'));
+      }
+      function pump() {
+        return reader.read().then(({ done, value }) => {
+          if (done) return;
+          buf += decoder.decode(value, { stream: true });
+          // sse_starlette 使用 \r\n 行尾，事件分隔符是 \r\n\r\n（兼容 \n\n）
+          let m;
+          while ((m = buf.match(/\r?\n\r?\n/))) {
+            const block = buf.slice(0, m.index);
+            buf = buf.slice(m.index + m[0].length);
+            if (block.trim()) parseSseBlock(block);
+          }
+          return pump();
+        });
+      }
+      return pump();
+    });
+  }
+
 
   /* ---------- 账号表（mock 模式：localStorage 持久化） ---------- */
   const ACCOUNTS_KEY = 'ca_accounts';
@@ -228,14 +339,14 @@ window.API = (function () {
      四、AI 智能辅导与答疑
      ====================================================================== */
   const ai = {
-    /** GET /ai/methods  可用教学法列表 */
-    methods: (p) => request('GET', '/ai/methods', p, () => M().teachingMethods),
-
     /** GET /ai/sessions  历史会话列表 */
     sessions: (p) => request('GET', '/ai/sessions', p, () => ({ total: M().chatHistory.length, list: M().chatHistory })),
 
     /** GET /ai/sessions/{sessionId}/messages  会话消息（含溯源引用） */
     messages: (p) => request('GET', `/ai/sessions/${p.sessionId || 'new'}/messages`, p, () => M().chatMessages),
+
+    /** DELETE /ai/sessions/{sessionId}  删除会话（仅本人会话，含全部消息） */
+    deleteSession: (p) => request('DELETE', `/ai/sessions/${p.sessionId}`, p, () => ({ deleted: true })),
 
     /** GET /ai/suggest-questions  猜你想问（基于薄弱点 + 高频问题） */
     suggestQuestions: (p) => request('GET', '/ai/suggest-questions', p, () => M().studentDashboard.suggestedQuestions),
@@ -246,6 +357,16 @@ window.API = (function () {
      * 返回: { messageId, content, citations[], method, followUpQuiz? }
      */
     chat: (p) => request('POST', '/ai/chat', p, (q) => mockAnswer(q)),
+
+    /**
+     * POST /ai/chat/stream  SSE 流式答疑（真实 token 流）
+     * handlers: onMeta({sessionId,messageId}) / onToolStart / onToolEnd /
+     *           onContent({delta}) / onCitations({items}) / onDone({outOfScope,demo})
+     */
+    chatStream: (p, handlers) => streamRequest('POST', '/ai/chat/stream', p, handlers),
+
+    /** GET /agent/status  智能体运行状态（live/demo 与模型信息） */
+    agentStatus: (p) => request('GET', '/agent/status', p, () => ({ mode: 'demo' })),
 
     /** POST /ai/feedback  对回答点赞/点踩，用于知识库迭代 */
     feedback: (p) => request('POST', '/ai/feedback', p, () => ({ accepted: true }))
@@ -482,6 +603,28 @@ window.API = (function () {
       questions: M().generatedQuestions, usedSkill: q.skillId || 'SK004', elapsedMs: 4200
     })),
 
+    /**
+     * POST /question/gen  SSE 流式智能出题（真实 LLM 生成，草稿只存个人会话历史）
+     * handlers: onMeta({batchId,count}) / onDraft({draftId,status,errors,payload}) /
+     *           onLog(过程事件) / onDone({batchId,draftIds,count,demo}) / onError
+     */
+    genStream: (p, handlers) => streamRequest('POST', '/question/gen', p, handlers),
+
+    /** GET /agent/ingest/stats  RAG 知识库切片统计（教师） */
+    ingestStats: (p) => request('GET', '/agent/ingest/stats', p, () => ({ chunks: 0 })),
+
+    /** GET /question/drafts  我的出题草稿箱  params: { status: all|draft|invalid|published } */
+    drafts: (p) => request('GET', '/question/drafts', p, () => ({ total: 0, list: [] })),
+
+    /** PUT /question/drafts/{draftId}  编辑草稿（保存时后端重新校验） */
+    draftUpdate: (p) => request('PUT', '/question/drafts/' + p.draftId, { payload: p.payload }, () => ({ updated: true })),
+
+    /** DELETE /question/drafts/{draftId}  删除草稿 */
+    draftDelete: (p) => request('DELETE', '/question/drafts/' + p.draftId, p, () => ({ deleted: true })),
+
+    /** POST /question/drafts/{draftId}/publish  发布草稿 → 正式题库 */
+    draftPublish: (p) => request('POST', '/question/drafts/' + p.draftId + '/publish', p, () => ({ published: true })),
+
     /** GET /question/bank  题库列表  params: { kpId, type, status, difficulty, keyword, page } */
     bank: (p) => request('GET', '/question/bank', p, (q) => {
       let list = M().questionBank.slice();
@@ -561,11 +704,11 @@ window.API = (function () {
     detail: (p) => request('GET', '/report/' + p.reportId, p, () => M().reportDetail),
 
     /** POST /report/{reportId}/export  导出  body: { format: pdf|html } */
-    exportReport: (p) => request('POST', `/report/${p.reportId}/export`, p, (q) =>
+    exportReport: (p) => download('POST', `/report/${p.reportId}/export`, p, (q) =>
       ({ url: `/files/report/${q.reportId}.${q.format || 'pdf'}`, format: q.format || 'pdf' }))
   };
 
 
 
-  return { config, request, auth, graph, student: stu, ai, practice, teacher: tea, analysis, question, intervention, report };
+  return { config, request, download, auth, graph, student: stu, ai, practice, teacher: tea, analysis, question, intervention, report };
 })();
