@@ -27,6 +27,7 @@ ENV/
 *.key
 *.pem
 /.workbuddy
+/.cursor
 
 # ---------- 数据库 ----------
 backend/app/data/*.db
@@ -36,6 +37,8 @@ backend/app/data/*.sqlite
 backend/app/data/*.sqlite3
 # 交付基准备份需要入仓库，供团队恢复初始状态
 !backend/app/data/course_agent.db.bak.final_delivery
+# 基准数据库快照（2026-09-08：228 题细粒度 KP），仅作为团队同步基准提交，日常改动不入仓库
+!backend/app/data/course_agent.db.bak.baseline
 
 # ---------- 向量库 / AI 索引（由 P1 生成，不入仓库） ----------
 backend/app/data/vector/
