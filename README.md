@@ -185,7 +185,58 @@ python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 
 ---
 
-## 7. 相关文档
+## 7. 数据库与 RAG 同步
+
+> **正式题库存在 SQLite 数据库中，该文件不随 git 传播**。git 上只走"原料与配方"（题库源 JSON、知识点映射、导入脚本）+ **基准快照**。本地数据库停留在旧状态时，题库会与最新代码对不上——按下述步骤恢复。
+
+### 7.1 哪些随 git 走
+
+| 文件 | 说明 |
+| --- | --- |
+| `backend/app/data/course_agent.db.bak.baseline` | **基准数据库快照**（2026-09-08：228 题细粒度 KP + AI 生成样例题） |
+| `backend/app/data/st/st_bank/after_class.json` | 课后题库源（导入原料，228 题） |
+| `backend/kp_section_mapping.json` | 王道小节 → 知识点 KP 映射（人工维护） |
+| `backend/app/data/st/rag.db` | RAG 向量库（1480 切片，重建命令见下） |
+| `backend/import_st_bank.py` / `run_st_ingest.py` | 题库导入 / RAG 构建脚本 |
+
+**不入仓库**：`course_agent.db` 本体（本地日常数据）、`st/drafts/`（教师个人出题草稿）、历史 db 备份。
+
+### 7.2 同事首次同步 / 题库对不上时
+
+```bash
+git pull
+cd backend
+# 推荐：用基准快照恢复，与团队开发状态完全一致
+python -c "import shutil; shutil.copy('app/data/course_agent.db.bak.baseline', 'app/data/course_agent.db')"
+# 或：保留本地练习/答疑数据，仅重建题库归属（幂等，不会删除历史残留的占位种子题）
+python import_st_bank.py
+```
+
+恢复后的基准题库：**228 道 KHD 课后题，覆盖 22 个细粒度知识点**，另有 AI 生成样例题 AI001。
+
+### 7.3 RAG 向量库
+
+`rag.db` 随 git 走，正常 `git pull` 即可拿到最新版。仅当课程资源（PDF/PPT/题库）发生变更时才需要重建：
+
+```bash
+python run_st_ingest.py     # 重跑后 git 会出现 rag.db 的变更，提交即可
+```
+
+### 7.4 更新基准快照（阶段性变更需要同步全队时）
+
+```bash
+cd backend
+python import_st_bank.py    # 先确认题库状态可由脚本复现
+cp app/data/course_agent.db app/data/course_agent.db.bak.baseline
+git add app/data/course_agent.db.bak.baseline
+git commit -m "更新基准数据库：注明本次变更内容"
+```
+
+> **注意**：`course_agent.db`、历史备份、个人草稿 sidecar 均已被 gitignore 排除，日常开发不会误提交。
+
+---
+
+## 8. 相关文档
 
 - `docs/README.md` —— 前端文档导航（接口文档、对接指南、数据模型、页面清单等）
 - `docs/接口文档.md` —— 全部 API 契约（与 `api.js` 一一对应）
