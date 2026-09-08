@@ -30,16 +30,16 @@ ENV/
 /.cursor
 
 # ---------- 数据库 ----------
-backend/app/data/*.db
-backend/app/data/*.db-*
-backend/app/data/*.db.*      # 覆盖 .bak.* 与 before_*_20260906 等历史备份命名
-backend/app/data/*.sqlite
-backend/app/data/*.sqlite3
+# backend/app/data/*.db
+# backend/app/data/*.db-*
+# backend/app/data/*.db.*      # 覆盖 .bak.* 与 before_*_20260906 等历史备份命名
+# backend/app/data/*.sqlite
+# backend/app/data/*.sqlite3
 # 基准快照需要入仓库，供团队恢复/同步（日常 db 改动不入仓库）
 !backend/app/data/course_agent.db.bak.final_delivery
 !backend/app/data/course_agent.db.bak.baseline
 # 教师个人出题草稿 sidecar（个人数据，不入仓库）
-backend/app/data/st/drafts/
+# backend/app/data/st/drafts/
 
 # ---------- 向量库 / AI 索引（由 P1 生成，不入仓库） ----------
 backend/app/data/vector/

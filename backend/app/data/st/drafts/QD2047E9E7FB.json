@@ -1,0 +1,21 @@
+{
+  "id": 91004,
+  "chapter": "1.2 算法和算法评价",
+  "question": "以下算法的时间复杂度为(  )。\nvoid fun(int n) {\n    int x = 0;\n    for (int i = 1; i <= n; i *= 2)\n        for (int j = 1; j <= i; j++)\n            x++;\n}",
+  "options": {
+    "A": "O(log[2]n)",
+    "B": "O(n)",
+    "C": "O(nlog[2]n)",
+    "D": "O(n^2)"
+  },
+  "answer": "B",
+  "analysis": "外层循环执行时 i 依次取 1,2,4,…,2^k（其中 2^k≤n），内层语句 x++ 的执行总次数为 1+2+4+…+2^k=2^(k+1)-1≤2n-1，故时间复杂度为 O(n)。",
+  "has_image": false,
+  "_course": {
+    "id": 1,
+    "title": "第1章 绪论",
+    "prefixes": [
+      "1."
+    ]
+  }
+}

@@ -1,0 +1,52 @@
+{
+  "id": 90106,
+  "chapter": "6.4 图的应用",
+  "question": "对下图用 Kruskal 算法求最小生成树，第 3 次被选中（加入生成树）的边是(  )。",
+  "options": {
+    "A": "(a,b)",
+    "B": "(b,c)",
+    "C": "(c,d)",
+    "D": "(a,c)"
+  },
+  "answer": "C",
+  "analysis": "Kruskal 算法按权值从小到大依次考察边：先选 (a,b)=1，再选 (b,c)=1；权值为 2 的边 (a,c) 会与已选的两条边构成回路 (a-b-c-a)，故被舍弃；接着取权值为 3 的 (c,d)。因此第 3 次被选中的边是 (c,d)。",
+  "has_image": true,
+  "graph": {
+    "type": "weighted_undirected_graph",
+    "nodes": [
+      "a",
+      "b",
+      "c",
+      "d"
+    ],
+    "edges": [
+      {
+        "from": "a",
+        "to": "b",
+        "weight": 1
+      },
+      {
+        "from": "b",
+        "to": "c",
+        "weight": 1
+      },
+      {
+        "from": "a",
+        "to": "c",
+        "weight": 2
+      },
+      {
+        "from": "c",
+        "to": "d",
+        "weight": 3
+      }
+    ]
+  },
+  "_course": {
+    "id": 7,
+    "title": "第7章 图",
+    "prefixes": [
+      "6."
+    ]
+  }
+}
