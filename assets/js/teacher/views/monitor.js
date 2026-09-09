@@ -137,7 +137,7 @@
             <p class="fz-12 t-dim" style="margin:14px 0 8px">高频错题</p>
             <div class="stack" style="gap:8px">${(p.wrongDetail || []).map(w => `
               <div class="file-item">${icon('alert')}<b>${U.esc(w.kp)}</b>
-                <span class="fz-11 t-dim nowrap">${w.qId} · 错 ${w.count} 次</span>
+                <span class="fz-11 t-dim nowrap">错 ${w.count} 次</span>
                 <span class="badge badge--warn">${w.errorType}</span></div>`).join('') || '<span class="fz-12 t-dim">暂无高频错题</span>'}</div>
           </div>`,
           footer: `<button class="btn" data-close>关闭</button>
@@ -145,11 +145,27 @@
             <button class="btn btn--primary" id="prReport">${icon('file')} 学情报告</button>`,
           onMount(ov, close) {
             Charts.bar('#stuTimeChart', p.studyTimeDist.data.map((v, i) => ({ name: p.studyTimeDist.xAxis[i], value: v })), { color: Charts.tokens().brand });
+            const studyMinutes = (p.activityTrend.minutes || []).map(v => Number(v) || 0);
+            const minutePeak = Math.max(...studyMinutes, 0);
+            let minuteInterval = 1;
+            while (minutePeak > minuteInterval * 4) minuteInterval *= 2;
+            const minuteMax = minuteInterval * 4;
+
+            const aiQuestions = (p.activityTrend.questions || []).map(v => Number(v) || 0);
+            const aiPeak = Math.max(...aiQuestions, 0);
+            let aiInterval = 1;
+            while (aiPeak > aiInterval * 4) aiInterval *= 2;
+            const aiMax = aiInterval * 4;
             Charts.line('#stuTrendChart', {
               xAxis: p.activityTrend.xAxis,
               series: [
-                { name: '学习时长', data: p.activityTrend.minutes, color: Charts.tokens().brand },
-                { name: 'AI 提问', data: p.activityTrend.questions, color: Charts.tokens().warn }
+                { name: '学习时长', data: studyMinutes, color: Charts.tokens().brand, yAxisIndex: 0 },
+                { name: 'AI 提问', data: aiQuestions, color: Charts.tokens().warn, yAxisIndex: 1 }
+              ]
+            }, {
+              yAxes: [
+                { name: '分钟', min: 0, max: minuteMax, interval: minuteInterval, color: Charts.tokens().brand },
+                { name: '次', min: 0, max: aiMax, interval: aiInterval, color: Charts.tokens().warn }
               ]
             });
             U.$('#stuKpTbl').innerHTML = `

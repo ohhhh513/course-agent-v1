@@ -576,7 +576,7 @@ def student_profile(
     active = [r for r in lp_rows if (r.mastery or 0) > 0]
     mastery = round(sum(r.mastery or 0 for r in active) / len(active), 1) if active else 0
     accuracy = round(sum(1 for a in ans_rows if a.is_correct) / len(ans_rows) * 100, 1) if ans_rows else 0
-    goal = round(mastery / 80 * 100, 1) if mastery else 0
+    goal = min(round(mastery / 80 * 100, 1), 100) if mastery else 0
 
     # 班级排名（按 mastery）
     class_name = stu.class_name or ""
@@ -640,7 +640,25 @@ def student_profile(
     }
 
     # activityTrend：近 14 天
+    # AI 提问只统计该学生 explain 会话中的本人消息，排除 AI 回复和教师端出题会话。
     today = china_now().date()
+    trend_start, _ = china_day_bounds_utc(today - timedelta(days=13))
+    _, trend_end = china_day_bounds_utc(today)
+    from ..models.ai import ChatSession, ChatMessage
+    ai_question_times = [
+        row[0]
+        for row in db.query(ChatMessage.created_at).join(
+            ChatSession, ChatSession.session_id == ChatMessage.session_id,
+        ).filter(
+            ChatSession.user_id == user_id,
+            ChatSession.flow_id == "explain",
+            ChatMessage.role == "me",
+            ChatMessage.created_at >= trend_start,
+            ChatMessage.created_at <= trend_end,
+        ).all()
+        if row[0]
+    ]
+
     act_x, act_min, act_q = [], [], []
     total_minutes = 0
     for offset in range(13, -1, -1):
@@ -649,10 +667,10 @@ def student_profile(
         day_ps = [p for p in db.query(PracticeSession).filter(PracticeSession.user_id == user_id).all()
                   if p.finished_at and day_start <= p.finished_at <= day_end]
         mins = sum(p.duration_seconds or 0 for p in day_ps) // 60
-        qs = sum(1 for a in ans_rows if a.created_at and day_start <= a.created_at <= day_end)
+        ai_questions = sum(1 for created_at in ai_question_times if day_start <= created_at <= day_end)
         act_x.append(d.strftime("%m-%d"))
         act_min.append(mins)
-        act_q.append(0)  # AI 提问暂无真实来源
+        act_q.append(ai_questions)
         total_minutes += mins
 
     return ok({

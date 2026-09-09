@@ -222,21 +222,35 @@ const Charts = (function () {
     return render(sel, (t) => ({
       tooltip: Object.assign(baseTooltip(t), { trigger: 'axis', axisPointer: { type: 'line', lineStyle: { color: t.split } } }),
       legend: { top: 0, right: 0, textStyle: { color: t.text2, fontSize: 11.5 }, itemWidth: 14, itemHeight: 8 },
-      grid: { left: 4, right: 8, top: 36, bottom: 4, containLabel: true },
+      grid: { left: o.yAxes ? 18 : 4, right: o.yAxes ? 30 : 8, top: 36, bottom: 4, containLabel: true },
       xAxis: {
         type: 'category', data: data.xAxis, boundaryGap: false,
         axisLine: { lineStyle: { color: t.split } },
         axisTick: { show: false },
         axisLabel: { color: t.dim, fontSize: 11 }
       },
-      yAxis: {
+      yAxis: o.yAxes ? o.yAxes.map((axis, i) => ({
+        type: 'value',
+        min: axis.min !== undefined ? axis.min : 0,
+        max: axis.max,
+        interval: axis.interval,
+        name: axis.name || '',
+        nameLocation: 'end',
+        nameGap: 8,
+        position: axis.position || (i === 0 ? 'left' : 'right'),
+        axisLine: { show: !!axis.color, lineStyle: { color: axis.color || t.split } },
+        axisTick: { show: false },
+        splitLine: { show: i === 0, lineStyle: { color: t.split, type: 'dashed' } },
+        nameTextStyle: { color: axis.color || t.dim, fontSize: 10 },
+        axisLabel: { color: axis.color || t.dim, fontSize: 11, formatter: axis.fmt || '{value}' }
+      })) : {
         type: 'value', min: o.min !== undefined ? o.min : 0, max: o.max,
         axisLine: { show: false }, axisTick: { show: false },
         splitLine: { lineStyle: { color: t.split, type: 'dashed' } },
         axisLabel: { color: t.dim, fontSize: 11, formatter: o.fmt || '{value}' }
       },
       series: data.series.map(s => ({
-        name: s.name, type: 'line', data: s.data, smooth: true,
+        name: s.name, type: 'line', data: s.data, yAxisIndex: s.yAxisIndex || 0, smooth: true,
         symbol: 'circle', symbolSize: 6,
         lineStyle: { width: 2.4, color: s.color, type: s.dashed ? 'dashed' : 'solid' },
         itemStyle: { color: s.color, borderWidth: 2, borderColor: t.surface },
