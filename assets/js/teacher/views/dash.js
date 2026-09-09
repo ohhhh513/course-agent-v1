@@ -15,7 +15,19 @@
     render() {
       const el = U.$('#view-dashboard');
       el.innerHTML = U.skeleton(420);
-      API.teacher.dashboard({ classId: state.classId }).then(d => {
+      const classId = state.classId;
+      const studentsReq = API.teacher.students({
+        classId,
+        alertLevel: 'all',
+        page: 1,
+        size: 10000
+      }).catch(() => ({ list: [] }));
+      Promise.all([
+        API.teacher.dashboard({ classId }),
+        studentsReq
+      ]).then(([d, studentsData]) => {
+        const classStudents = Array.isArray(studentsData) ? studentsData : ((studentsData && studentsData.list) || []);
+        const allFeed = Array.isArray(d.liveFeed) ? d.liveFeed : [];
         const ov = d.classOverview;
         el.innerHTML = `
         <div class="hero">
@@ -36,33 +48,29 @@
         </div>
 
         <div class="grid g-21" style="margin-bottom:16px">
-          <div class="card">
+          <div class="card dash-todo-card">
             <div class="card__head"><h3>${icon('bell')} 待办事项</h3><span class="spacer"></span>
               <span class="badge badge--danger">${d.todos.length} 项</span></div>
-            <div class="card__body stack" style="gap:10px">${d.todos.map(R.todo).join('')}</div>
+            <div class="card__body stack dash-todo-card__body" style="gap:10px">${d.todos.map(R.todo).join('')}</div>
           </div>
-          <div class="card">
+          <div class="card dash-live-card">
             <div class="card__head"><h3>${icon('trend')} 实时动态</h3><span class="spacer"></span>
-              <span class="badge badge--ok">实时</span></div>
-            <div class="card__body card__body--flush">
-              <div class="list" style="max-height:360px;overflow:auto">
-                ${d.liveFeed.map(f => `
-                  <div class="list__item">
-                    <span class="list__lead" style="color:${f.level === 'danger' ? 'var(--danger)' : f.level === 'warn' ? 'var(--warn)' : 'var(--ok)'}">
-                      ${icon(f.type === 'submit' ? 'check' : f.type === 'alert' ? 'alert' : 'message')}</span>
-                    <div class="list__main"><b>${U.esc(f.text)}</b><p>${U.esc(f.meta)}</p></div>
-                    <span class="list__trail fz-11 t-dim">${f.time}</span>
-                  </div>`).join('')}
+              <button class="btn btn--outline btn--sm dash-live-filter" id="dashLiveStudentPicker" type="button" aria-expanded="false">
+                <span id="dashLiveStudentLabel">全部学生</span>${icon('chevronDown')}
+              </button></div>
+            <div class="card__body card__body--flush dash-live-card__body">
+              <div class="dash-live-panel" id="dashLivePanel">
+                <div class="dash-live-feed" id="dashLiveFeed"></div>
               </div>
             </div>
           </div>
         </div>
 
         <div class="grid g-2">
-          <div class="card">
+          <div class="card dash-kp-ranking-card">
             <div class="card__head"><h3>${icon('target')} 班级共性薄弱知识点排行</h3><span class="spacer"></span>
               <span class="badge badge--danger">Top 5</span></div>
-            <div class="card__body">
+            <div class="card__body dash-kp-ranking-card__body">
               ${d.kpRanking.map(k => {
                 const mastery = Math.max(0, Math.min(100, Number(k.mastery) || 0));
                 const tone = Dash.rankingTone(mastery);
@@ -91,6 +99,68 @@
           { name: '正常学生', value: Math.max(0, ov.studentCount - ov.alertStudentCount), color: Charts.tokens().ok }
         ], { centerValue: ov.alertStudentCount, centerLabel: '预警学生' });
 
+        let liveStudentId = 'all';
+        const studentById = new Map(classStudents.map(s => [String(s.userId), s]));
+        const livePanel = U.$('#dashLivePanel', el);
+        const livePickerBtn = U.$('#dashLiveStudentPicker', el);
+        const liveStudentLabel = U.$('#dashLiveStudentLabel', el);
+
+        const renderLiveFeed = () => {
+          if (!livePanel) return;
+          livePanel.innerHTML = '<div class="dash-live-feed" id="dashLiveFeed"></div>';
+          const feedEl = U.$('#dashLiveFeed', livePanel);
+          const feed = liveStudentId === 'all'
+            ? allFeed
+            : allFeed.filter(f => String(f.userId) === String(liveStudentId));
+          feedEl.innerHTML = feed.length ? `<div class="list">
+            ${feed.map(f => `
+              <div class="list__item">
+                <span class="list__lead" style="color:${f.level === 'danger' ? 'var(--danger)' : f.level === 'warn' ? 'var(--warn)' : 'var(--ok)'}">
+                  ${icon(f.type === 'submit' ? 'check' : f.type === 'alert' ? 'alert' : 'message')}</span>
+                <div class="list__main"><b>${U.esc(f.text)}</b><p>${U.esc(f.meta)}</p></div>
+                <span class="list__trail fz-11 t-dim">${U.esc(f.time || '')}</span>
+              </div>`).join('')}
+          </div>` : `<div class="dash-live-empty">${liveStudentId === 'all' ? '当前班级暂无动态' : '该学生暂无动态'}</div>`;
+          if (livePickerBtn) livePickerBtn.setAttribute('aria-expanded', 'false');
+        };
+
+        const openLivePicker = () => {
+          if (!livePanel) return;
+          if (livePickerBtn && livePickerBtn.getAttribute('aria-expanded') === 'true') {
+            renderLiveFeed();
+            return;
+          }
+          livePanel.innerHTML = `
+            <div class="dash-live-picker">
+              <div class="dash-live-picker__options">
+                <button class="dash-live-student-option ${liveStudentId === 'all' ? 'is-active' : ''}" type="button" data-live-student-id="all">
+                  <b>全部学生</b>
+                </button>
+                ${classStudents.map(s => {
+                  const id = String(s.userId || '');
+                  return `<button class="dash-live-student-option ${liveStudentId === id ? 'is-active' : ''}" type="button" data-live-student-id="${U.esc(id)}">
+                    <b>${U.esc(s.name || id)}</b>
+                  </button>`;
+                }).join('')}
+                ${classStudents.length ? '' : '<div class="dash-live-picker__empty">暂无可选学生</div>'}
+              </div>
+            </div>`;
+          if (livePickerBtn) livePickerBtn.setAttribute('aria-expanded', 'true');
+
+          U.$$('.dash-live-student-option', livePanel).forEach(option => {
+            option.addEventListener('click', () => {
+              liveStudentId = option.dataset.liveStudentId || 'all';
+              const selected = studentById.get(String(liveStudentId));
+              if (liveStudentLabel) liveStudentLabel.textContent = liveStudentId === 'all' ? '全部学生' : (selected ? selected.name : '全部学生');
+              renderLiveFeed();
+            });
+          });
+        };
+
+        if (liveStudentLabel) liveStudentLabel.textContent = '全部学生';
+        renderLiveFeed();
+        if (livePickerBtn) livePickerBtn.addEventListener('click', openLivePicker);
+
         U.$$('.todo', el).forEach(t => {
           const btn = t.querySelector('.btn');
           // 「发消息」按钮：单独阻止冒泡并打开发送私信弹窗
@@ -109,6 +179,8 @@
             t.addEventListener('click', () => { if (t.dataset.target) Router.go(t.dataset.target); });
           }
         });
+      }).catch(err => {
+        el.innerHTML = `<div class="card card--pad"><div class="callout callout--danger">${icon('alert')}<div>教学驾驶舱加载失败：${U.esc(err.message || err)}</div></div></div>`;
       });
     },
 

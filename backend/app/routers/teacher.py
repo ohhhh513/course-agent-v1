@@ -247,32 +247,34 @@ def teacher_dashboard(
     kp_ranking.sort(key=lambda x: x["mastery"])  # 低的在前面
     kp_ranking = kp_ranking[:5]                    # Top 5
 
-    # ==== liveFeed：前端期望 [{ type, level, text, meta, time }] ====
+    # ==== liveFeed：前端期望 [{ type, level, text, meta, time, userId }] ====
     live = []
     if open_alerts_all:
-        # 优先放最新的 alert 事件
-        recent_alerts = sorted(open_alerts_all, key=lambda a: a.created_at or datetime.min, reverse=True)[:2]
-        for a in recent_alerts:
+        # 优先放最新的 alert 事件；当前班级的全部未关闭预警都纳入动态。
+        all_alerts = sorted(open_alerts_all, key=lambda a: a.created_at or datetime.min, reverse=True)
+        for a in all_alerts:
             stu_name = next((s.name for s in students if s.user_id == a.user_id), a.user_id)
             kp_name = a.kp_name or kp_id_name.get(a.kp_id or "", "") or "未知"
             level = "danger" if a.level == "red" else "warn" if a.level == "yellow" else "ok"
             live.append({
                 "type": "alert", "level": level,
+                "userId": a.user_id,
                 "text": f"新增预警：{stu_name} · {kp_name}",
                 "meta": a.title or a.type or a.desc or "未处理",
                 "time": format_china_time(a.created_at, "%H:%M") or china_now().strftime("%H:%M"),
                 "_time_sort": a.created_at or datetime.min,
             })
-    # 再加最近的答题事件
-    recent_ans = db.query(AnswerRecord).filter(
+    # 再加当前班级的全部答题事件
+    all_answers = db.query(AnswerRecord).filter(
         AnswerRecord.user_id.in_(student_ids),
-    ).order_by(desc(AnswerRecord.created_at)).limit(4).all()
-    for ar in recent_ans:
+    ).order_by(desc(AnswerRecord.created_at)).all()
+    for ar in all_answers:
         stu_name = next((s.name for s in students if s.user_id == ar.user_id), ar.user_id)
         kp_name = kp_id_name.get(ar.kp_id or "", "") or ar.kp_id or "未知"
         live.append({
             "type": "submit",
             "level": "ok" if ar.is_correct else "warn",
+            "userId": ar.user_id,
             "text": f"{stu_name} 提交了「{kp_name}」相关题目",
             "meta": "回答正确" if ar.is_correct else "回答错误",
             "time": format_china_time(ar.created_at, "%H:%M") or china_now().strftime("%H:%M"),
@@ -280,7 +282,6 @@ def teacher_dashboard(
         })
     # 按数据库中的 UTC 时间排序，展示时再转换为中国时间。
     live.sort(key=lambda x: x.get("_time_sort", datetime.min), reverse=True)
-    live = live[:6]
     for item in live:
         item.pop("_time_sort", None)
 
