@@ -125,3 +125,9 @@ def on_startup():
     # 运行种子数据（如果表为空）
     from .seed.seed_data import run_seed
     run_seed()
+    # 启动引导：把 run_seed 的演示库补全为正确库（图谱9章 + 真实资源 + 正式题库），幂等
+    try:
+        from .services.bootstrap import bootstrap
+        bootstrap()
+    except Exception as e:
+        print(f"[bootstrap] 跳过（{e}）")
