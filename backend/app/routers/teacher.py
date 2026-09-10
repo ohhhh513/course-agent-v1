@@ -61,7 +61,7 @@ def china_day_bounds_utc(day) -> tuple[datetime, datetime]:
 
 # ------- Pydantic 请求体 -------
 class AlertReviewReq(BaseModel):
-    action: str           # confirm / ignore / annotate
+    action: str           # confirm / ignore
     note: Optional[str] = None
 
 
@@ -160,11 +160,14 @@ def teacher_dashboard(
         1 for sid in student_ids
         if sum(1 for r in all_lp if r.user_id == sid and (r.mastery or 0) < 60) >= 3
     )
-    # 预警聚合：red/yellow alert 数
-    open_alerts_all = db.query(Alert).filter(
-        Alert.class_id == classId, Alert.status != "closed",
+    # 预警聚合：只统计系统当前判定仍有效的红/黄预警。
+    # ignored 已由教师判定为正常；没有有效预警的学生也自然落入 green。
+    active_alerts_all = db.query(Alert).filter(
+        Alert.class_id == classId,
+        Alert.level.in_(("red", "yellow")),
+        Alert.status.notin_(("closed", "ignored")),
     ).all()
-    alert_student_count = len(set(a.user_id for a in open_alerts_all))
+    alert_student_count = len(set(a.user_id for a in active_alerts_all))
     alert_ratio = round(alert_student_count / n * 100, 1) if n else 0
 
     # 目标达成度 = 全班达到「掌握率 ≥ 60」的知识点格子数 / 总格子数（全量口径，与学生端能力目标达成度一致）
@@ -249,9 +252,9 @@ def teacher_dashboard(
 
     # ==== liveFeed：前端期望 [{ type, level, text, meta, time, userId }] ====
     live = []
-    if open_alerts_all:
+    if active_alerts_all:
         # 优先放最新的 alert 事件；当前班级的全部未关闭预警都纳入动态。
-        all_alerts = sorted(open_alerts_all, key=lambda a: a.created_at or datetime.min, reverse=True)
+        all_alerts = sorted(active_alerts_all, key=lambda a: a.created_at or datetime.min, reverse=True)
         for a in all_alerts:
             stu_name = next((s.name for s in students if s.user_id == a.user_id), a.user_id)
             kp_name = a.kp_name or kp_id_name.get(a.kp_id or "", "") or "未知"
@@ -288,7 +291,7 @@ def teacher_dashboard(
     # ==== todos：前端期望 [{ level, type, title, desc, action, target }] ====
     todos = []
     # 1) open alerts（最紧急）
-    for a in sorted(open_alerts_all, key=lambda x: ({"red":0,"yellow":1}[x.level], x.created_at or datetime.min))[:4]:
+    for a in sorted(active_alerts_all, key=lambda x: ({"red":0,"yellow":1}[x.level], x.created_at or datetime.min))[:4]:
         stu_name = next((s.name for s in students if s.user_id == a.user_id), a.user_id)
         kp_name = a.kp_name or kp_id_name.get(a.kp_id or "", "") or ""
         level = "danger" if a.level == "red" else "warn"
@@ -367,7 +370,9 @@ def students(
 
     # 预警聚合：每个学生的最高级别 + 数量
     alert_rows = db.query(Alert.user_id, Alert.level, Alert.status).filter(
-        Alert.class_id == classId, Alert.status != "closed",
+        Alert.class_id == classId,
+        Alert.level.in_(("red", "yellow")),
+        Alert.status.notin_(("closed", "ignored")),
     ).all()
     alert_by_user = defaultdict(lambda: {"red": 0, "yellow": 0, "top": "green"})
     for a in alert_rows:
@@ -601,14 +606,18 @@ def student_profile(
     for r in lp_rows:
         ar_list = ans_by_kp.get(r.kp_id, [])
         wrong = sum(1 for a in ar_list if not a.is_correct)
-        minutes = sum(a.duration_seconds or 0 for a in ar_list) // 60
+        # 对应知识点下全部作答记录的真实累计用时；保留秒级精度，
+        # 避免不足 1 分钟的练习被整数除法显示成 0。
+        duration_seconds = sum(max(0, a.duration_seconds or 0) for a in ar_list)
         m = round(r.mastery or 0, 1)
         level = "danger" if m < 60 else "warn" if m < 80 else "ok"
         kp_detail.append({
             "kpId": r.kp_id,
             "name": r.name or r.kp_id,
             "mastery": m, "level": level,
-            "questions": len(ar_list), "wrong": wrong, "minutes": minutes,
+            "questions": len(ar_list), "wrong": wrong,
+            "durationSeconds": duration_seconds,
+            "minutes": round(duration_seconds / 60, 1),  # 兼容旧前端字段
         })
     kp_detail.sort(key=lambda x: x["mastery"])
 
@@ -795,12 +804,44 @@ def review_alert(
     }
     if alert.class_id not in teacher_class_ids:
         return fail("无权复核非本班预警", 403)
-    alert.status = "ignored" if req.action == "ignore" else "reviewed"
+    if req.action not in ("confirm", "ignore"):
+        return fail("不支持的复核操作", 400)
+    if req.action == "ignore":
+        # 忽略表示教师判定该条无需继续预警，统一按绿色正常处理；
+        # 保留原始题目、触发规则和复核意见，便于之后查看历史依据。
+        alert.status = "ignored"
+        alert.level = "green"
+    else:
+        if alert.status == "closed":
+            return fail("该预警已解除，不能再次确认", 400)
+        if alert.status == "ignored":
+            # 已忽视记录重新确认时，必须按学生当前真实作答重新判级，
+            # 不能直接把用于表示正常的 green 改回异常色。
+            from ..services.scoring import quiz_accuracy_by_kp
+            from ..services.alert_detector import (
+                ENGAGE_MIN, RED_BELOW, YELLOW_BELOW, TRIGGER, _suggestions,
+            )
+            accuracy_info = quiz_accuracy_by_kp(db, alert.user_id).get(alert.kp_id)
+            if not accuracy_info or accuracy_info[1] < ENGAGE_MIN:
+                return fail("当前作答数据不足，不能重新确认为预警", 400)
+            accuracy = accuracy_info[0]
+            if accuracy >= YELLOW_BELOW:
+                return fail("当前正确率已达标，不能重新确认为预警", 400)
+            alert.level = "red" if accuracy < RED_BELOW else "yellow"
+            alert.desc = f"当前作答正确率 {accuracy:.0f}%，低于课程达标线 {YELLOW_BELOW}%。"
+            alert.detail_json = json.dumps(
+                {"current": accuracy, "threshold": YELLOW_BELOW, "redBelow": RED_BELOW},
+                ensure_ascii=False,
+            )
+            alert.trigger = TRIGGER
+            alert.suggestions_json = _suggestions(db, alert.kp_id, alert.kp_name or alert.kp_id)
+        # 确认只记录“已复核”，红黄等级仍由系统阈值决定并保持不变。
+        alert.status = "reviewed"
     if req.note:
         alert.note = req.note
     alert.reviewed_at = utc_now_naive()
     db.commit()
-    return ok({"alertId": alert_id, "status": alert.status, "note": alert.note or ""})
+    return ok({"alertId": alert_id, "status": alert.status, "level": alert.level, "note": alert.note or ""})
 
 
 @router.post("/messages")

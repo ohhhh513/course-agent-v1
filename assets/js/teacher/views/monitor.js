@@ -3,6 +3,11 @@
   /* ================================================================
      视图 2 · 学情监测看板（热力图 / 个体详情 / 预警复核）
      ================================================================ */
+  function formatAnswerDuration(value) {
+    const totalSeconds = Math.max(0, Math.floor(Number(value) || 0));
+    return `${totalSeconds}″`;
+  }
+
   const Monitor = {
     stuLevel: 'all', stuKeyword: '', level: 'all', heatType: 'completion',
     render() {
@@ -174,7 +179,7 @@
                   <td class="t-right num" style="color:${U.levelColor[k.level]}">${k.mastery}%</td>
                   <td class="t-right num t-dim">${k.questions}</td>
                   <td class="t-right num t-danger">${k.wrong}</td>
-                  <td class="t-right num t-dim">${k.minutes}'</td></tr>`).join('')}</tbody>`;
+                  <td class="t-right num t-dim">${formatAnswerDuration(k.durationSeconds != null ? k.durationSeconds : (Number(k.minutes) || 0) * 60)}</td></tr>`).join('')}</tbody>`;
             U.$('#prMsg', ov).addEventListener('click', () => {
               Modal.open({
                 title: '向学生发送私信',
@@ -204,13 +209,12 @@
       API.teacher.alerts({ classId: state.classId, level: this.level }).then(r => {
         const box = U.$('#alList'); if (!box) return;
         box.innerHTML = r.list.map(a => `
-          <div class="alert-card ${U.alertCard[a.level]}">
+          <div class="alert-card ${a.status === 'ignored' ? 'alert-card--ignored' : U.alertCard[a.level]}">
             <div class="alert-card__head">
               <div class="alert-card__ico">${icon(a.level === 'red' ? 'alert' : 'info')}</div>
               <div class="alert-card__body">
                 <div class="row" style="margin-bottom:3px">
-                  <span class="badge ${U.alertBadge[a.level]}">${U.alertName[a.level]}</span>
-                  <span class="badge badge--outline mono">${a.alertId}</span>
+                  <span class="badge ${a.status === 'ignored' ? 'badge--ignored' : U.alertBadge[a.level]}">${a.status === 'ignored' ? '已忽视' : U.alertName[a.level]}</span>
                   <span class="spacer"></span><span class="fz-11 t-dim">${a.createdAt}</span>
                 </div>
                 <h4>${U.esc(a.student)} · ${U.esc(a.typeLabel || a.type)}</h4>
@@ -218,11 +222,11 @@
               </div>
             </div>
             <div class="alert-card__foot">
-              <span class="badge ${a.status === 'open' ? 'badge--danger' : a.status === 'reviewed' ? 'badge--warn' : 'badge--outline'}">
-                ${a.status === 'open' ? '待处理' : a.status === 'reviewed' ? '已复核' : '已忽略'}</span>
+              <span class="badge ${a.status === 'ignored' ? 'badge--ignored' : a.status === 'reviewed' ? U.alertBadge[a.level] : a.status === 'open' ? 'badge--danger' : 'badge--outline'}">
+                ${a.status === 'open' ? '待处理' : a.status === 'reviewed' ? '已复核' : a.status === 'ignored' ? '已忽视' : '已解除'}</span>
               <span class="spacer"></span>
               <button class="btn btn--sm" data-detail="${a.alertId}">查看</button>
-              <button class="btn btn--sm btn--primary" data-review="${a.alertId}">复核</button>
+              ${a.status === 'open' || a.status === 'reviewed' || a.status === 'ignored' ? `<button class="btn btn--sm btn--primary" data-review="${a.alertId}">${a.status === 'open' ? '复核' : '重新复核'}</button>` : ''}
             </div>
           </div>`).join('') || R.empty('暂无该级别预警', '', 'checkCircle');
 
@@ -254,13 +258,12 @@
                 <div class="kv__row"><span>触发规则</span><span>${U.esc(a.trigger)}</span></div>
               </div>
               <label class="fz-12 t-dim" style="display:block;margin-bottom:6px">复核意见（可选）</label>
-              <textarea class="code-edit" id="rvNote" placeholder="补充教师判断，将随复核记录留存…"></textarea>`,
-            footer: `<button class="btn btn--ghost" id="ig">忽略</button><button class="btn btn--outline" id="an">标注</button><button class="btn btn--primary" id="cf">确认预警</button>`,
+              <textarea class="code-edit" id="rvNote" placeholder="补充教师判断，将随复核记录留存…">${U.esc(a.note || '')}</textarea>`,
+            footer: `<button class="btn btn--ghost" id="ig">忽略</button><button class="btn btn--primary" id="cf">确认预警</button>`,
             onMount(ov, close) {
               const note = () => U.$('#rvNote', ov).value.trim();
               const after = (msg) => { Toast.ok(msg); close(); self.loadAlerts(); };
               U.$('#cf', ov).addEventListener('click', () => API.teacher.reviewAlert({ alertId: a.alertId, action: 'confirm', note: note() }).then(() => after('已确认预警，进入处理流程')));
-              U.$('#an', ov).addEventListener('click', () => API.teacher.reviewAlert({ alertId: a.alertId, action: 'annotate', note: note() }).then(() => after('已标注复核意见')));
               U.$('#ig', ov).addEventListener('click', () => API.teacher.reviewAlert({ alertId: a.alertId, action: 'ignore', note: note() }).then(() => after('已忽略该预警')));
             }
           });

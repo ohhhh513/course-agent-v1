@@ -121,9 +121,9 @@
         U.$('#weakList').innerHTML = d.weakPoints.map(w => `
           <div class="list__item list__item--lv-${w.level}">
             <div class="list__main">
-              <div class="row"><b>${U.esc(w.name)}</b><span class="badge ${U.levelBadge[U.level(w.masteryRate)]}">${w.masteryRate}%</span></div>
+              <div class="row"><b>${U.esc(w.name)}</b><span class="badge ${U.levelBadge[U.level(w.accuracyRate)]}">${w.accuracyRate}%</span></div>
               <p>${U.esc(w.chapter)} · 累计错 ${w.errorCount} 题 · 近7日 ${w.trend > 0 ? '+' : ''}${w.trend}pp</p>
-              <div style="margin-top:6px;max-width:280px">${U.bar(w.masteryRate)}</div>
+              <div style="margin-top:6px;max-width:280px">${U.bar(w.accuracyRate)}</div>
             </div>
             <div class="list__trail">
               <button class="btn btn--xs btn--outline" data-goto="practice">去练习</button>

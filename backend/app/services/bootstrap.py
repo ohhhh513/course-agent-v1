@@ -4,6 +4,7 @@
   1) extend_graph_to_nine    图谱从 7 章扩展为 9 章（补 KP401-404 / KP501-502、重排章节、新增前后置）
   2) sync_resources_from_folder  扫描 resources/ 并登记真实资源
   3) import_questions        从 after_class.json 导入正式题库（KHD 前缀）
+  4) ensure_learning_paths   按扩展后的图谱校正学习路径（旧模板残留整体重建）
 全部幂等，可每次启动调用。
 """
 import json
@@ -220,6 +221,38 @@ def import_questions(verbose: bool = True) -> int:
     return created + updated
 
 
+def ensure_learning_paths(verbose: bool = True) -> dict:
+    """按扩展后的图谱校正学习路径（幂等）。
+
+    必须放在 extend_graph_to_nine 之后：学习路径完全由 graph_nodes 派生，
+    图谱还是 7 章时生成出来的就是缺串/数组/排序的旧路径（历史上正是这么踩的坑）。
+    知识点集合与图谱不一致（旧模板残留、图谱扩章后未同步）→ 整体重建；
+    一致则不动，保留 mastered_at 等既有信息。
+    """
+    from ..database import SessionLocal, init_db
+    from ..models.user import User
+    from .learning_path import sync_user
+
+    init_db()
+    db = SessionLocal()
+    stats = {"created": 0, "rebuilt": 0, "ok": 0}
+    try:
+        students = db.query(User).filter(User.role == "student").all()
+        for u in students:
+            action = sync_user(db, u.user_id, COURSE_ID)
+            stats[action] = stats.get(action, 0) + 1
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+    if verbose:
+        print(f"[bootstrap] 学习路径：新建 {stats['created']} 人，重建 {stats['rebuilt']} 人，"
+              f"已一致 {stats['ok']} 人")
+    return stats
+
+
 def bootstrap(conn: Optional[sqlite3.Connection] = None, verbose: bool = True) -> None:
     own = conn is None
     conn = conn or open_conn()
@@ -227,6 +260,7 @@ def bootstrap(conn: Optional[sqlite3.Connection] = None, verbose: bool = True) -
         extend_graph_to_nine(conn, verbose=verbose)
         sync_resources_from_folder(conn, verbose=verbose)
         import_questions(verbose=verbose)
+        ensure_learning_paths(verbose=verbose)
     finally:
         if own:
             conn.close()

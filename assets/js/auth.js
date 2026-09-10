@@ -54,8 +54,9 @@ window.Auth = (function () {
     /** 登录 */
     async login(data) {
       const r = await API.auth.login(data);
-      setSession(r);
-      return r;
+      const session = Object.assign({}, r, { loginStartedAt: Date.now() });
+      setSession(session);
+      return session;
     },
 
     /** 找回密码：校验账号后重置密码 */
@@ -72,6 +73,16 @@ window.Auth = (function () {
     },
 
     getSession,
+    /** 当前登录会话的开始时间；兼容修改前已经登录但没有时间戳的会话。 */
+    sessionStartedAt() {
+      const s = getSession();
+      if (!s) return Date.now();
+      const startedAt = Number(s.loginStartedAt);
+      if (Number.isFinite(startedAt) && startedAt > 0) return startedAt;
+      s.loginStartedAt = Date.now();
+      setSession(s);
+      return s.loginStartedAt;
+    },
     isLoggedIn() { return !!getSession(); },
     currentUser() { const s = getSession(); return s ? s.user : null; },
 

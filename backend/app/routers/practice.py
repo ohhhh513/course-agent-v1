@@ -161,6 +161,13 @@ def create_session(
     count = min(req.count, len(all_qs))
     picked = random.sample(all_qs, count) if all_qs else []
 
+    # 同一模式只保留一个进行中「存档」：新开练习时，把旧的 running 会话标记为 abandoned
+    db.query(PracticeSession).filter(
+        PracticeSession.user_id == user.user_id,
+        PracticeSession.mode == req.mode,
+        PracticeSession.status == "running",
+    ).update({"status": "abandoned"})
+
     session_id = "PS" + uuid.uuid4().hex[:10]
     session = PracticeSession(
         session_id=session_id,
@@ -188,6 +195,50 @@ def create_session(
     ]
     return ok({
         "sessionId": session_id, "mode": req.mode, "total": count,
+        "questions": questions,
+    })
+
+
+@router.get("/sessions/current")
+def current_session(
+    mode: str = Query("order"),
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    """取当前进行中的练习存档（用于「继续挑战」）；无则返回 null"""
+    session = (
+        db.query(PracticeSession)
+        .filter(PracticeSession.user_id == user.user_id,
+                PracticeSession.mode == mode,
+                PracticeSession.status == "running")
+        .order_by(PracticeSession.created_at.desc())
+        .first()
+    )
+    if not session:
+        return ok(None)
+    q_ids = [x.get("qId") for x in (loads(session.questions_snapshot) or []) if x.get("qId")]
+    rows = {q.q_id: q for q in db.query(Question).filter(Question.q_id.in_(q_ids)).all()}
+    answered = {r.q_id: r for r in db.query(AnswerRecord).filter(
+        AnswerRecord.session_id == session.session_id).all()}
+    questions = []
+    for qid in q_ids:
+        q = rows.get(qid)
+        if not q:
+            continue
+        ar = answered.get(qid)
+        questions.append({
+            "qId": q.q_id, "type": q.type, "difficulty": q.difficulty, "score": q.score,
+            "stem": q.stem, "options": loads(q.options) or [],
+            "kpPath": loads(q.kp_path) or [], "kpId": q.kp_id, "preKp": loads(q.pre_kp) or [],
+            "isKey": bool(q.is_key), "figure": _figure_of(q),
+            "answered": ar is not None,
+            "myAnswer": (ar.my_answer if ar else ""),
+            "correct": (bool(ar.is_correct) if ar else None),
+        })
+    answered_count = sum(1 for x in questions if x["answered"])
+    return ok({
+        "sessionId": session.session_id, "mode": session.mode,
+        "total": len(questions), "answered": answered_count,
         "questions": questions,
     })
 
@@ -258,6 +309,14 @@ def submit_answer(
             session.wrong = (session.wrong or 0) + 1
     db.commit()
 
+    # 每次产生新的真实作答后立即重算该生预警，教师端刷新即可看到最新红/黄状态；
+    # 检测失败不影响本次答题结果的正常返回。
+    try:
+        from ..services.alert_detector import detect_alerts
+        detect_alerts(db, [user])
+    except Exception as e:
+        print(f"[alert-detect] 作答后刷新跳过（{e}）")
+
     # 动态统计：该题真实班级正确率、平均用时
     class_rate, avg_sec, _, _ = _calc_question_stats(db, question.q_id)
     delta = _mastery_delta(correct, question.difficulty, question.score)
@@ -271,7 +330,6 @@ def submit_answer(
         "classCorrectRate": class_rate,
         "avgSeconds": avg_sec,
         "masteryDelta": delta,
-        "errorType": None if correct else question.error_type,
     })
 
 
@@ -297,11 +355,21 @@ def finish_session(
     # 答题记录
     records = db.query(AnswerRecord).filter(AnswerRecord.session_id == session_id).all()
 
-    # 汇总错误类型
-    err_map = {}
+    # 错题知识点分布（题库无「错误类型」字段，改用真实数据：错题按 kp_id 汇总）
+    wrong_by_kp = {}
     for r in records:
-        if r.error_type:
-            err_map[r.error_type] = err_map.get(r.error_type, 0) + 1
+        if not r.is_correct and r.kp_id:
+            wrong_by_kp[r.kp_id] = wrong_by_kp.get(r.kp_id, 0) + 1
+    wrong_kp_names = {}
+    if wrong_by_kp:
+        wrong_kp_names = dict(db.query(GraphNode.id, GraphNode.name).filter(
+            GraphNode.graph_type == "knowledge",
+            GraphNode.id.in_(list(wrong_by_kp.keys())),
+        ).all())
+    wrong_by_kp_list = [
+        {"kpId": k, "name": wrong_kp_names.get(k, k), "count": c}
+        for k, c in sorted(wrong_by_kp.items(), key=lambda kv: -kv[1])
+    ]
 
     # 真实用时：所有 answer_records.duration_seconds 求和
     duration_seconds = sum((r.duration_seconds or 0) for r in records)
@@ -376,7 +444,7 @@ def finish_session(
         "classAccuracy": class_acc,
         "scoreGain": round(score_gain, 1),
         "kpChanges": kp_changes,
-        "errorTypes": [{"type": t, "count": c} for t, c in err_map.items()],
+        "wrongByKp": wrong_by_kp_list,
         "masteredCount": mastered_count,
         "nextSuggestion": "建议先回顾错题对应的知识点，再进行薄弱点强化。",
     })
@@ -385,7 +453,6 @@ def finish_session(
 @router.get("/wrong-book")
 def wrong_book(
     kpId: str = Query(None),
-    errorType: str = Query("all"),
     mastered: str = Query(None),   # 'true' / 'false'
     page: int = Query(1),
     size: int = Query(20),
@@ -400,8 +467,6 @@ def wrong_book(
     )
     if kpId:
         q = q.filter(AnswerRecord.kp_id == kpId)
-    if errorType and errorType != "all":
-        q = q.filter(AnswerRecord.error_type == errorType)
     records = q.order_by(AnswerRecord.created_at.desc()).all()
 
     # 按题目聚合；records 已按时间倒序，首条即最近一次作答
@@ -412,7 +477,7 @@ def wrong_book(
                 "wrongCount": 0, "lastTime": r.created_at,
                 # 最近一次错题的状态决定该题归属“待攻克/已掌握”
                 "mastered": bool(r.mastered),
-                "myAnswer": r.my_answer, "errorType": r.error_type,
+                "myAnswer": r.my_answer,
             }
         wrong_map[r.q_id]["wrongCount"] += 1
         if r.created_at > wrong_map[r.q_id]["lastTime"]:
@@ -435,7 +500,6 @@ def wrong_book(
                 "qId": q.q_id, "stem": q.stem, "myAnswer": w["myAnswer"],
                 "answer": q.answer,
                 "wrongCount": w["wrongCount"],
-                "errorType": w["errorType"],
                 "kp": q.kp_id, "kpId": q.kp_id,
                 "difficulty": q.difficulty,
                 "lastTime": fmt_dt(w["lastTime"], "%m-%d %H:%M"),
@@ -489,7 +553,6 @@ def wrong_detail(
         "figure": _figure_of(q),
         "classCorrectRate": class_rate, "avgSeconds": avg_sec,
         "wrongCount": wrong_count, "totalCount": total_count,
-        "errorType": q.error_type,
         "history": [], "similar": [], "resources": resources,
         "tips": "",
     })

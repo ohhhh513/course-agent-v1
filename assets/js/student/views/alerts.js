@@ -79,10 +79,9 @@
           <div class="alert-card__foot">
             <button class="btn btn--sm" data-detail="${a.alertId}">${icon('eye')} 查看详情</button>
             ${a.status === 'open' ? `
-              <button class="btn btn--sm btn--primary" data-fix="${a.alertId}">${icon('target')} 去补救</button>
-              <button class="btn btn--sm btn--ghost" data-read="${a.alertId}">标记已读</button>` : ''}
+              <button class="btn btn--sm btn--primary" data-fix="${a.alertId}">${icon('target')} 去补救</button>` : ''}
             <span class="spacer"></span>
-            <span class="fz-11 t-dim">${a.status === 'open' ? '待处理' : '已关闭'}</span>
+            <span class="fz-11 t-dim">${({ open: '待处理', read: '已读', reviewed: '已复核', ignored: '已忽略', closed: a.level === 'green' ? '已解除' : '已关闭' })[a.status] || '已关闭'}</span>
           </div>
         </div>`).join('') || R.empty('暂无该类型预警', '', 'checkCircle');
 
@@ -92,28 +91,34 @@
             title: a.title, size: 'wide',
             body: `<div class="kv" style="margin-bottom:16px">
                 ${Object.entries(a.detail).map(([k, v]) => {
-              const label = { current: '当前值', threshold: '达标阈值', classAvg: '班级平均', errorCount: '错题数', relatedQuestions: '关联题量', planned: '计划进度', actual: '实际进度', lagHours: '滞后学时', total: '作答总数', wrong: '错误数', mainErrorType: '主要错误类型', concentration: '集中度', before: '补救前', after: '补救后', days: '稳定天数' }[k] || k;
+              const label = { current: '当前正确率', threshold: '达标线(绿)', redBelow: '预警线(红)', classAvg: '班级平均', errorCount: '错题数', relatedQuestions: '关联题量', planned: '计划进度', actual: '实际进度', lagHours: '滞后学时', total: '作答总数', wrong: '错误数', mainErrorType: '主要错误类型', concentration: '集中度', before: '补救前', after: '补救后', days: '稳定天数' }[k] || k;
               return `<div class="kv__row"><span>${label}</span><span>${v}</span></div>`;
             }).join('')}
               </div>
               <div class="divider"></div>
-              <p class="fz-12 t-dim" style="margin-bottom:8px">推荐资源与练习</p>
+              <p class="fz-12 t-dim" style="margin-bottom:8px">补救练习</p>
               <div class="stack" style="gap:8px">
-                ${a.suggestions.map(s => `<div class="file-item">${icon(s.type === 'video' ? 'video' : s.type === 'practice' ? 'pencil' : s.type === 'ai' ? 'bot' : 'file')}
-                  <b>${U.esc(s.text)}</b><button class="btn btn--xs btn--outline">前往</button></div>`).join('')}
-              </div>`
+                ${a.suggestions.map(s => `<div class="file-item">${icon('pencil')}
+                  <b>${U.esc(s.text)}</b>${s.kpId ? `<button class="btn btn--xs btn--outline" data-fix-detail="${U.esc(s.kpId)}">开始</button>` : ''}</div>`).join('')}
+              </div>`,
+            onMount: (ov, close) => {
+              const btn = ov.querySelector('[data-fix-detail]');
+              if (btn) btn.addEventListener('click', () => {
+                if (typeof Practice !== 'undefined') Practice._pendingTarget = { kpId: btn.dataset.fixDetail, kpName: a.kp };
+                close();
+                Router.go('practice');
+              });
+            }
           });
         }));
         U.$$('[data-fix]').forEach(b => b.addEventListener('click', () => {
+          // 按该预警的知识点，直接开一组靶向练习
+          const a = r.list.find(x => x.alertId === b.dataset.fix);
+          if (typeof Practice !== 'undefined') {
+            Practice._pendingTarget = { kpId: (a && a.kpId) || '', kpName: (a && a.kp) || '' };
+          }
           Router.go('practice');
-          Toast.ok('已生成靶向补救练习', '习题已命中该预警知识点');
-        }));
-        U.$$('[data-read]').forEach(b => b.addEventListener('click', () => {
-          API.student.readAlert({ alertId: b.dataset.read }).then(() => {
-            Toast.ok('已标记为已读');
-            this.load();   // 刷新列表 + 统计卡
-            if (window.refreshAlertBadge) window.refreshAlertBadge();   // 同步侧栏徽标
-          });
+          Toast.ok('已按该知识点组卷', (a && a.kp) ? `靶向练习：${a.kp}` : '');
         }));
       });
     }

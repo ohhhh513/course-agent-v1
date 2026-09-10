@@ -131,3 +131,14 @@ def on_startup():
         bootstrap()
     except Exception as e:
         print(f"[bootstrap] 跳过（{e}）")
+    # 统一预警检测：启动时为全体学生刷新告警（学生端生成，教师端按 class_id 读取）
+    try:
+        from .services.alert_detector import detect_alerts
+        from .database import SessionLocal
+        _db = SessionLocal()
+        try:
+            print(f"[alert-detect] {detect_alerts(_db)}")
+        finally:
+            _db.close()
+    except Exception as e:
+        print(f"[alert-detect] 跳过（{e}）")

@@ -279,11 +279,11 @@ const Charts = (function () {
         tooltip: Object.assign(baseTooltip(t), { trigger: 'axis', axisPointer: { type: 'shadow' } }),
         grid: { left: 4, right: o.horizontal ? 40 : 8, top: 18, bottom: 4, containLabel: true },
         xAxis: o.horizontal
-          ? { type: 'value', axisLine: { show: false }, axisTick: { show: false }, splitLine: { lineStyle: { color: t.split, type: 'dashed' } }, axisLabel: { color: t.dim, fontSize: 11 } }
+          ? { type: 'value', minInterval: o.minInterval, axisLine: { show: false }, axisTick: { show: false }, splitLine: { lineStyle: { color: t.split, type: 'dashed' } }, axisLabel: { color: t.dim, fontSize: 11 } }
           : { type: 'category', data: data.map(d => d.name), axisLine: { lineStyle: { color: t.split } }, axisTick: { show: false }, axisLabel: { color: t.dim, fontSize: 11, interval: 0, rotate: o.rotate || 0 } },
         yAxis: o.horizontal
           ? { type: 'category', data: data.map(d => d.name), axisLine: { show: false }, axisTick: { show: false }, axisLabel: { color: t.text2, fontSize: 11.5 } }
-          : { type: 'value', axisLine: { show: false }, axisTick: { show: false }, splitLine: { lineStyle: { color: t.split, type: 'dashed' } }, axisLabel: { color: t.dim, fontSize: 11 } },
+          : { type: 'value', minInterval: o.minInterval, axisLine: { show: false }, axisTick: { show: false }, splitLine: { lineStyle: { color: t.split, type: 'dashed' } }, axisLabel: { color: t.dim, fontSize: 11 } },
         series: [{
           type: 'bar',
           barMaxWidth: o.horizontal ? 16 : 26,
