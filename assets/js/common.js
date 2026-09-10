@@ -99,7 +99,7 @@ const U = {
   },
   levelBadge: { excellent: 'badge--ok', good: 'badge--ok', fair: 'badge--warn', weak: 'badge--danger', none: 'badge--outline' },
 
-  alertName: { red: '紧急', yellow: '关注', green: '正常' },
+  alertName: { red: '紧急', yellow: '关注', green: '已解除' },
   alertBadge: { red: 'badge--danger', yellow: 'badge--warn', green: 'badge--ok' },
   alertCard: { red: 'alert-card--red', yellow: 'alert-card--yellow', green: 'alert-card--green' },
 
@@ -319,7 +319,7 @@ const R = {
   /** 待办条 */
   todo(t) {
     const actionData = t.userId ? ` data-action="${U.esc(t.action)}" data-user-id="${U.esc(t.userId)}" data-user-name="${U.esc(t.userName || '')}"` : '';
-    return `<div class="todo" data-target="${t.target || ''}"${actionData}>
+    return `<div class="todo" data-target="${t.target || ''}"${t.sessionId ? ` data-session="${U.esc(t.sessionId)}"` : ''}${t.mode ? ` data-mode="${U.esc(t.mode)}"` : ''}${actionData}>
       <div class="todo__ico todo__ico--${t.level}">${icon(t.type === 'alert' ? 'alert' : t.type === 'homework' ? 'pencil' : t.type === 'practice' ? 'target' : 'sparkle')}</div>
       <div class="todo__main"><b>${U.esc(t.title)}</b><span>${U.esc(t.desc)}</span></div>
       <button class="btn btn--sm ${t.level === 'danger' ? 'btn--danger' : t.level === 'brand' ? 'btn--primary' : ''}">${t.action}</button>

@@ -4,9 +4,12 @@
 
 灌库顺序:
   1. 公共数据（无 user_id）: 账号、班级、课程、图谱、资源、题库、模板、报告
-  2. Transaction（有 user_id 归属）: 每学生独立 LearningPath、AnswerRecord、
-     PracticeSession、Alert、Intervention、ChatSession、ChatMessage
+  2. Transaction（有 user_id 归属）: PracticeSession、Intervention、
+     ChatSession、ChatMessage
   3. 班级级 Dashboard 聚合数据
+
+不含 LearningPath：学习路径由图谱派生，且必须在图谱扩展为 9 章之后生成，
+所以交给启动引导 bootstrap.ensure_learning_paths()（见 services/learning_path.py）。
 
 运行: 应用启动时自动执行  或  python -m app.seed.seed_data
 """
@@ -20,7 +23,7 @@ from app.database import SessionLocal, engine, Base
 from app.middleware.auth import hash_password
 from app.models.user import User, ClassInfo, TeacherClass
 from app.models.course import Course, Resource
-from app.models.graph import GraphNode, GraphLink, KpDetail, LearningPath
+from app.models.graph import GraphNode, GraphLink, KpDetail
 from app.models.question import Question  # noqa: F401  （题库不再由 seed 灌入，见第 3 节说明）
 from app.models.practice import PracticeSession
 from app.models.ai import ChatSession, ChatMessage
@@ -32,10 +35,9 @@ from .mock_data import (
     DEFAULT_ACCOUNTS,
     MOCK_GRAPH_NODES, MOCK_GRAPH_LINKS, MOCK_KP_DETAIL,
     MOCK_RESOURCES,
-    MOCK_LEARNING_PATHS,
     MOCK_PRACTICE_SESSIONS,
     MOCK_CHAT_SESSIONS, MOCK_CHAT_MESSAGES,
-    MOCK_ALERTS, MOCK_INTERVENTIONS,
+    MOCK_INTERVENTIONS,
     MOCK_TEMPLATES, MOCK_REPORTS,
     DASHBOARD_DATA,
 )
@@ -117,10 +119,9 @@ def run_seed():
         # 4. Transaction 数据（按 user_id 归属）
         # =========================================================
 
-        # 4.1 每学生独立 LearningPath（25 × 12 = 300 条）
-        for lp in MOCK_LEARNING_PATHS:
-            db.add(LearningPath(**lp))
-        print(f"  -> learning_paths: {len(MOCK_LEARNING_PATHS)}")
+        # 4.1 学习路径不在 seed 里写死：它由图谱派生，必须在图谱扩展为 9 章之后生成，
+        # 所以放到启动引导的 bootstrap.ensure_learning_paths()（见 services/learning_path.py）。
+        # 历史写法是灌手写的 25 条 6 章路径，与图谱/资源的 9 章体系对不上，已删除。
 
         # 4.2 答题记录 —— 不再灌入：MOCK_ANSWER_RECORDS 全部围绕已移除的
         # 占位种子题生成，且学情/错题本应由真实答题产生（数据来自 practice 接口）
@@ -130,10 +131,7 @@ def run_seed():
             db.add(PracticeSession(**ps))
         print(f"  -> practice_sessions: {len(MOCK_PRACTICE_SESSIONS)}")
 
-        # 4.4 预警（全部带 user_id 归属）
-        for a in MOCK_ALERTS:
-            db.add(Alert(**a))
-        print(f"  -> alerts: {len(MOCK_ALERTS)}")
+        # 4.4 预警：不再预置 mock 告警（改由真实学习数据动态生成）
 
         # 4.5 干预
         for iv in MOCK_INTERVENTIONS:

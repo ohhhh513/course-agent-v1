@@ -25,6 +25,11 @@ router = APIRouter(prefix="/api/v1/student", tags=["学生端"])
 # 东八区（中国），无夏令时；数据库存的是 UTC，展示前统一转成本地时间
 _CN_TZ = timezone(timedelta(hours=8))
 
+# 学期打卡热力图的锚点：第 1 周从学期开学那一周的周一算起（列 = 周，行 = 周一…周日），
+# 与「成长轨迹」用同一口径；想改学期长度只改这里。
+SEMESTER_START = date(2026, 8, 31)   # 2026 秋季学期第 1 周周一
+SEMESTER_WEEKS = 18                  # 学期周数
+
 
 def _to_local(dt: datetime | None) -> datetime | None:
     """把库中 naive UTC 时间转成东八区 naive 本地时间。"""
@@ -71,6 +76,19 @@ def student_dashboard(
     uid = user.user_id
     today = date.today()
 
+    # 统一预警检测：刷新该生告警（达标→生成/刷新；恢复→关闭；不覆盖教师已处理）
+    try:
+        from ..services.alert_detector import detect_alerts
+        detect_alerts(db, [user])
+    except Exception as e:
+        print(f"[alert-detect] 跳过（{e}）")
+
+    # 综合掌握率（答题正确率 ∪ 资源完成率）→ 资源中心展示用
+    from ..routers.graph import _mastery_for_user
+    from ..services.scoring import quiz_accuracy_by_kp
+    mastery_map = _mastery_for_user(uid, db)
+    acc_by_kp = quiz_accuracy_by_kp(db, uid)   # {kp: (答题正确率, 不同题目数)} —— 靶向/薄弱点用
+
     # --- learning_path（用户专属）---
     lp_rows = db.query(LearningPath).filter(LearningPath.user_id == uid).order_by(LearningPath.step).all()
     lp_total = len(lp_rows)
@@ -100,8 +118,8 @@ def student_dashboard(
         else:
             current_node = {"kpId": "", "name": "暂无"}
 
-    # 知识点学习完成率：全部知识点的平均完成率（含未开始的 0%，与左侧 courseProgress 口径对齐）
-    mastery_rate = round(sum(r.mastery or 0 for r in lp_rows) / lp_total, 1) if lp_total else 0
+    # 知识点掌握率：全部知识点的平均综合掌握率（答题正确率 ∪ 资源完成率）
+    mastery_rate = round(sum(mastery_map.get(r.kp_id, 0) for r in lp_rows) / lp_total, 1) if lp_total else 0
 
     # --- 今日学习时长：practice_sessions 的 duration_seconds + 资源观看秒数 ---
     today_start = datetime.combine(today, datetime.min.time())
@@ -177,11 +195,14 @@ def student_dashboard(
 
     weak_points = []
     for r in lp_rows:
-        if (r.mastery or 0) < 60 and (r.status != "todo" or (r.mastery or 0) > 0):
-            level = "danger" if (r.mastery or 0) < 40 else "warn"
+        q = acc_by_kp.get(r.kp_id)
+        # 薄弱点 = 有作答记录、且【答题正确率】< 60（靶向练习盯的是做题，不看资源进度）
+        if q and q[0] < 60:
+            level = "danger" if q[0] < 40 else "warn"
             weak_points.append({
                 "kpId": r.kp_id, "name": r.name,
-                "masteryRate": round(r.mastery or 0),
+                "accuracyRate": round(q[0]),
+                "masteryRate": round(mastery_map.get(r.kp_id, 0)),
                 "chapter": r.chapter,
                 "errorCount": db.query(AnswerRecord).filter(
                     AnswerRecord.user_id == uid, AnswerRecord.kp_id == r.kp_id,
@@ -190,7 +211,7 @@ def student_dashboard(
                 "level": level,
                 "trend": _trend_pp(r.kp_id),
             })
-    weak_points.sort(key=lambda x: x["masteryRate"])
+    weak_points.sort(key=lambda x: x["accuracyRate"])
     weak_points = weak_points[:5]
 
     # --- alerts 相关（open + read 都算需要关注，closed 排除）---
@@ -216,6 +237,28 @@ def student_dashboard(
             "action": "去处理", "target": "alerts",
         })
 
+    # 进行中的练习「存档」→ 待办「继续挑战」（检查会话历史；同一模式最多一条，需有作答进度）
+    _mode_cn = {"weak": "薄弱点强化", "order": "顺序练习", "random": "随机练习", "wrong": "错题重练"}
+    _ps_todos, _seen_modes = [], set()
+    for ps in db.query(PracticeSession).filter(
+        PracticeSession.user_id == uid,
+        PracticeSession.status == "running",
+    ).order_by(desc(PracticeSession.created_at)).all():
+        if ps.mode in _seen_modes:
+            continue
+        _seen_modes.add(ps.mode)
+        answered = db.query(func.count(AnswerRecord.id)).filter(
+            AnswerRecord.session_id == ps.session_id).scalar() or 0
+        if 0 < answered < (ps.total or 0):
+            _ps_todos.append({
+                "id": f"TD_PS_{ps.session_id}", "type": "practice", "level": "brand",
+                "title": f"继续练习：{_mode_cn.get(ps.mode, ps.mode)}",
+                "desc": f"已完成 {answered}/{ps.total} 题，点击继续挑战",
+                "action": "继续挑战", "target": "practice", "sessionId": ps.session_id,
+                "mode": ps.mode,
+            })
+    todos = _ps_todos + todos
+
     if not todos:
         node_name = current_node.get("name") if current_node else "课程学习"
         todos.append({
@@ -225,39 +268,48 @@ def student_dashboard(
             "action": "去学习", "target": "graph",
         })
 
-    # --- recentActivities：answer_records + practice_sessions + chat_sessions 最近 5 条 ---
+    # --- recentActivities：以「练习会话」为单位展示（不再逐题刷「完成 KPxx 相关题目」）---
+    # mode 用中文，时间取完成时间（未完成取创建时间），按时间倒序
+    MODE_CN = {"weak": "薄弱点强化", "order": "顺序练习", "random": "随机练习", "wrong": "错题重练"}
     recent = []
-    for ar in db.query(AnswerRecord).filter(AnswerRecord.user_id == uid).order_by(desc(AnswerRecord.created_at)).limit(3).all():
-        recent.append({
-            "id": f"A_AR_{ar.id}", "type": "practice",
-            "title": f"完成 {ar.kp_id or '未知'} 相关题目",
-            "meta": f"{'正确' if ar.is_correct else '错误'}",
-            "time": _fmt_time(ar.created_at),
-            "time_sort": ar.created_at,
-            "level": "ok" if ar.is_correct else "warn",
-        })
-    for ps in db.query(PracticeSession).filter(PracticeSession.user_id == uid).order_by(desc(PracticeSession.created_at)).limit(2).all():
+    ps_rows = (
+        db.query(PracticeSession)
+        .filter(PracticeSession.user_id == uid)
+        .order_by(desc(func.coalesce(PracticeSession.finished_at, PracticeSession.created_at)))
+        .limit(50)
+        .all()
+    )
+    for ps in ps_rows:
+        ts = ps.finished_at or ps.created_at
+        dur = ps.duration_seconds or 0
+        if not dur and ps.finished_at and ps.created_at:
+            dur = int((ps.finished_at - ps.created_at).total_seconds())
+        mins = dur // 60 if dur else 0
+        acc = ps.accuracy if ps.accuracy else (round(ps.correct / ps.total * 100) if ps.total else 0)
         recent.append({
             "id": f"A_PS_{ps.session_id}", "type": "practice",
-            "title": f"{ps.mode}练习",
-            "meta": f"{ps.correct}/{ps.total} 正确 · {ps.duration_seconds//60}分钟",
-            "time": _fmt_time(ps.created_at),
-            "time_sort": ps.created_at,
-            "level": "ok" if ps.accuracy and ps.accuracy >= 70 else "warn",
+            "title": MODE_CN.get(ps.mode, f"{ps.mode}练习"),
+            "meta": f"{ps.correct}/{ps.total} 正确" + (f" · {mins}分钟" if mins else ""),
+            "time": _fmt_time(ts),
+            "time_sort": ts,
+            "level": "ok" if acc >= 70 else "warn",
         })
     recent.sort(key=lambda x: x.get("time_sort", datetime.min), reverse=True)
-    recent = recent[:5]
+    recent = recent[:50]
 
-    # --- streakHistoryStart + streakHistory：52 周 × 7 天热力图 ---
-    # 从今天往前推 364 天（=52×7），每天有答题记录则为 1 否则 0
-    WEEKS = 52
+    # --- streakHistoryStart + streakHistory：学期内的「周 × 日」热力图 ---
+    # 起点固定为学期第 1 周周一（不再从今天倒推 52 周），列 = 周、行 = 周一…周日，
+    # 覆盖到学期末；若学期已结束则延伸到今天所在周，保证当前打卡不会被切掉。
+    # 每天有答题记录则为 1 否则 0。
+    WEEKS = max(SEMESTER_WEEKS, (today - SEMESTER_START).days // 7 + 1)
     DAYS = WEEKS * 7
-    streak_start = today - timedelta(days=DAYS - 1)
+    streak_start = SEMESTER_START
     # 构建日期→值的集合（streak 用 answer_records，练习活跃用 practice_sessions 也行，这里统一用 answer_records）
     streak_history = []
     for i in range(DAYS):
         d = streak_start + timedelta(days=i)
         streak_history.append(1 if d in study_date_set else 0)
+    today_index = (today - streak_start).days   # 今天在网格中的下标；不在区间内时越界（前端按越界处理）
 
     # --- suggestedQuestions：从薄弱点自动生成 AI 推荐问题 ---
     suggested_questions = []
@@ -268,7 +320,7 @@ def student_dashboard(
 
     # --- 能力目标达成度：达标知识点数（完成率>=60%）/ 总知识点数 ---
     goal_achieve_rate = round(
-        sum(1 for r in lp_rows if (r.mastery or 0) >= 60) / lp_total * 100, 1
+        sum(1 for r in lp_rows if mastery_map.get(r.kp_id, 0) >= 60) / lp_total * 100, 1
     ) if lp_total else 0
 
     # 用户名：取 user.name 或 user.username 的 "下午好，XXX" 形式
@@ -288,13 +340,16 @@ def student_dashboard(
             "status": "danger" if open_red else ("warn" if need_attention else "ok"),
             "streakHistoryStart": streak_start.strftime("%Y-%m-%d"),
             "streakHistory": streak_history,
+            "streakWeeks": WEEKS,
+            "streakTodayIndex": today_index,
+            "semesterLabel": f"{streak_start.year}-{streak_start.year + 1}",
         },
         "coreMetrics": {
             "completionRate": course_progress,
             "masteryRate": mastery_rate,
             "goalAchieveRate": round(goal_achieve_rate, 1),
             "totalKpCount": lp_total,
-            "masteredKpCount": sum(1 for r in lp_rows if (r.mastery or 0) >= 60),
+        "masteredKpCount": sum(1 for r in lp_rows if mastery_map.get(r.kp_id, 0) >= 60),
             "completedKpCount": len(lp_done),
             "updatedAt": datetime.now().strftime("%Y-%m-%d %H:%M"),
         },
@@ -507,31 +562,25 @@ def _sync_lp_from_resource_progress(db: Session, user_id: str, kp_id: str):
         lp.status = status
         return
 
-    # 知识点尚无 LP 记录时，自动创建一条（与 _ensure_learning_path 保持一致）
+    # 知识点尚无 LP 记录时，自动创建一条（字段构造与 _ensure_learning_path 共用同一份）
     node = db.query(GraphNode).filter(
         GraphNode.id == kp_id, GraphNode.graph_type == "knowledge"
     ).first()
     if not node:
         return
+    from ..services.learning_path import make_row
     max_step = db.query(func.max(LearningPath.step)).filter(
         LearningPath.user_id == user_id,
         LearningPath.course_id == node.course_id,
     ).scalar() or 0
     res_count = db.query(Resource).filter(Resource.kp_id == kp_id).count()
-    db.add(LearningPath(
+    db.add(make_row(
         user_id=user_id,
         course_id=node.course_id or "C2026DS001",
         step=max_step + 1,
-        kp_id=kp_id,
-        name=node.name,
-        chapter=node.chapter,
-        status=status,
-        hours=node.hours or 1,
-        mastery=mastery,
+        node=node,
         res_count=res_count,
-        progress=mastery,
-        locked=0,
-        lock_reason="",
+        state=(mastery, status),
     ))
 
 
@@ -804,17 +853,22 @@ def growth(
             "kp_count": len(w["kps"]),
         })
 
-    # 累计完成率：每周学了多少新 kp
-    cumulative_kps = set()
+    # 累计完成率：已掌握知识点占比。
+    # 原实现依赖 learning_paths.mastered_at，但该字段只有 seed 会写（seed 不再生成
+    # 学习路径后恒为 NULL），故改为按真实掌握率统计；分母也不再写死 28（图谱已是 34 个）。
+    total_kp = db.query(GraphNode).filter(
+        GraphNode.graph_type == "knowledge",
+    ).count() or 1
+    mastered_kps = db.query(LearningPath).filter(
+        LearningPath.user_id == uid,
+        LearningPath.mastery >= 80,
+    ).count()
+    mastered_ratio = round(min(mastered_kps, total_kp) / total_kp * 100, 1)
+
     completion_series = []
     mastery_series = []
     for w in weeks:
-        # 这里简化：用累计 kp 学习数 / 总 28 个 kp
-        lp_for_kps = db.query(LearningPath).filter(
-            LearningPath.user_id == uid,
-            LearningPath.mastered_at != None,
-        ).count()
-        completion_series.append(round(lp_for_kps / 28 * 100, 1))  # 28 个 knowledge kp 固定
+        completion_series.append(mastered_ratio)
         if w["total"] > 0:
             mastery_series.append(round(w["correct"] / w["total"] * 100, 1))
         else:

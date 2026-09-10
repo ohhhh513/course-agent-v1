@@ -360,13 +360,15 @@ def _resource_mastery(user_id: str, db: Session):
 
 
 def _mastery_for_user(user_id: str, db: Session):
-    """按知识点聚合用户的资源学习完成率（平均值）。
+    """综合掌握率 = 每知识点 max(答题正确率[按题去重], 资源学习完成率)。
 
-    TODO: 题库导入后恢复为「答题正确率 ∪ 资源进度取大」的综合掌握率。
-    当前阶段题库尚未导入，若继续使用答题记录会导致「掌握率」与资源学习
-    进度脱钩，因此临时改为仅按课程资源完成情况计算，数值即「学习完成率」。
+    以「答题正确率」为主，资源进度作为兜底（看完的视频/文档也算掌握）。
+    两者都无数据 → 该知识点不出现（视作 0）。口径与预警/靶向一致（按题去重）。
     """
-    return _resource_mastery(user_id, db)
+    from ..services.scoring import quiz_accuracy_by_kp
+    res = _resource_mastery(user_id, db)
+    quiz = {kp: acc for kp, (acc, _n) in quiz_accuracy_by_kp(db, user_id).items()}
+    return {kp: max(res.get(kp, 0), quiz.get(kp, 0)) for kp in set(res) | set(quiz)}
 
 
 def _quiz_mastery_for_user(user_id: str, db: Session):
@@ -415,61 +417,24 @@ def _status_from_quiz_mastery(quiz_mastery: float, learning_mastery: float, has_
 
 
 def _ensure_learning_path(user_id: str, course_id: str, db: Session):
-    """如果当前课程没有学习路径，则从 graph_nodes 自动生成并持久化。"""
-    existing = db.query(LearningPath).filter(
-        LearningPath.user_id == user_id,
-        LearningPath.course_id == course_id,
-    ).first()
-    if existing:
-        return
+    """保证学习路径与图谱一致：缺失则生成，图谱扩章后残留的旧路径则整体重建。
+
+    生成规则统一放在 services/learning_path（与 bootstrap 的启动校正共用一份），
+    这里只负责提供该生的真实掌握状态（资源完成率/答题正确率）。
+    """
+    from ..services.learning_path import sync_user
 
     mastery_map = _mastery_for_user(user_id, db)
     quiz_map = _quiz_mastery_for_user(user_id, db)
-
-    # 按章节、知识点 ID 排序取所有知识节点
-    nodes = db.query(GraphNode).filter(
-        and_(GraphNode.graph_type == "knowledge", GraphNode.course_id == course_id)
-    ).order_by(GraphNode.chapter.asc(), GraphNode.id.asc()).all()
-
-    # 按知识点精确统计挂载资源数（实际资源数与标记一致）
-    resources = db.query(Resource).filter(
-        and_(Resource.course_id == course_id, Resource.kp_id.isnot(None))
-    ).all()
-    res_count_by_kp = {}
-    for r in resources:
-        if r.kp_id:
-            res_count_by_kp[r.kp_id] = res_count_by_kp.get(r.kp_id, 0) + 1
-
-    # 按章节知识点顺序建立章节 → 节点列表
-    chapter_nodes = {}
-    for n in nodes:
-        chapter_nodes.setdefault(n.chapter, []).append(n)
-
-    step = 0
     has_quiz = set(quiz_map.keys())
-    for chapter, c_nodes in chapter_nodes.items():
-        for node in c_nodes:
-            step += 1
-            mastery = mastery_map.get(node.id, 0.0)
-            quiz = quiz_map.get(node.id, 0.0)
-            status = _status_from_quiz_mastery(quiz, mastery, node.id in has_quiz)
-            lp = LearningPath(
-                user_id=user_id,
-                course_id=course_id,
-                step=step,
-                kp_id=node.id,
-                name=node.name,
-                chapter=node.chapter,
-                status=status,
-                hours=node.hours or 1,
-                mastery=mastery,
-                res_count=res_count_by_kp.get(node.id, 0),
-                progress=mastery,
-                locked=0,
-                lock_reason="",
-            )
-            db.add(lp)
-    db.commit()
+
+    def state_of(kp_id: str):
+        mastery = mastery_map.get(kp_id, 0.0)
+        quiz = quiz_map.get(kp_id, 0.0)
+        return mastery, _status_from_quiz_mastery(quiz, mastery, kp_id in has_quiz)
+
+    if sync_user(db, user_id, course_id, state_of) != "ok":
+        db.commit()
 
 
 @router.get("/path")

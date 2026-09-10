@@ -94,7 +94,7 @@
               <div class="row"><b>${U.esc(p.name)}</b><span class="spacer"></span><span class="badge ${bd}">${txt}</span></div>
               <div class="path__meta">
                 <span>${p.hours} 学时</span><span>·</span><span>${p.resCount} 个资源</span>
-                ${p.mastery ? `<span>·</span><span class="${U.level(p.mastery) === 'weak' ? 't-danger' : ''}">学习完成 ${p.mastery}%</span>` : ''}
+                  ${p.mastery ? `<span>·</span><span class="${U.level(p.mastery) === 'weak' ? 't-danger' : ''}">掌握率 ${p.mastery}%</span>` : ''}
                 ${p.locked ? `<span class="badge badge--outline">🔒 未解锁</span>` : ''}
               </div>
               ${p.progress ? `<div style="margin-top:7px;max-width:260px">${U.bar(p.progress, { done: 'excellent', doing: 'fair', warn: 'weak', todo: 'none' }[p.status], 'sm')}</div>` : ''}
@@ -387,11 +387,26 @@
         const box = U.$('#resGrid');
         if (!box) return;
 
-        // 章节过滤当前无后端参数，改在前端按资源所属章节过滤（资源 kp 形如「第2章 线性表」）
+        // 章节过滤当前无后端参数，改在前端过滤。
+        // 注意章名/章号在两套数据里并不一致：学习路径按「第3章 栈与队列」分组（旧 6 章体系），
+        // 资源按教材 9 章体系标注（「第3章 栈和队列」，且路径的「第4章 树与二叉树」＝资源的「第6章 树和二叉树」），
+        // 单纯的章名前缀匹配会 0 结果或串章，所以以「该章知识点的 kpId」为准，
+        // 再用命中资源的章名把同章未绑定 kpId 的资源一起带上，章名前缀仅作兜底。
         let items = r.list;
         if (this.currentMode === 'chapter' && this.currentChapter) {
-          const ch = this.currentChapter;
-          items = (r.list || []).filter(x => (x.kp || '').startsWith(ch));
+          const list = r.list || [];
+          const kpIds = new Set(
+            (this._allPaths || [])
+              .filter(p => (p.chapter || '其他章节') === this.currentChapter)
+              .map(p => p.kpId)
+          );
+          const hit = list.filter(x => kpIds.has(x.kpId));
+          const chapterNames = new Set(hit.map(x => x.kp).filter(Boolean));
+          items = list.filter(x =>
+            kpIds.has(x.kpId) ||
+            chapterNames.has(x.kp) ||
+            (x.kp || '').startsWith(this.currentChapter)
+          );
         }
 
         let emptyHtml;

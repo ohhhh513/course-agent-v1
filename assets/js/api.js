@@ -469,6 +469,9 @@ window.API = (function () {
       questions: M().practiceQuestions
     })),
 
+    /** GET /practice/sessions/current  当前进行中的练习存档（无则 null）  params: { mode } */
+    current: (p) => request('GET', '/practice/sessions/current', p, () => null),
+
     /** GET /practice/sessions/{sessionId}/questions  取题 */
     questions: (p) => request('GET', `/practice/sessions/${p.sessionId}/questions`, p, () => M().practiceQuestions),
 
@@ -483,19 +486,18 @@ window.API = (function () {
         qId: question.qId, correct, rightAnswer: question.answer,
         analysis: question.analysis, kpPath: question.kpPath,
         classCorrectRate: question.classCorrectRate, avgSeconds: question.avgSeconds,
-        masteryDelta: correct ? +2.1 : -1.4, errorType: correct ? null : question.errorType
+        masteryDelta: correct ? +2.1 : -1.4
       };
     }),
 
     /** POST /practice/sessions/{sessionId}/finish  结束练习，返回练习报告 */
     finish: (p) => request('POST', `/practice/sessions/${p.sessionId}/finish`, p, () => M().practiceReport),
 
-    /** GET /practice/wrong-book  错题本  params: { kpId, errorType, mastered, page } */
+    /** GET /practice/wrong-book  错题本  params: { kpId, mastered, page } */
     wrongBook: (p) => request('GET', '/practice/wrong-book', p, (q) => {
       let list = M().wrongBook.slice();
       if (q.mastered === 'false') list = list.filter(w => !w.mastered);
       if (q.mastered === 'true') list = list.filter(w => w.mastered);
-      if (q.errorType && q.errorType !== 'all') list = list.filter(w => w.errorType === q.errorType);
       return { total: list.length, list };
     }),
 

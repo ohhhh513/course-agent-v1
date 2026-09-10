@@ -46,12 +46,15 @@
 .hero__stat { display: flex; flex-direction: column; gap: 4px; min-width: 96px; }
 .hero__stat--streak { min-width: 320px; max-width: 620px; width: 100%; }
 
-/* ---------- 学习贡献图（GitHub 风格 7×52）---------- */
+/* ---------- 学习贡献图（GitHub 风格：列 = 一周，行 = 周一…周日；
+   起点为学期第 1 周（8/31），周数由后端给，未来日期用 is-future 区分）---------- */
 .streak-cal {
   margin-top: 4px; padding: 12px 14px 10px;
   background: var(--surface-2); border: 1px solid var(--border); border-radius: 10px;
   animation: streakCalIn .25s ease;
   width: 100%;
+  /* 热力图格子上限：想再小/再大只改这一个值（列数由 JS 的 --cal-weeks 决定） */
+  --cal-cell-max: 20px;
 }
 @keyframes streakCalIn { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
 
@@ -80,35 +83,42 @@
 .cal-grid-wrap { display: block; overflow-x: auto; padding-bottom: 2px; }
 .cal-grid {
   display: grid;
-  grid-template-rows: repeat(7, 10px);
-  grid-template-columns: repeat(52, 10px);
+  grid-template-rows: repeat(7, auto);
+  grid-template-columns: repeat(var(--cal-weeks, 52), minmax(0, var(--cal-cell-max, 20px)));
   grid-auto-flow: column;
-  gap: 2px;
-  width: fit-content;
+  gap: 3px;
+  width: 100%;
+  justify-content: center;
 }
 .cal-cell {
-  width: 10px; height: 10px; border-radius: 2px;
+  width: 100%; height: auto; aspect-ratio: 1 / 1; border-radius: 3px;
   background: #ebedf0; display: block;
   transition: transform var(--t-fast);
   cursor: default;
 }
 .cal-cell.lv-0 { background: #ebedf0; }
 .cal-cell.is-on { background: #40c463; }
+.cal-cell.is-future {
+  background: transparent;
+  box-shadow: inset 0 0 0 1px #e9ebef;
+}
+.cal-cell.is-future:hover { transform: none; }
 .cal-cell.is-today {
   background: linear-gradient(135deg, var(--brand-500), var(--accent-500));
   box-shadow: 0 0 0 2px rgba(99,102,241,.25);
 }
 .cal-cell:hover { transform: scale(1.5); z-index: 2; position: relative; }
 
-.cal-months {
+.cal-weeks {
   display: grid;
-  grid-template-columns: repeat(52, 10px);
-  gap: 2px;
+  grid-template-columns: repeat(var(--cal-weeks, 52), minmax(0, var(--cal-cell-max, 20px)));
+  gap: 3px;
   margin-top: 6px;
-  width: fit-content;
-  font-size: 10.5px; color: var(--text-3);
+  width: 100%;
+  justify-content: center;
+  font-size: 10px; color: var(--text-3);
 }
-.cal-month-label { grid-row: 1; white-space: nowrap; }
+.cal-week-label { grid-row: 1; white-space: nowrap; }
 
 /* ---------- 三大核心指标环形组 ---------- */
 .rings { display: flex; justify-content: space-around; gap: 14px; flex-wrap: wrap; padding: 6px 0; }
@@ -1053,6 +1063,9 @@
   max-height: calc(100vh - var(--topbar-h) - 245px);
   min-height: 320px;
   overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable;
+  /* 卡片行按自身高度排列：容器有 min-height 时，grid 默认的 align-content:stretch
+     会把只有一行的卡片纵向撑满整个容器（资源少时特别明显） */
+  align-content: start;
 }
 
 /* ---------- 我的学情：知识点学习完成矩阵独立滚动 ---------- */

@@ -504,6 +504,11 @@ a.badge--outline:hover { border-color: var(--brand-400); color: var(--brand-300)
 .tl-item time { font-size: 11.5px; color: var(--text-3); font-family: var(--font-num); }
 .tl-item b { display: block; font-size: 13.5px; font-weight: 600; }
 .tl-item p { font-size: 12.5px; color: var(--text-2); }
+/* 最近学习动态：独立滚动条，便于查看全部练习记录 */
+.tl-scroll { max-height: 420px; overflow-y: auto; padding-right: 8px; scrollbar-width: thin; scrollbar-color: var(--brand-300) var(--surface-3); }
+.tl-scroll::-webkit-scrollbar { width: 6px; }
+.tl-scroll::-webkit-scrollbar-track { background: var(--surface-3); border-radius: var(--r-full); }
+.tl-scroll::-webkit-scrollbar-thumb { background: var(--brand-300); border-radius: var(--r-full); }
 
 /* ---------- 12. Modal / Drawer ---------- */
 .overlay {
