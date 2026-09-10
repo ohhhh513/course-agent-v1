@@ -85,6 +85,8 @@ def run_seed():
             term="2026 春季学期", teacher="李文博", credit=4,
             chapters=8, knowledge_points=25, resources=132, questions=860,
         ))
+        # 先落库父表（用户/班级/课程），避免后续 FK 子表先于父表插入导致外键失败
+        db.flush()
 
         # =========================================================
         # 2. 图谱公共数据
@@ -108,6 +110,8 @@ def run_seed():
         for r in MOCK_RESOURCES:
             db.add(Resource(**r))
         print(f"  -> resources: {len(MOCK_RESOURCES)}（题库不灌入，由 import_st_bank.py 提供）")
+        # 先落库图谱/资源，供 learning_path 等子表外键引用
+        db.flush()
 
         # =========================================================
         # 4. Transaction 数据（按 user_id 归属）
@@ -139,6 +143,8 @@ def run_seed():
         # 4.6 AI 对话会话 & 消息
         for cs in MOCK_CHAT_SESSIONS:
             db.add(ChatSession(**cs))
+        # 先落库会话，避免 chat_messages 外键先于 chat_sessions 插入
+        db.flush()
         for cm in MOCK_CHAT_MESSAGES:
             db.add(ChatMessage(**cm))
         print(f"  -> chat_sessions: {len(MOCK_CHAT_SESSIONS)}, "
@@ -157,16 +163,16 @@ def run_seed():
         # =========================================================
         for dt, cid, dkey, jdata in DASHBOARD_DATA:
             db.add(TeacherClassDashboard(
-                class_id=cid, data_type=dt, data_key=dkey,
+                class_id=(cid or None), data_type=dt, data_key=dkey,
                 data_json=json.dumps(jdata, ensure_ascii=False),
             ))
         print(f"  -> dashboards: {len(DASHBOARD_DATA)}")
 
         db.commit()
-        print("[seed] ✅ 种子数据写入完成")
+        print("[seed] 种子数据写入完成")
     except Exception as e:
         db.rollback()
-        print(f"[seed] ❌ 写入失败: {e}")
+        print(f"[seed] 写入失败: {e}")
         import traceback
         traceback.print_exc()
         raise
