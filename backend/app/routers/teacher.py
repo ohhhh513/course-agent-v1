@@ -618,11 +618,17 @@ def student_profile(
         if not a.is_correct: wrong_by_kp[a.kp_id].append(a)
     wrong_detail = []
     for kp_id, wlist in sorted(wrong_by_kp.items(), key=lambda x: -len(x[1]))[:5]:
+        error_type_counts = defaultdict(int)
+        for record in wlist:
+            error_type = (record.error_type or "").strip()
+            if error_type:
+                error_type_counts[error_type] += 1
+        primary_error_type = max(error_type_counts, key=error_type_counts.get, default="未分类")
         wrong_detail.append({
             "kp": kp_id_name.get(kp_id, kp_id or "未知"),
             "qId": wlist[0].q_id or "-",
             "count": len(wlist),
-            "errorType": wlist[0].error_type or "未分类",
+            "errorType": primary_error_type,
         })
 
     # studyTimeDist：按真实答题时段（answer_records.created_at 的小时）聚合到 7 个时段桶；

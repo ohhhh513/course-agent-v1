@@ -313,6 +313,8 @@ const Charts = (function () {
     const startedData = [];
     const unstartedData = [];
     const studentNames = (data.studentAxis || []).map(s => typeof s === 'object' ? s.name : s);
+    const visibleStudentCount = 10;
+    const needsStudentScroll = studentNames.length > visibleStudentCount;
     const maxStudentNameLength = studentNames.reduce((max, name) => Math.max(max, String(name || '').length), 0);
     // 给 Y 轴学生姓名预留稳定空间，避免 containLabel 在窄尺寸初始化时把绘图区压成一小条。
     const gridLeft = Math.min(150, Math.max(78, maxStudentNameLength * 13 + 24));
@@ -341,7 +343,7 @@ const Charts = (function () {
           return `<b>${(data.studentAxis[p.value[1]] || {}).name || data.studentAxis[p.value[1]] || p.value[1]}</b><br/>${data.kpAxis[p.value[0]] || p.value[0]}<br/>${label}：<b style="font-size:14px">${p.value[2]}%</b>`;
         }
       }),
-      grid: { left: gridLeft, right: 24, top: gridTop, bottom: 18, containLabel: true },
+      grid: { left: gridLeft, right: 24, top: gridTop, bottom: 18, containLabel: false },
       xAxis: {
         type: 'category', data: data.kpAxis, position: 'top',
         splitArea: { show: true, areaStyle: { color: ['transparent'] } },
@@ -355,6 +357,18 @@ const Charts = (function () {
         axisLine: { show: false }, axisTick: { show: false },
         axisLabel: { color: t.text2, fontSize: 11.5, margin: 12 }
       },
+      dataZoom: needsStudentScroll ? [{
+        type: 'slider', yAxisIndex: 0, orient: 'vertical',
+        right: 3, top: gridTop, bottom: 18, width: 12,
+        startValue: 0, endValue: visibleStudentCount - 1,
+        zoomLock: true, brushSelect: false, showDetail: false, showDataShadow: false,
+        borderColor: 'transparent', backgroundColor: t.surface3,
+        fillerColor: t.brand + '30', handleStyle: { color: t.brand, borderColor: t.brand }
+      }, {
+        type: 'inside', yAxisIndex: 0, orient: 'vertical',
+        startValue: 0, endValue: visibleStudentCount - 1,
+        zoomLock: true, zoomOnMouseWheel: false, moveOnMouseWheel: false, moveOnMouseMove: false
+      }] : [],
       visualMap: {
         // 卡片标题右侧已有统一的低-高图例，隐藏 ECharts 内置图例可避免占用绘图区。
         show: false, seriesIndex: 1, min: 0, max: 100, calculable: true, orient: 'horizontal',
@@ -364,18 +378,47 @@ const Charts = (function () {
       },
       series: [{
         type: 'heatmap', data: unstartedData, silent: true, z: 0,
+        animation: false, progressive: 0,
         itemStyle: { color: t.surface3, borderRadius: 3, borderColor: t.surface, borderWidth: 2 }
       }, {
         type: 'heatmap', data: startedData, z: 1,
+        animation: false, progressive: 0,
         label: {
           show: true, color: '#0b1220', fontSize: 9.5, fontWeight: 600,
           formatter: p => p.value[2]
         },
         itemStyle: { borderRadius: 3, borderColor: t.surface, borderWidth: 2 },
-        emphasis: { itemStyle: { shadowBlur: 10, shadowColor: 'rgba(0,0,0,.4)', borderColor: t.brand, borderWidth: 2 } },
-        progressive: 400
+        emphasis: { itemStyle: { shadowBlur: 10, shadowColor: 'rgba(0,0,0,.4)', borderColor: t.brand, borderWidth: 2 } }
       }]
     }));
+    const chartEl = inst && inst.getDom ? inst.getDom() : null;
+    if (chartEl && chartEl._heatmapWheelHandler) {
+      chartEl.removeEventListener('wheel', chartEl._heatmapWheelHandler);
+      chartEl._heatmapWheelHandler = null;
+    }
+    if (chartEl && needsStudentScroll) {
+      const wheelHandler = (event) => {
+        const chart = window.echarts && echarts.getInstanceByDom(chartEl);
+        if (!chart || !chart.containPixel({ gridIndex: 0 }, [event.offsetX, event.offsetY])) return;
+
+        const zoom = (chart.getOption().dataZoom || [])[0] || {};
+        const step = 100 / Math.max(studentNames.length - 1, 1);
+        const windowSize = step * (visibleStudentCount - 1);
+        const maxStart = Math.max(0, 100 - windowSize);
+        const currentStart = Number.isFinite(Number(zoom.start)) ? Number(zoom.start) : 0;
+        const direction = event.deltaY > 0 ? -1 : 1;
+        const nextStart = Math.max(0, Math.min(maxStart, currentStart + direction * step));
+
+        event.preventDefault();
+        if (Math.abs(nextStart - currentStart) < 0.001) return;
+        chart.dispatchAction({
+          type: 'dataZoom', dataZoomIndex: 0,
+          start: nextStart, end: Math.min(100, nextStart + windowSize)
+        });
+      };
+      chartEl._heatmapWheelHandler = wheelHandler;
+      chartEl.addEventListener('wheel', wheelHandler, { passive: false });
+    }
     if (inst && onClick) inst.on('click', p => onClick(p.value, data));
     return inst;
   }

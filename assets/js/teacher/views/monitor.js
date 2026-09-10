@@ -32,7 +32,7 @@
             <div class="search" style="width:160px">${icon('search2')}<input class="input" id="stuSearch" placeholder="姓名 / 学号"></div>
             <div class="seg" id="stuSeg"><button data-l="all" class="is-active">全部</button><button data-l="red">红</button><button data-l="yellow">黄</button><button data-l="green">绿</button></div>
           </div>
-          <div class="card__body card__body--flush"><div class="list" id="stuList" style="max-height:580px;overflow:auto">${U.skeleton(300)}</div></div>
+          <div class="card__body card__body--flush"><div class="list" id="stuList" style="max-height:calc(100vh - 184px);overflow:auto">${U.skeleton(300)}</div></div>
         </div>
 
         <div class="card">
@@ -137,8 +137,7 @@
             <p class="fz-12 t-dim" style="margin:14px 0 8px">高频错题</p>
             <div class="stack" style="gap:8px">${(p.wrongDetail || []).map(w => `
               <div class="file-item">${icon('alert')}<b>${U.esc(w.kp)}</b>
-                <span class="fz-11 t-dim nowrap">错 ${w.count} 次</span>
-                <span class="badge badge--warn">${w.errorType}</span></div>`).join('') || '<span class="fz-12 t-dim">暂无高频错题</span>'}</div>
+                <span class="fz-11 t-dim nowrap">错 ${w.count} 次</span></div>`).join('') || '<span class="fz-12 t-dim">暂无高频错题</span>'}</div>
           </div>`,
           footer: `<button class="btn" data-close>关闭</button>
             <button class="btn btn--outline" id="prMsg">${icon('message')} 发送私信</button>
