@@ -21,9 +21,93 @@ except Exception:  # pragma: no cover
 
 # 相对定位：本文件位于 backend/app/media_utils.py，向上两级为项目根（course-agent）
 BASE_DIR = Path(__file__).resolve().parents[2]
-# 课程资源统一放项目根 resources/（与静态挂载 /assets/resources 对应）
-COVERS_DIR = BASE_DIR / "resources" / "covers"
-UPLOADS_DIR = BASE_DIR / "resources" / "uploads"
+
+# ===================== 课程资源路径的唯一定义（改动请只改这里）=====================
+# 磁盘位置：项目根 resources/（内容与前端代码 assets/ 分离；体积大，不入 Git）
+RESOURCES_DIR = BASE_DIR / "resources"
+COVERS_DIR = RESOURCES_DIR / "covers"
+
+# 对外访问前缀：与磁盘目录一一对应（/resources/a/b.mp4 → resources/a/b.mp4）
+URL_PREFIX = "/resources"
+
+# 统一资源路径规范：resources/{course_id}/{res_id}/{filename}
+#   - 第一级按课程隔离 → 天然支持多课程，资源一律由教师上传添加，不再有“内置资源”通道
+#   - 第二级每个资源独占一个目录 → 避免同名覆盖，删除时整目录清理，不会残留孤儿文件
+# 历史教训（勿重蹈）：
+#   1) 早期前缀是 /assets/resources 但磁盘在 resources/，二者不对应，删除时反推必失败
+#      且异常被吞 → 文件删不掉、越积越多（孤儿文件）；
+#   2) 早期还有 data-structures-1-9/（内置资源目录）与 uploads/ 两套并存，扫描目录自动
+#      登记资源的机制已废弃 —— 多课程场景下资源应统一由教师上传。
+DEFAULT_COURSE_ID = "C2026DS001"
+
+
+def course_dir(course_id: str):
+    """某课程的资源根目录：resources/{course_id}/"""
+    return RESOURCES_DIR / str(course_id or DEFAULT_COURSE_ID)
+
+
+def res_dir(course_id: str, res_id: str):
+    """某资源的独占目录：resources/{course_id}/{res_id}/"""
+    return course_dir(course_id) / str(res_id)
+
+
+def resource_url(rel_path: str) -> str:
+    """把 resources/ 下的相对路径转成对外访问 URL。"""
+    return f"{URL_PREFIX}/{str(rel_path).lstrip('/')}"
+
+
+def res_url(course_id: str, res_id: str, filename: str) -> str:
+    """某资源的标准访问 URL：/resources/{course_id}/{res_id}/{filename}"""
+    return resource_url(f"{course_id or DEFAULT_COURSE_ID}/{res_id}/{filename}")
+
+
+def url_to_path(url: str):
+    """把资源 URL 反解为磁盘路径。
+
+    资源删除 / 存在性校验的**唯一**入口，禁止在别处手写 `BASE_DIR / url.lstrip('/')`
+    之类的拼接 —— 历史孤儿文件的根因就是手写拼接与实际目录不对应。
+    """
+    u = str(url or "").strip()
+    if not u.startswith(URL_PREFIX + "/"):
+        return None
+    return RESOURCES_DIR / u[len(URL_PREFIX) + 1:]
+
+
+def safe_filename(name: str) -> str:
+    """清洗上传文件名：剥离目录部分、去掉路径分隔符与首尾点号，防止路径穿越。"""
+    base = Path(str(name or "upload.bin")).name          # 去掉任何目录成分
+    base = base.replace("\\", "_").replace("/", "_").replace(":", "_")
+    base = base.strip().strip(".") or "upload.bin"
+    return base[:180]
+
+
+def cleanup_empty_dirs(path, retries: int = 2, delay: float = 0.3):
+    """自下而上清理空目录（到 resources/ 为止），用于资源删除后不留空壳目录。
+
+    Windows 上文件刚 unlink 后目录句柄可能短暂未释放，rmdir 会报
+    「目录被占用 / 非空」——因此带少量重试；仍失败则放弃（残留的只是
+    一个无害空目录，不影响数据一致性）。
+    """
+    import time
+    d = path.parent if path.is_file() else path
+    while d != RESOURCES_DIR and RESOURCES_DIR in d.parents:
+        try:
+            if any(d.iterdir()):
+                break
+            removed = False
+            for attempt in range(retries + 1):
+                try:
+                    d.rmdir()
+                    removed = True
+                    break
+                except OSError:
+                    if attempt < retries:
+                        time.sleep(delay)
+            if not removed:
+                break           # 放弃本层，避免死循环
+        except OSError:
+            break
+        d = d.parent
 
 LABEL = {"video": "教学视频", "doc": "教材文献", "ppt": "课堂PPT", "quiz": "题库"}
 TYPE_BG = {
@@ -182,22 +266,22 @@ def parse_title(filename: str) -> str:
     return name.replace("_", " ").replace("-", " ")
 
 
-def save_upload_file(file_obj, filename: str, res_id: str) -> Path:
-    """保存上传文件，返回磁盘路径"""
-    target_dir = UPLOADS_DIR / res_id
+def save_upload_file(file_obj, filename: str, res_id: str, course_id: str = DEFAULT_COURSE_ID) -> Path:
+    """保存上传文件到统一路径 resources/{course_id}/{res_id}/，返回磁盘路径（文件名已清洗）"""
+    target_dir = res_dir(course_id, res_id)
     target_dir.mkdir(parents=True, exist_ok=True)
-    dest = target_dir / filename
+    dest = target_dir / safe_filename(filename)
     with open(dest, "wb") as f:
         shutil.copyfileobj(file_obj, f)
     return dest
 
 
 def generate_cover(res_id: str, title: str, rtype: str) -> str:
-    """为资源生成占位封面（480x270 JPG），返回相对路径 /assets/resources/covers/{res_id}.jpg"""
+    """为资源生成占位封面（480x270 JPG），返回相对路径 /resources/covers/{res_id}.jpg"""
     COVERS_DIR.mkdir(parents=True, exist_ok=True)
     out = COVERS_DIR / f"{res_id}.jpg"
     if not HAS_PIL:
-        return "/assets/resources/covers/default.jpg"
+        return resource_url("covers/default.jpg")
 
     try:
         W, H = 480, 270
@@ -229,6 +313,6 @@ def generate_cover(res_id: str, title: str, rtype: str) -> str:
         draw.text(((W - tw) / 2, H / 2 - 16), display, fill="#ffffff", font=font_title)
 
         img.save(out, "JPEG", quality=88)
-        return f"/assets/resources/covers/{res_id}.jpg"
+        return resource_url(f"covers/{res_id}.jpg")
     except Exception:
-        return f"/assets/resources/covers/{res_id}.jpg"
+        return resource_url(f"covers/{res_id}.jpg")

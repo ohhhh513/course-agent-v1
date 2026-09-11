@@ -140,7 +140,7 @@
             <div class="stack" style="gap:8px;margin-bottom:18px">
               ${(d.resources || []).map(r => `
                 <div class="file-item res-link" data-res-id="${U.esc(r.resId)}" data-type="${U.esc(r.type)}" data-title="${U.esc(r.title)}" data-duration="${U.esc(r.duration || '')}" data-pages="${r.pages || 0}" data-url="${U.esc(r.url || '')}">
-                  <img class="file-item__cov" src="/assets/resources/covers/${r.resId}.jpg" alt="" onerror="this.remove()">
+                  <img class="file-item__cov" src="/resources/covers/${r.resId}.jpg" alt="" onerror="this.remove()">
                   ${icon(r.type === 'video' ? 'video' : r.type === 'ppt' ? 'ppt' : 'file')}
                   <b>${U.esc(r.title)}</b>
                   <span class="fz-11 t-dim nowrap">${r.duration || (r.pages + ' 页')}</span>
@@ -163,8 +163,9 @@
             <button class="btn btn--primary" id="dPractice">${icon('pencil')} 开始练习</button>`,
           onMount(ov, close) {
             U.$('#dAsk', ov).addEventListener('click', () => {
-              close(); Router.go('ai');
-              setTimeout(() => Chat.ask('请讲解「' + d.name + '」这个知识点'), 260);
+              // 不自动发送：新建会话并把问题填入答疑输入框，由用户确认后自行发送
+              close();
+              Chat.draft('请讲解「' + d.name + '」这个知识点');
             });
             U.$('#dPractice', ov).addEventListener('click', () => { close(); Router.go('practice'); });
 

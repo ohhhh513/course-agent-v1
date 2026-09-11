@@ -568,7 +568,10 @@ window.API = (function () {
     uploadResource: (formData) => request('POST', '/teacher/resources/upload', formData),
 
     /** DELETE /teacher/resources/{res_id}  删除资源 */
-    deleteResource: (resId) => request('DELETE', `/teacher/resources/${resId}`)
+    deleteResource: (resId) => request('DELETE', `/teacher/resources/${resId}`),
+
+    /** GET /teacher/resources/{res_id}/rag-status  查询上传后的 RAG 切片进度 */
+    resourceRagStatus: (resId) => request('GET', `/teacher/resources/${resId}/rag-status`)
   };
 
   /* ======================================================================

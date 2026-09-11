@@ -7,7 +7,7 @@ import re
 import uuid
 from datetime import datetime, timedelta, timezone
 from collections import defaultdict
-from fastapi import APIRouter, Depends, Query, Body, Form, UploadFile, File, HTTPException
+from fastapi import APIRouter, Depends, Query, Body, Form, UploadFile, File, HTTPException, BackgroundTasks
 from sqlalchemy.orm import Session
 from sqlalchemy import func, desc
 from pydantic import BaseModel
@@ -27,8 +27,10 @@ from ..utils import (
     fmt_dt,
 )
 from ..media_utils import (
-    BASE_DIR, UPLOADS_DIR, COVERS_DIR, mp4_duration, pdf_pages, pptx_pages,
+    BASE_DIR, COVERS_DIR, mp4_duration, pdf_pages, pptx_pages,
     guess_type, parse_chapter, parse_title, save_upload_file, generate_cover,
+    resource_url, res_url, url_to_path, safe_filename, cleanup_empty_dirs,
+    DEFAULT_COURSE_ID,
 )
 from ..routers.practice import _calc_question_stats
 
@@ -1964,6 +1966,36 @@ def create_pack(
 # 教师资源管理：上传 / 删除 / 列表
 # =============================================================================
 
+# ========== 资源上传后的 RAG 切片（异步 + 进度可查） ==========
+# 切片需要调用远程 embedding，耗时可达数十秒，因此放后台任务执行，避免阻塞上传响应。
+# 状态存进程内存（当前为单进程原型；多进程/多实例部署需改用 DB 或 Redis）。
+_RAG_STATUS: dict = {}
+
+# 与 agent_st/rag/parsers 实际支持的解析器一致：json / pdf / ppt(pptx) / txt(md)
+_RAG_SUPPORTED_EXT = {".json", ".pdf", ".ppt", ".pptx", ".txt", ".md"}
+
+
+def _run_rag_ingest(res_id: str, path) -> None:
+    """后台任务：把上传的文件切片写入 rag.db（幂等，同 source 先删后写）。"""
+    from ..agent_st.rag.ingest import ingest_path
+    _RAG_STATUS[res_id] = {"status": "running", "chunks": 0, "message": "正在切片并向量化…"}
+    try:
+        result = ingest_path(path)
+        if result.get("ok"):
+            _RAG_STATUS[res_id] = {
+                "status": "done",
+                "chunks": int(result.get("chunks") or 0),
+                "message": "切片完成，已加入 AI 知识库",
+            }
+        else:
+            _RAG_STATUS[res_id] = {
+                "status": "failed", "chunks": 0,
+                "message": result.get("error") or "切片失败",
+            }
+    except Exception as exc:  # noqa: BLE001  后台任务失败不能影响上传结果
+        _RAG_STATUS[res_id] = {"status": "failed", "chunks": 0, "message": f"切片异常：{exc}"}
+
+
 def _next_res_id(db: Session) -> str:
     last = db.query(Resource.res_id).filter(Resource.res_id.like("R%")).order_by(Resource.res_id.desc()).first()
     n = int(last[0][1:]) + 1 if last else 1
@@ -1990,7 +2022,7 @@ def teacher_resources(
             "kp": r.kp, "category": r.category,
             "duration": r.duration, "pages": r.pages, "count": r.count,
             "source": r.source, "views": r.views, "url": r.url or "",
-            "cover": f"/assets/resources/covers/{r.res_id}.jpg",
+            "cover": resource_url(f"covers/{r.res_id}.jpg"),
         }
         for r in rows
     ]
@@ -1999,6 +2031,7 @@ def teacher_resources(
 
 @router.post("/resources/upload")
 async def upload_resource(
+    background: BackgroundTasks,
     title: str = Form(""),
     kp: str = Form(""),
     kp_id: str = Form(""),
@@ -2007,14 +2040,18 @@ async def upload_resource(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    """教师上传资源：保存文件、解析时长/页数、生成封面、写入 Resource 表"""
-    filename = file.filename or "upload.bin"
+    """教师上传资源：保存文件 → 解析时长/页数 → 生成封面 → 写库 → 同步学习路径资源数
+    → 后台触发 RAG 切片（进度用 GET /teacher/resources/{resId}/rag-status 查询）
+
+    统一落盘路径：resources/{course_id}/{res_id}/{文件名}（与其他课程资源同一规范）
+    """
+    filename = safe_filename(file.filename or "upload.bin")
     rtype, ext = guess_type(filename)
     if not rtype:
         return fail("仅支持 MP4/PDF/PPT/DOC 文件", 400)
 
     res_id = _next_res_id(db)
-    dest = save_upload_file(file.file, filename, res_id)
+    dest = save_upload_file(file.file, filename, res_id, DEFAULT_COURSE_ID)
 
     # 解析元数据
     duration = ""
@@ -2029,7 +2066,7 @@ async def upload_resource(
     title = title.strip() or parse_title(filename)
     kp = kp.strip() or parse_chapter(filename)
 
-    url = f"/assets/resources/uploads/{res_id}/{filename}"
+    url = res_url(DEFAULT_COURSE_ID, res_id, filename)
     r = Resource(
         res_id=res_id,
         course_id="C2026DS001",
@@ -2048,13 +2085,43 @@ async def upload_resource(
     db.add(r)
     db.commit()
 
+    # 同步学习路径上的资源数：sync_user 只在知识点集合变化时才重建，资源增减须显式同步
+    try:
+        from ..services.learning_path import sync_res_count
+        sync_res_count(db, kp_ids=[r.kp_id])
+        db.commit()
+    except Exception:
+        db.rollback()
+
     cover_url = generate_cover(res_id, title, rtype)
+
+    # 后台触发 RAG 切片（embedding 调用耗时长，不能阻塞上传响应）
+    if ext in _RAG_SUPPORTED_EXT:
+        background.add_task(_run_rag_ingest, res_id, dest)
+        rag = {"supported": True, "status": "pending", "message": "已加入切片队列"}
+    else:
+        rag = {"supported": False, "status": "skipped",
+               "message": f"{ext} 暂不支持入库（当前仅支持 PDF / PPT / JSON / TXT）"}
 
     return ok({
         "resId": res_id, "title": title, "type": rtype,
         "duration": duration, "pages": pages, "url": url,
         "cover": cover_url, "kp": kp, "category": category,
+        "rag": rag,
     })
+
+
+@router.get("/resources/{res_id}/rag-status")
+def resource_rag_status(
+    res_id: str,
+    user=Depends(get_current_user),
+):
+    """查询该资源上传后的 RAG 切片进度（前端上传弹窗轮询用）"""
+    st = _RAG_STATUS.get(res_id)
+    if not st:
+        return ok({"status": "unknown", "chunks": 0,
+                   "message": "当前进程无该资源的切片记录（可能服务已重启）"})
+    return ok(st)
 
 
 @router.delete("/resources/{res_id}")
@@ -2063,20 +2130,22 @@ def delete_resource(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    """教师删除资源：删除 DB 记录、磁盘文件与封面"""
+    """教师删除资源：删除 DB 记录、磁盘文件、封面与切片状态"""
     r = db.query(Resource).filter(Resource.res_id == res_id).first()
     if not r:
         return fail("资源不存在", 404)
 
-    # 删除文件
+    kp_id_before = r.kp_id
+
+    # 删除文件：用统一映射反解磁盘路径（兼容新旧 URL 前缀）
+    # 历史 bug：这里曾写 BASE_DIR / url.lstrip("/")，而 url 前缀是 /assets/resources、
+    # 磁盘却在 resources/，反推必然失败且被 except 吞掉 → 文件删不掉、堆积成孤儿文件。
+    src_path = url_to_path(r.url)
     try:
-        if r.url:
-            p = BASE_DIR / r.url.lstrip("/")
-            if p.exists():
-                p.unlink()
-            d = p.parent
-            if d.exists() and not any(d.iterdir()):
-                d.rmdir()
+        if src_path and src_path.exists():
+            src_path.unlink()
+            # 自下而上清理空目录（resources/{course_id}/{res_id}/ 不留空壳）
+            cleanup_empty_dirs(src_path)
     except Exception:
         pass
 
@@ -2096,7 +2165,26 @@ def delete_resource(
 
     db.delete(r)
     db.commit()
-    return ok({"resId": res_id})
+
+    # 同步学习路径上的资源数
+    try:
+        from ..services.learning_path import sync_res_count
+        sync_res_count(db, kp_ids=[kp_id_before])
+        db.commit()
+    except Exception:
+        db.rollback()
+
+    # 清理进度记录，并从 RAG 库移除该文件的切片 —— 保持「磁盘文件 / 业务表 / 向量库」三者一致
+    _RAG_STATUS.pop(res_id, None)
+    rag_removed = None            # None = 无源文件可定位，未执行清理
+    if src_path is not None:
+        try:
+            from ..agent_st.rag.store import ChunkStore
+            rag_removed = ChunkStore().delete_source(src_path.name)
+        except Exception:
+            rag_removed = -1      # -1 = 清理失败，前端提示需人工核对
+
+    return ok({"resId": res_id, "ragChunksRemoved": rag_removed})
 
 
 @router.get("/resources/kps")

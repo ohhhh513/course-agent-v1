@@ -86,6 +86,33 @@ def build_rows(
     return rows
 
 
+def sync_res_count(
+    db: Session,
+    course_id: str = DEFAULT_COURSE_ID,
+    kp_ids: Optional[List[str]] = None,
+) -> int:
+    """把 resources 的实际挂载数同步到 learning_paths.res_count。
+
+    上传 / 删除资源后必须调用：sync_user() 只在「知识点集合」变化时才重建路径，
+    资源增减不影响集合，所以 res_count 不会自动跟随，学习路径上显示的资源数会过时。
+    kp_ids 只传受影响的单个知识点即可（不传则全量）。返回被更新的行数。
+    """
+    counts = resource_count_map(db, course_id)
+    q = db.query(LearningPath).filter(LearningPath.course_id == course_id)
+    if kp_ids:
+        targets = [k for k in kp_ids if k]
+        if not targets:
+            return 0
+        q = q.filter(LearningPath.kp_id.in_(targets))
+    changed = 0
+    for row in q.all():
+        want = counts.get(row.kp_id, 0)
+        if (row.res_count or 0) != want:
+            row.res_count = want
+            changed += 1
+    return changed
+
+
 def sync_user(
     db: Session,
     user_id: str,

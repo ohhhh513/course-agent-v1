@@ -62,12 +62,13 @@ course-agent/
 │   │   ├── student/     # 学生端：app.js + start.js + views/(7)
 │   │   ├── teacher/     # 教师端：app.js + start.js + views/(7)
 │   │   └── vendor/      # 第三方库（echarts 等）
-│   └── resources/      # 课程视频/素材（体积较大，按需分发）
+│   └── resources/      # 课程资源：{course_id}/{res_id}/文件名 + covers/（约 1.6GB，不入 Git，统一由教师上传添加）
 ├── backend/
 │   ├── requirements.txt
 │   ├── regression_test.py   # 后端接口回归脚本
 │   ├── import_st_bank.py    # 题库导入（after_class.json → questions）
-│   ├── run_st_ingest.py     # 离线构建 RAG 向量库
+│   ├── run_st_ingest.py     # 离线构建 RAG 向量库（从 resources 表读取清单）
+│   ├── migrate_resource_paths.py  # 一次性迁移：旧资源目录 → 统一路径规范（幂等）
 │   ├── kp_section_mapping.json  # 王道章节 → 知识点 KP 映射（人工维护）
 │   └── app/
 │       ├── main.py          # FastAPI 入口：中间件、路由注册、/health、挂载前端静态

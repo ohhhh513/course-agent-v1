@@ -53,6 +53,7 @@
 
   const Chat = {
     method: 'guided', busy: false, sessionId: 'new',   // method 字段保留仅为 API 兼容，UI 已移除教学法
+    pendingDraft: null,   // 其他视图带入的待提问草稿：只填入输入框，绝不自动发送
 
     render() {
       const el = U.$('#view-ai');
@@ -80,7 +81,7 @@
         <div class="stack">
           <div class="card">
             <div class="card__head"><h3>${icon('bulb')} 猜你想问</h3></div>
-            <div class="card__body card__body--tight" id="askBox"></div>
+            <div class="card__body card__body--tight" id="askBox" style="max-height:188px;overflow-y:auto"></div>
           </div>
           <div class="card">
             <div class="card__head"><h3>${icon('clock')} 历史会话</h3></div>
@@ -92,10 +93,19 @@
       // 初始消息
       this.loadSession('new');
 
-      // 侧栏
-      API.ai.suggestQuestions().then(qs => {
-        U.$('#askBox').innerHTML = qs.map(q => `<button class="ask-item" data-ask="${U.esc(q)}">${icon('bulb')}<span>${U.esc(q)}</span></button>`).join('');
+      // 侧栏 · 猜你想问：与「学习驾驶舱 - AI 助教」保持同一数据源
+      //（/student/dashboard 的 suggestedQuestions；旧接口 /ai/suggest-questions 后端恒为空，弃用）
+      API.student.dashboard().then(d => {
+        const qs = ((d && d.suggestedQuestions) || []).slice(0, 4);
+        const box = U.$('#askBox');
+        if (!box) return;
+        box.innerHTML = qs.length
+          ? qs.map(q => `<button class="ask-item" data-ask="${U.esc(q)}">${icon('bulb')}<span>${U.esc(q)}</span></button>`).join('')
+          : '<p class="fz-12 t-dim" style="padding:4px 2px">暂无推荐问题</p>';
         U.$$('#askBox [data-ask]').forEach(b => b.addEventListener('click', () => this.ask(b.dataset.ask)));
+      }).catch(() => {
+        const box = U.$('#askBox');
+        if (box) box.innerHTML = '<p class="fz-12 t-dim" style="padding:4px 2px">推荐问题加载失败</p>';
       });
       API.ai.sessions().then(r => this.renderSessions(r, true));
 
@@ -117,6 +127,37 @@
         U.$$('#sessBox [data-sid]').forEach(x => x.classList.remove('is-active'));
         Toast.info('已创建新会话');
       });
+
+      // 其他视图（驾驶舱 / 图谱 / 学情）带入的草稿：填入输入框，由用户自行决定是否发送
+      this._applyPendingDraft();
+    },
+
+    /**
+     * 供其他视图调用：跳到答疑页并新建会话，把问题填入输入框（不自动发送）。
+     * 取代旧的「Router.go('ai') + setTimeout(() => Chat.ask(...))」模式——
+     * 旧模式会在用户最近一次会话里直接发出请求，既打断历史上下文又不符合直觉。
+     */
+    draft(question) {
+      this.pendingDraft = question;
+      Router.go('ai');
+      // Router.go 会同步完成首次 mount（render 已消费草稿）；
+      // 若视图此前已挂载（不会重跑 render），在这里补一次。
+      if (U.$('#chatInput')) {
+        this.loadSession('new');
+        U.$$('#sessBox [data-sid]').forEach(x => x.classList.remove('is-active'));
+        this._applyPendingDraft();
+      }
+    },
+
+    _applyPendingDraft() {
+      const t = this.pendingDraft;
+      if (!t) return;
+      this.pendingDraft = null;
+      const input = U.$('#chatInput');
+      if (!input) return;
+      input.value = t;
+      input.dispatchEvent(new Event('input'));   // 触发输入框自适应高度
+      input.focus();
     },
 
     /**

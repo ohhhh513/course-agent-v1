@@ -337,7 +337,7 @@ const R = {
     const label = { video: '教学视频', ppt: '课堂PPT', doc: '教材文献', quiz: '题库' };
     return `<div class="res" data-res="${r.resId}" data-kp="${U.esc(r.kp)}" ${r.url ? `data-url="${U.esc(r.url)}"` : ''}>
       <div class="res__thumb res__thumb--${r.type}">
-        <img class="res__cover" src="/assets/resources/covers/${r.resId}.jpg" alt="" loading="lazy" onerror="this.remove()">
+        <img class="res__cover" src="/resources/covers/${r.resId}.jpg" alt="" loading="lazy" onerror="this.remove()">
         <span class="res__type-label">${label[r.type]}</span>
         ${r.duration ? `<span class="res__dur">${r.duration}</span>` : ''}
         ${r.pages ? `<span class="res__dur">${r.pages} 页</span>` : ''}

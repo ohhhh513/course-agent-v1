@@ -66,4 +66,4 @@ class Resource(Base):
 
     source = Column(String(128), default="")     # 来源
     views = Column(Integer, default=0)
-    url = Column(String(512), default="")        # 资源访问路径 /assets/resources/...
+    url = Column(String(512), default="")        # 资源访问 URL /resources/{course_id}/{res_id}/{文件名}，反解磁盘路径用 media_utils.url_to_path()

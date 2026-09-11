@@ -2,7 +2,7 @@
 
 在 init_db()+run_seed() 之后调用，依次：
   1) extend_graph_to_nine    图谱从 7 章扩展为 9 章（补 KP401-404 / KP501-502、重排章节、新增前后置）
-  2) sync_resources_from_folder  扫描 resources/ 并登记真实资源
+  2) verify_resources        校验资源记录与磁盘文件的一致性（只报告，不自动处理）
   3) import_questions        从 after_class.json 导入正式题库（KHD 前缀）
   4) ensure_learning_paths   按扩展后的图谱校正学习路径（旧模板残留整体重建）
 全部幂等，可每次启动调用。
@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Optional
 
 from ..config import settings
-from .resource_registry import sync_resources_from_folder, open_conn
+from .resource_registry import verify_resources, open_conn
 
 COURSE_ID = "C2026DS001"
 
@@ -258,7 +258,7 @@ def bootstrap(conn: Optional[sqlite3.Connection] = None, verbose: bool = True) -
     conn = conn or open_conn()
     try:
         extend_graph_to_nine(conn, verbose=verbose)
-        sync_resources_from_folder(conn, verbose=verbose)
+        verify_resources(conn, verbose=verbose)
         import_questions(verbose=verbose)
         ensure_learning_paths(verbose=verbose)
     finally:

@@ -131,7 +131,10 @@
             </div>
           </div>`).join('');
         U.$$('[data-goto]', el).forEach(b => b.addEventListener('click', () => Router.go(b.dataset.goto)));
-        U.$$('[data-ask2]', el).forEach(b => b.addEventListener('click', () => { Router.go('ai'); setTimeout(() => Chat.ask(b.dataset.ask2), 260); }));
+        U.$$('[data-ask2]', el).forEach(b => b.addEventListener('click', () => {
+          // 不自动发送：新建会话并把问题填入答疑输入框，由用户确认后自行发送
+          Chat.draft(b.dataset.ask2);
+        }));
       });
 
       // 矩阵（按章节可折叠）

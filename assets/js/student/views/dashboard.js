@@ -227,8 +227,8 @@
       // 交互绑定
       U.$$('[data-goto]', el).forEach(b => b.addEventListener('click', () => Router.go(b.dataset.goto)));
       U.$$('[data-ask]', el).forEach(b => b.addEventListener('click', () => {
-        Router.go('ai');
-        setTimeout(() => Chat.ask(b.dataset.ask), 260);
+        // 不自动发送：新建会话并把问题填入答疑输入框，由用户确认后自行发送
+        Chat.draft(b.dataset.ask);
       }));
       U.$$('[data-practice-kp]', el).forEach(b => b.addEventListener('click', () => {
         Router.go('practice');

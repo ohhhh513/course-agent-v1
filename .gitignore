@@ -48,12 +48,7 @@ backend/app/data/st/*.db
 *.index
 
 # ---------- 课程资源（1.7GB，禁止入仓库！） ----------
-assets/resources/data-structures-1-9/
-assets/resources/covers/
-assets/resources/uploads/*
-assets/resources/data-structures-1-9
-!assets/resources/uploads/.gitkeep
-# 课程资源实际存放目录（项目根，由 main.py 静态挂载到 /assets/resources）
+# 资源实际存放目录：项目根 resources/（由 main.py 挂载为 /resources，URL 与磁盘一一对应）
 resources/
 
 # ---------- 日志 ----------
