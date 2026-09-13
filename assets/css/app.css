@@ -606,6 +606,80 @@
 .alert-card--green .alert-card__ico { background: var(--ok-soft); color: var(--ok); }
 .alert-card--ignored .alert-card__ico { background: var(--surface-3); color: var(--text-3); }
 .badge--ignored { background: var(--surface-3); color: var(--text-3); }
+
+/* 归因「数据不足，待补充」专用徽标：与正常高/中/低优先级区分，避免误导教师 */
+.badge--insufficient { background: var(--surface-3); color: var(--text-3); border: 1px dashed var(--border); }
+.cause--insufficient .cause__main { opacity: 0.85; }
+.cause--insufficient h4 { color: var(--text-3); }
+
+/* ---------- 学情报告：本周环比卡片 ---------- */
+.report-week-compare { margin: 8px 0 14px; padding: 12px 14px; }
+.report-week-compare__grid {
+  display: grid; grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px 18px; margin-top: 8px;
+}
+.report-week-compare__grid > div {
+  display: flex; flex-direction: column; gap: 2px;
+  font-size: 12px; color: var(--text-2);
+}
+.report-week-compare__grid b {
+  font-size: 18px; font-weight: 700; color: var(--text);
+  font-family: var(--font-num);
+}
+.report-week-compare__grid .t-ok { color: #16a34a; }
+.report-week-compare__grid .t-danger { color: #dc2626; }
+
+/* ---------- 历史归档：纵向滚动容器 + 加载更多 ---------- */
+#view-report .rep-list-scroll {
+  max-height: 400px;
+  min-height: 220px;
+  overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable;
+  /* 与项目其它滚动区一致的设计令牌 */
+  scrollbar-width: thin; scrollbar-color: var(--brand-300) var(--surface-3);
+}
+#view-report .rep-list-scroll::-webkit-scrollbar { width: 6px; }
+#view-report .rep-list-scroll::-webkit-scrollbar-track { background: var(--surface-3); border-radius: var(--r-full); }
+#view-report .rep-list-scroll::-webkit-scrollbar-thumb { background: var(--brand-300); border-radius: var(--r-full); }
+#view-report .rep-list-scroll::-webkit-scrollbar-thumb:hover { background: var(--brand-400, #818cf8); }
+#view-report .rep-loadmore {
+  padding: 10px 12px; text-align: center;
+  border-top: 1px solid var(--border-soft);
+  background: var(--surface);
+}
+
+/* ---------- 共性薄弱（analysis.js）：知识点掌握率可视化 ---------- */
+.common-weak { padding: 9px 10px; border-radius: var(--r-sm); background: var(--surface-2); }
+.common-weak__bar { position: relative; height: 6px; background: var(--surface-3); border-radius: var(--r-full); overflow: hidden; }
+.common-weak__bar-fill { height: 100%; border-radius: inherit; transition: width var(--t); }
+.common-weak__bar-fill.bar--danger { background: linear-gradient(90deg, var(--danger, #ef4444), #f97316); }
+.common-weak__bar-fill.bar--warn { background: linear-gradient(90deg, #f59e0b, #fbbf24); }
+.common-weak__bar-fill.bar--ok { background: linear-gradient(90deg, #22c55e, #4ade80); }
+
+/* ---------- 个性异常（analysis.js）：学生头像 + 错题集中提示 ---------- */
+.indiv {
+  display: flex; align-items: center; gap: 10px;
+  padding: 9px 10px; border-radius: var(--r-sm);
+  background: var(--surface-2);
+  border-left: 3px solid var(--border);
+}
+.indiv--danger { border-left-color: var(--danger, #ef4444); }
+.indiv--warn { border-left-color: var(--warn, #f59e0b); }
+.indiv__avatar {
+  width: 32px; height: 32px; flex: 0 0 32px;
+  border-radius: 50%; display: grid; place-items: center;
+  font-size: 12px; font-weight: 700; color: #fff;
+  font-family: var(--font-num);
+  box-shadow: 0 1px 2px rgba(0,0,0,.08);
+}
+.indiv__avatar--indigo { background: #6366f1; }
+.indiv__avatar--rose { background: #f43f5e; }
+.indiv__avatar--amber { background: #f59e0b; }
+.indiv__avatar--emerald { background: #10b981; }
+.indiv__avatar--sky { background: #0ea5e9; }
+.indiv__avatar--violet { background: #8b5cf6; }
+.indiv__avatar--slate { background: #64748b; }
+.indiv__main { flex: 1 1 auto; min-width: 0; }
+.indiv__main b { font-size: 13px; }
 .alert-card__body { flex: 1 1 auto; min-width: 0; display: block; }
 .alert-card__body .row { display: flex; align-items: center; gap: 10px; margin-bottom: 3px; flex-wrap: wrap; min-height: 22px; }
 .alert-card__body .row > .spacer { flex: 1; }

@@ -47,10 +47,18 @@ class GenerateReportReq(BaseModel):
     startDate: str = ""
     endDate: str = ""
     sections: Optional[List[str]] = None
+    # 统计周期类型：'week' 表示按周次生成（前端传入），'custom' 表示自定义日期范围（默认）
+    periodType: str = "custom"
 
 
 class ExportReportReq(BaseModel):
     format: str = "docx"
+
+
+def _week_key_of(date_obj: date) -> str:
+    """返回形如 '2026年第37周' 的周次标识（ISO 周 + 中国农历年）。"""
+    iso_year, iso_week, _ = date_obj.isocalendar()
+    return f"{iso_year}年第{iso_week}周"
 
 
 # ====== 干预列表 ======
@@ -496,19 +504,88 @@ def generate_report(
     red_cnt = sum(1 for a in alert_rows if a.level == "red")
     yellow_cnt = sum(1 for a in alert_rows if a.level == "yellow")
 
+    # 5. 周环比：当 periodType == 'week' 时，基于 startDate/endDate 计算
+    # 上一周（区间整体前移 7 天）的关键指标，与本周做对比；
+    # 若上一周无数据，环比记 None，避免误导。
+    week_compare = None
+    week_key = None
+    period_label = req.startDate or ""
+    if req.endDate:
+        period_label = (period_label + " ~ " + req.endDate) if period_label else req.endDate
+    if req.periodType == "week" and req.startDate and req.endDate:
+        try:
+            cur_start = date.fromisoformat(req.startDate)
+            cur_end = date.fromisoformat(req.endDate)
+            week_key = _week_key_of(cur_end)
+            period_label = week_key
+            prev_start = cur_start - timedelta(days=7)
+            prev_end = cur_end - timedelta(days=7)
+            prev_lp = db.query(LearningPath).filter(
+                LearningPath.user_id.in_(student_ids),
+                LearningPath.last_practiced_at >= datetime.combine(prev_start, datetime.min.time()),
+                LearningPath.last_practiced_at <= datetime.combine(prev_end, datetime.max.time()),
+            ).all()
+            prev_active = [r for r in prev_lp if r.status != "todo" and (r.mastery or 0) > 0]
+            prev_mastery = round(sum(r.mastery or 0 for r in prev_active) / len(prev_active), 1) if prev_active else None
+            prev_done = sum(1 for r in prev_lp if r.status == "done")
+            prev_completion = round(prev_done / len(prev_lp) * 100, 1) if prev_lp else None
+
+            def _delta(curr, prev):
+                if curr is None or prev is None:
+                    return None
+                return round(curr - prev, 1)
+
+            week_compare = {
+                "current": {
+                    "completion": avg_completion,
+                    "mastery": avg_mastery,
+                },
+                "previous": {
+                    "completion": prev_completion,
+                    "mastery": prev_mastery,
+                    "label": f"{prev_start.isoformat()} ~ {prev_end.isoformat()}",
+                },
+                "delta": {
+                    "completion": _delta(avg_completion, prev_completion),
+                    "mastery": _delta(avg_mastery, prev_mastery),
+                },
+            }
+        except ValueError:
+            # 日期解析失败时静默降级为 custom 模式，不影响主报告生成
+            week_compare = None
+
     # 构建报告详情
+    overview_paragraphs = [
+        f"《数据结构与算法》课程 - {class_name}，共 {len(students)} 名学生。",
+        f"报告生成时间：{datetime.now().strftime('%Y-%m-%d %H:%M')}。统计范围覆盖 {total_kp} 个知识点的学习数据。",
+    ]
+    overview_bullets = [
+        f"知识点完成率：{avg_completion}%（{done_count}/{len(lp_rows)}）",
+        f"平均掌握率：{avg_mastery}%",
+        f"达标知识点：{sum(1 for _, m in kp_mastery.items() if sum(m)/len(m) >= 60)} 个 / 共 {len(kp_mastery)} 个",
+        f"待加强知识点：{sum(1 for _, m in kp_mastery.items() if sum(m)/len(m) < 60)} 个",
+    ]
+    # 周环比段落（仅 periodType=='week' 且已计算出 week_compare 时注入）
+    if req.periodType == "week" and week_compare is not None:
+        cm = week_compare["current"]["mastery"]
+        pm = week_compare["previous"]["mastery"]
+        cc = week_compare["current"]["completion"]
+        pc = week_compare["previous"]["completion"]
+        dm = week_compare["delta"]["mastery"]
+        dc = week_compare["delta"]["completion"]
+        prev_label = week_compare["previous"].get("label", "上一周")
+        overview_paragraphs.append(
+            f"本周（{week_key}）与上一周（{prev_label}）对比："
+            f"平均掌握率 {cm}% / {pm if pm is not None else '无数据'}%（{(dm is not None and dm >= 0) and '+' or ''}{dm if dm is not None else '—'}pp），"
+            f"完成率 {cc}% / {pc if pc is not None else '无数据'}%（{(dc is not None and dc >= 0) and '+' or ''}{dc if dc is not None else '—'}pp）。"
+        )
+        overview_bullets.append(
+            f"本周环比：掌握率 {(dm is not None and dm >= 0) and '+' or ''}{dm if dm is not None else '—'}pp · 完成率 {(dc is not None and dc >= 0) and '+' or ''}{dc if dc is not None else '—'}pp"
+        )
     section_overview = {
         "title": "一、班级整体概况",
-        "paragraphs": [
-            f"《数据结构与算法》课程 - {class_name}，共 {len(students)} 名学生。",
-            f"报告生成时间：{datetime.now().strftime('%Y-%m-%d %H:%M')}。统计范围覆盖 {total_kp} 个知识点的学习数据。",
-        ],
-        "bullets": [
-            f"知识点完成率：{avg_completion}%（{done_count}/{len(lp_rows)}）",
-            f"平均掌握率：{avg_mastery}%",
-            f"达标知识点：{sum(1 for _, m in kp_mastery.items() if sum(m)/len(m) >= 60)} 个 / 共 {len(kp_mastery)} 个",
-            f"待加强知识点：{sum(1 for _, m in kp_mastery.items() if sum(m)/len(m) < 60)} 个",
-        ],
+        "paragraphs": overview_paragraphs,
+        "bullets": overview_bullets,
     }
 
     section_weakness = {
@@ -549,6 +626,11 @@ def generate_report(
             "endDate": req.endDate or "",
             "className": class_name,
             "generator": user.name or user.username or "教师",
+            # periodType 决定 meta.period 的取值：'week' 时为 'YYYY年第N周'，'custom' 时为日期区间
+            "periodType": req.periodType,
+            "period": period_label,
+            # 周环比数据（仅 periodType=='week' 时有值），供前端报告详情面板进一步可视化
+            "weekCompare": week_compare,
         },
     }
 

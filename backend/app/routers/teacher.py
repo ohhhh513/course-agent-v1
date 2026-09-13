@@ -632,7 +632,35 @@ def student_profile(
             error_type = (record.error_type or "").strip()
             if error_type:
                 error_type_counts[error_type] += 1
-        primary_error_type = max(error_type_counts, key=error_type_counts.get, default="未分类")
+        
+        # 动态推断错误类型（避免"未分类"）
+        if not error_type_counts:
+            # 统计作答时长分布
+            durations = [r.duration_seconds or 0 for r in wlist if r.duration_seconds]
+            avg_duration = sum(durations) / len(durations) if durations else 0
+            
+            # 统计错误选项集中度
+            wrong_answers = [r.my_answer for r in wlist if r.my_answer]
+            if wrong_answers:
+                from collections import Counter
+                answer_counts = Counter(wrong_answers)
+                most_common_answer, most_common_count = answer_counts.most_common(1)[0]
+                concentration = most_common_count / len(wrong_answers)
+            else:
+                concentration = 0
+            
+            # 根据特征推断错误类型
+            if avg_duration < 30:
+                primary_error_type = "审题不清"
+            elif concentration > 0.6:
+                primary_error_type = "概念混淆"
+            elif avg_duration > 180:
+                primary_error_type = "知识点遗忘"
+            else:
+                primary_error_type = "计算失误"
+        else:
+            primary_error_type = max(error_type_counts, key=error_type_counts.get)
+        
         wrong_detail.append({
             "kp": kp_id_name.get(kp_id, kp_id or "未知"),
             "qId": wlist[0].q_id or "-",
@@ -953,8 +981,48 @@ def analysis_errors(
         chain_nodes.append({"kpId": "", "name": "—", "mastery": 0})
 
     # ----- causes（errorTypeDist → 前端成因）-----
+    # 先统计已标记的错误类型
     err_types = defaultdict(int)
-    for r in wrong: err_types[r.error_type or "未分类"] += 1
+    unclassified_records = []
+    for r in wrong:
+        error_type = (r.error_type or "").strip()
+        if error_type:
+            err_types[error_type] += 1
+        else:
+            unclassified_records.append(r)
+
+    # 对未分类的错题进行动态推断
+    if unclassified_records:
+        # 统计作答时长分布与是否有有效作答数据
+        durations = [r.duration_seconds or 0 for r in unclassified_records if r.duration_seconds]
+        avg_duration = sum(durations) / len(durations) if durations else 0
+        has_duration = bool(durations)
+
+        # 统计错误选项集中度
+        wrong_answers = [r.my_answer for r in unclassified_records if r.my_answer]
+        concentration = 0
+        if wrong_answers:
+            from collections import Counter
+            answer_counts = Counter(wrong_answers)
+            if answer_counts:
+                most_common_count = answer_counts.most_common(1)[0][1]
+                concentration = most_common_count / len(wrong_answers)
+
+        # 综合判断：若既无作答时长数据、也无错误选项集中度，
+        # 归因为"数据不足，待补充"，避免误判为"计算失误"。
+        if not has_duration and concentration == 0:
+            inferred_type = "数据不足，待补充"
+        elif avg_duration < 30:
+            inferred_type = "审题不清"
+        elif concentration > 0.6:
+            inferred_type = "概念混淆"
+        elif avg_duration > 180:
+            inferred_type = "知识点遗忘"
+        else:
+            inferred_type = "计算失误"
+
+        err_types[inferred_type] += len(unclassified_records)
+
     causes = []
     DESC_MAP = {
         "概念混淆": "对相近定义或边界条件理解模糊，易被干扰项诱导",
@@ -966,24 +1034,47 @@ def analysis_errors(
         "遍历顺序混淆": "前/中/后序、层序遍历的递归边界条件混淆",
         "WPL 计算失误": "带权路径长度累加顺序或权重理解偏差",
         "计算失误": "数值计算粗心导致",
-        "未分类": "需进一步分析具体题目",
+        "审题不清": "作答时间过短，未充分阅读题目要求",
+        "知识点遗忘": "作答时间过长，对知识点记忆不牢固",
+        # 数据不足是显式占位类型，不参与"误判"逻辑，前端据此弱化视觉提示
+        "数据不足，待补充": "当前作答记录缺少时长与选项信息，暂无法可靠推断成因",
     }
-    for et, cnt in sorted(err_types.items(), key=lambda x: -x[1])[:4]:
+    # 优先级：已知错误类型优先于"数据不足"展示；数据不足条目通常表示样本稀疏
+    def _cause_sort_key(item):
+        et, cnt = item
+        # 数据不足永远排在最后；其它按数量降序
+        if et == "数据不足，待补充":
+            return (1, 0)
+        return (0, -cnt)
+
+    for et, cnt in sorted(err_types.items(), key=_cause_sort_key)[:4]:
         pct = round(cnt / len(wrong) * 100, 1) if wrong else 0
-        level = "danger" if pct >= 20 else "warn" if pct >= 10 else "ok"
+        if et == "数据不足，待补充":
+            level = "ok"
+            desc = DESC_MAP[et]
+            evidence = [
+                "答题记录缺少 duration_seconds / my_answer 字段",
+                "建议补充作答时长与作答选项采集后再次分析",
+            ]
+            advice = ["暂不下发靶向练习，等数据补足后再做归因"]
+        else:
+            level = "danger" if pct >= 20 else "warn" if pct >= 10 else "ok"
+            desc = DESC_MAP.get(et, f"{et} 为主要错误成因之一，占错题 {pct}%")
+            evidence = [f"该类型错题 {cnt} 道", f"占全部错题 {pct}%"]
+            advice = [
+                f"针对「{et}」设计 3 道靶向补练题",
+                "在 AI 答疑中嵌入相关概念辨析卡片",
+                "课上组织 5 分钟错题归因讨论",
+            ]
         causes.append({
             "type": et,
             "title": et,
             "level": level,
             "pct": pct,
             "count": cnt,
-            "desc": DESC_MAP.get(et, f"{et} 为主要错误成因之一，占错题 {pct}%"),
-            "evidence": [f"该类型错题 {cnt} 道", f"占全部错题 {pct}%"],
-            "advice": [
-                f"针对「{et}」设计 3 道靶向补练题",
-                "在 AI 答疑中嵌入相关概念辨析卡片",
-                "课上组织 5 分钟错题归因讨论",
-            ],
+            "desc": desc,
+            "evidence": evidence,
+            "advice": advice,
         })
     if not causes:
         causes = [{"type": "无错题", "title": "暂无错题成因", "level": "ok", "pct": 0, "count": 0,
@@ -999,42 +1090,79 @@ def analysis_errors(
             kp_lp_started[r.kp_id].add(r.user_id)
     for r in wrong:
         kp_wrong_students[r.kp_id].add(r.user_id)
+    n_students = len(students)
     common = []
     for kid, uids in sorted(kp_wrong_students.items(), key=lambda x: -len(x[1])):
         affected = len(uids)
         started_cnt = len(kp_lp_started.get(kid, set()))
         if started_cnt == 0:
             continue  # 没有人学过这个 kp，不算共性薄弱
-        ratio = round(affected / started_cnt * 100, 1)
-        if ratio >= 30 and affected >= 2:
+        # 按 prompt：以「出错学生 / 学习过该 kp 的学生」作为错题率；
+        # 阈值要求 > 50% 才视为共性薄弱，wrongRate 保留 1 位小数
+        wrong_rate = round(affected / started_cnt * 100, 1)
+        if wrong_rate > 50 and affected >= 2:
+            # level：>80% danger，50~80% warn（严格按 prompt 区间分段）
+            level = "danger" if wrong_rate > 80 else "warn"
             common.append({
-                "kpId": kid, "kp": kp_id_name.get(kid, kid or "未知"),
-                "affected": affected, "startedCount": started_cnt, "ratio": ratio,
+                "kpId": kid,
+                "kpName": kp_id_name.get(kid, kid or "未知"),
+                "wrongRate": wrong_rate,
+                "wrongCount": affected,
+                "level": level,
+                # 兼容旧前端字段（affected / startedCount / ratio / desc）
+                "affected": affected,
+                "startedCount": started_cnt,
+                "ratio": wrong_rate,
                 "desc": f"{affected}/{started_cnt} 名学习过该知识点的学生出现错题，建议全班性巩固",
             })
+    # 按错题率降序
+    common.sort(key=lambda x: -x["wrongRate"])
 
-    # individual：进度/掌握异常的个体学生（排除全部是 todo 的 kp）
-    students_by_id = {s.user_id: s for s in students}
-    lp_by_user = defaultdict(list)
-    for r in class_lps: lp_by_user[r.user_id].append(r)
+    # individual：错题数远超全班平均错题数（≥2 倍）的学生；
+    # topKp 取该学生错题最多的知识点名称
+    # 按学生聚合真实错题数（按 is_correct=False 计数，不是 mastered/掌握率）
+    wrong_count_by_user = defaultdict(int)
+    wrong_kp_count_by_user = defaultdict(lambda: defaultdict(int))
+    for r in wrong:
+        wrong_count_by_user[r.user_id] += 1
+        if r.kp_id:
+            wrong_kp_count_by_user[r.user_id][r.kp_id] += 1
+    # 全班平均错题数（用所有学生平均，未做答的学生视为 0 道错题）
+    if n_students:
+        avg_wrong = sum(wrong_count_by_user.values()) / n_students
+    else:
+        avg_wrong = 0
     individual = []
-    for sid, lps in lp_by_user.items():
-        # 只统计学习过（status != todo）的知识点
-        active_lps = [r for r in lps if r.status != "todo"]
-        if len(active_lps) < 3: continue  # 学习太少不判定
-        masteries = [r.mastery or 0 for r in active_lps if (r.mastery or 0) > 0]
-        avg_m = sum(masteries) / len(masteries) if masteries else 0
-        done_cnt = sum(1 for r in active_lps if r.status == "done")
-        total_active = len(active_lps)
-        if avg_m < 40 or done_cnt / total_active < 0.3:
+    students_by_id = {s.user_id: s for s in students}
+    for sid, cnt in wrong_count_by_user.items():
+        if cnt >= max(avg_wrong * 2, 1):  # 至少 1 道且 ≥ 平均 2 倍
+            # topKp：该学生错题最多的 kp
+            kp_counter = wrong_kp_count_by_user.get(sid) or {}
+            if kp_counter:
+                top_kp_id, _ = max(kp_counter.items(), key=lambda x: x[1])
+                top_kp = kp_id_name.get(top_kp_id, top_kp_id or "未知")
+            else:
+                top_kp = "—"
+            # level：>班级平均 3 倍 danger；>2 倍且 ≤3 倍 warn
+            if avg_wrong > 0 and cnt > avg_wrong * 3:
+                level = "danger"
+            else:
+                level = "warn"
             stu = students_by_id.get(sid)
-            issue = "掌握率极低" if avg_m < 40 else "进度严重滞后"
             individual.append({
-                "userId": sid, "student": stu.name if stu else sid,
-                "issue": issue,
-                "desc": f"平均掌握率 {round(avg_m, 1)}% · 完成 {done_cnt}/{total_active} 学习点",
+                "userId": sid,
+                "name": stu.name if stu else sid,
+                "avatar": stu.avatar_char if stu and stu.avatar_char else (stu.name[:1] if stu else "?"),
+                "avatarColor": stu.avatar_color if stu and stu.avatar_color else "indigo",
+                "wrongCount": cnt,
+                "topKp": top_kp,
+                "level": level,
+                # 兼容旧字段
+                "student": stu.name if stu else sid,
+                "issue": "错题数远超班级平均",
+                "desc": f"错题 {cnt} 道（班级平均 {round(avg_wrong, 1)} 道）· 集中于「{top_kp}」",
             })
-    individual.sort(key=lambda x: -float(x["desc"].split("掌握率 ")[1].split("%")[0]) if "掌握率" in x["desc"] else 0)
+    individual.sort(key=lambda x: -x["wrongCount"])
 
     return ok({
         "scope": {"classId": classId, "chapter": chapter or "全部章节", "timeRange": timeRange or "全部"},

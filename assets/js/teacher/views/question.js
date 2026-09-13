@@ -3,10 +3,24 @@
   /* ================================================================
      视图 4 · AI 出题与题库管理
      ================================================================ */
+  
+  // 题型中文映射表
+  const TYPE_LABEL = {
+    single: '单选题',
+    multiple: '多选题',
+    judge: '判断题',
+    fill: '填空题',
+    essay: '简答题',
+    code: '编程题',
+    blank: '填空题',
+    short: '简答题',
+    multi: '多选题',
+  };
+
   const Question = {
     tab: 'gen',
     gen: { kpIds: [], difficulty: 3, count: 6 },
-    bankFilter: 'all', bankKeyword: '', bankPage: 1, bankPageSize: 10,
+    bankFilter: 'all', bankType: '', bankKeyword: '', bankPage: 1, bankPageSize: 10,
     draftFilter: 'all',
     render() {
       const el = U.$('#view-question');
@@ -125,7 +139,7 @@
             <div class="gen-q">
               <div class="gen-q__head">
                 <span class="badge badge--brand">${i + 1}</span>
-                <b>单选题</b>
+                <b>${TYPE_LABEL[q.type] || q.type || '单选题'}</b>
                 <span class="badge badge--outline">${U.esc(q.chapter || '')}</span>
                 <span class="badge ${d.status === 'draft' ? 'badge--ok' : 'badge--danger'}">${d.status === 'draft' ? '校验通过 · 草稿' : '校验未通过'}</span>
                 <span class="badge badge--outline">#${q.id || ''}</span>
@@ -224,7 +238,7 @@
         <div class="gen-q">
           <div class="gen-q__head">
             <span class="badge badge--brand">${i + 1}</span>
-            <b>${q.type === 'judge' ? '判断题' : '单选题'}</b>
+            <b>${TYPE_LABEL[q.type] || q.type || '单选题'}</b>
             <span class="badge badge--outline">难度 ${U.stars(q.difficulty)}</span>
             <span class="badge badge--outline">${U.esc(q.kpPath.join(' › '))}</span>
             ${q.isKey ? '<span class="badge badge--warn">◆ 重难点</span>' : ''}
@@ -340,7 +354,7 @@
       <div class="gen-q" style="margin:0 16px 12px">
         <div class="gen-q__head">
           <span class="badge badge--brand">${i + 1}</span>
-          <b>单选题</b>
+          <b>${TYPE_LABEL[p.type] || p.type || '单选题'}</b>
           <span class="badge badge--outline">${U.esc(d.chapter || '')}</span>
           ${statusBadge}
           <span class="badge badge--outline mono">#${p.id || ''}</span>
@@ -445,11 +459,27 @@
 
     renderBank() {
       const box = U.$('#qBody');
+      // 题库筛选器的题型选项使用中文标签
+      const TYPE_OPTIONS = [
+        ['all', '全部题型'],
+        ['single', '单选题'],
+        ['multiple', '多选题'],
+        ['multi', '多选题'],   // 兼容历史 type 字段
+        ['judge', '判断题'],
+        ['fill', '填空题'],
+        ['blank', '填空题'],   // 兼容历史 type 字段
+        ['essay', '简答题'],
+        ['short', '简答题'],   // 兼容历史 type 字段
+        ['code', '编程题'],
+      ];
       box.innerHTML = `
       <div class="card">
         <div class="card__head">
           <h3>${icon('file')} 题库（${U.esc(state.classId)}）</h3>
           <span class="spacer"></span>
+          <select class="select" id="bankTypeFilter" style="width:120px;margin-right:8px" title="题型筛选">
+            ${TYPE_OPTIONS.map(([v, l]) => `<option value="${v}">${l}</option>`).join('')}
+          </select>
           <div class="search" style="width:180px">${icon('search2')}<input class="input" id="bankSearch" placeholder="题号 / 题干 / 知识点"></div>
           <div class="seg" id="bankSeg">
             <button data-s="all" class="is-active">全部</button><button data-s="pending">待审核</button>
@@ -466,6 +496,13 @@
         U.$$('#bankSeg button', box).forEach(x => x.classList.remove('is-active'));
         b.classList.add('is-active'); this.bankFilter = b.dataset.s; this.bankPage = 1; this.loadBank();
       }));
+      U.$('#bankTypeFilter', box).addEventListener('change', e => {
+        // 中英文题型均可识别：「单选题」等中文标签同样参与过滤
+        const raw = e.target.value;
+        if (raw === 'all') { this.bankType = ''; }
+        else { this.bankType = raw; }
+        this.bankPage = 1; this.loadBank();
+      });
       U.$('#bankSearch', box).addEventListener('input', e => { this.bankKeyword = e.target.value.trim(); this.bankPage = 1; this.loadBank(); });
       U.$('#bankImport', box).addEventListener('click', () => {
         Modal.open({
@@ -492,7 +529,8 @@
 
           <div class="import-panel" data-panel="json" style="display:none">
             <div class="callout callout--brand" style="margin-bottom:14px">${icon('info')}<div>
-              <b>粘贴 JSON 数组</b> — 适合已准备好结构化数据的场景
+              <b>粘贴 JSON 数组</b> — 适合已准备好结构化数据的场景<br/>
+              <b>type 字段取值（中英文均可识别）</b>：<code>single 单选题</code> / <code>multiple/multi 多选题</code> / <code>judge 判断题</code> / <code>fill/blank 填空题</code> / <code>essay/short 简答题</code> / <code>code 编程题</code>
             </div></div>
             <p class="fz-12 t-dim" style="margin-bottom:6px">格式示例：<code>[{"stem":"题干...","type":"single","difficulty":3,"kp_id":"KP1","options":[{"key":"A","text":"选项A"},{"key":"B","text":"选项B","right":true}],"answer":"B"}]</code></p>
             <textarea class="code-edit" id="importJson" style="min-height:280px;font-family:monospace;font-size:12px" placeholder='在此粘贴 JSON 数组...'></textarea>
@@ -577,6 +615,18 @@
                   }
                   if (!Array.isArray(qList)) return Toast.warn('JSON 必须是数组格式');
                   if (qList.length === 0) return Toast.warn('没有有效的题目');
+                  // 中文 → 英文题型映射（兼容教师录入习惯）；空值或未知值原样保留
+                  const TYPE_ALIAS = {
+                    '单选题': 'single', '多选题': 'multiple', '判断题': 'judge',
+                    '填空题': 'fill', '简答题': 'essay', '编程题': 'code',
+                    '单选': 'single', '多选': 'multiple',
+                  };
+                  qList = qList.map(q => {
+                    if (q && typeof q.type === 'string' && TYPE_ALIAS[q.type]) {
+                      return Object.assign({}, q, { type: TYPE_ALIAS[q.type] });
+                    }
+                    return q;
+                  });
                   const body = qList[0].stem !== undefined ? { questions: qList } : qList;
                   Toast.loading('正在导入 ' + body.questions.length + ' 道题目...');
                   const r = await API.question.importBatch(body);
@@ -600,7 +650,7 @@
 
     loadBank() {
       API.question.bank({
-        status: this.bankFilter, keyword: this.bankKeyword,
+        status: this.bankFilter, type: this.bankType, keyword: this.bankKeyword,
         page: this.bankPage, size: this.bankPageSize
       }).then(r => {
         const t = U.$('#bankTbl'); if (!t) return;
@@ -614,7 +664,7 @@
             return `<tr>
               <td class="mono fz-12">${q.qId}</td>
               <td><div class="bank-stem-scroll">${U.esc(q.stem)}</div></td>
-              <td>${q.type}</td><td>${U.esc(q.kp)}</td>
+              <td>${TYPE_LABEL[q.type] || q.type || '—'}</td><td>${U.esc(q.kp)}</td>
               <td>${U.stars(q.difficulty)}</td>
               <td class="t-right num ${q.correctRate === null ? 't-dim' : (q.correctRate < 60 ? 't-danger' : '')}">${q.correctRate === null ? '—' : q.correctRate + '%'}</td>
               <td><span class="badge ${bd}">${lbl}</span>${q.isKey ? ' <span class="badge badge--warn">◆</span>' : ''}</td>

@@ -55,11 +55,17 @@
             ${causes.map(c => {
               const evidence = Array.isArray(c.evidence) ? c.evidence : [];
               const advice = Array.isArray(c.advice) ? c.advice : [];
+              const isInsufficient = c.title === '数据不足，待补充';
+              // 数据不足条目：标题加灰色徽标，level badge 隐藏，避免与真实 AI 结论混淆
+              const levelBadge = isInsufficient
+                ? '<span class="badge badge--insufficient">数据不足</span>'
+                : `<span class="badge ${c.level === 'danger' ? 'badge--danger' : c.level === 'warn' ? 'badge--warn' : 'badge--ok'}">${c.level === 'danger' ? '高优先' : c.level === 'warn' ? '中优先' : '低优先'}</span>`;
+              const rootClass = isInsufficient ? 'cause cause--insufficient' : 'cause';
               return `
-              <div class="cause">
+              <div class="${rootClass}">
                 <div class="cause__main">
                   <div class="row"><h4>${U.esc(c.title)}</h4>
-                    <span class="spacer"></span><span class="badge ${c.level === 'danger' ? 'badge--danger' : c.level === 'warn' ? 'badge--warn' : 'badge--ok'}">${c.level === 'danger' ? '高优先' : c.level === 'warn' ? '中优先' : '低优先'}</span></div>
+                    <span class="spacer"></span>${levelBadge}</div>
                   <p>${U.esc(c.desc || '')}</p>
                   ${evidence.length ? `<div class="fz-12 t-dim" style="margin-bottom:5px">证据</div>
                   <ul class="fz-12" style="margin:0 0 8px;padding-left:16px;color:var(--text-2)">${evidence.map(e => `<li>${U.esc(e)}</li>`).join('')}</ul>` : ''}
@@ -74,21 +80,54 @@
           <div class="card">
             <div class="card__head"><h3>${icon('users')} 共性薄弱（班级层面）</h3></div>
             <div class="card__body stack" style="gap:12px">
-              ${common.map(c => `
-                <div><div class="row fz-13" style="margin-bottom:5px"><b>${U.esc(c.kp)}</b><span class="spacer"></span>
-                  <span class="badge badge--danger">${c.affected} 人 · ${c.ratio}%</span></div>
-                  <div class="fz-12 t-dim">${U.esc(c.desc || '')}</div></div>`).join('') || '<div class="fz-12 t-dim" style="padding:12px">暂无共性薄弱</div>'}
+              ${common.map(c => {
+                // 新字段优先：kpName / wrongRate / wrongCount / level；
+                // 兼容旧字段 kp / ratio / affected
+                const kpName = c.kpName || c.kp || '未知';
+                const rate = (c.wrongRate != null ? c.wrongRate : c.ratio) || 0;
+                const cnt = c.wrongCount != null ? c.wrongCount : (c.affected || 0);
+                const level = c.level || (rate > 80 ? 'danger' : rate >= 50 ? 'warn' : 'ok');
+                const barClass = level === 'danger' ? 'bar--danger' : level === 'warn' ? 'bar--warn' : 'bar--ok';
+                const badgeClass = level === 'danger' ? 'badge--danger' : level === 'warn' ? 'badge--warn' : 'badge--ok';
+                const rateLabel = level === 'danger' ? '高' : level === 'warn' ? '中' : '低';
+                return `
+                <div class="common-weak">
+                  <div class="row fz-13" style="margin-bottom:6px">
+                    <b>${U.esc(kpName)}</b>
+                    <span class="spacer"></span>
+                    <span class="badge ${badgeClass}">${rateLabel} · ${rate}%</span>
+                  </div>
+                  <div class="common-weak__bar"><div class="common-weak__bar-fill ${barClass}" style="width:${Math.min(rate, 100)}%"></div></div>
+                  <div class="fz-12 t-dim" style="margin-top:6px">
+                    ${cnt} 名学生出错${c.startedCount ? ` · 学习过该知识点 ${c.startedCount} 人` : ''}
+                  </div>
+                </div>`;
+              }).join('') || '<div class="fz-12 t-dim" style="padding:12px">暂无共性薄弱</div>'}
             </div>
           </div>
           <div class="card">
             <div class="card__head"><h3>${icon('user')} 个性异常（个体层面）</h3></div>
             <div class="card__body stack" style="gap:12px">
               ${individual.map(s => {
-                const isDanger = (s.issue || '').includes('未登录') || (s.issue || '').includes('滞后');
+                // 新字段：name / avatar / avatarColor / wrongCount / topKp / level；
+                // 兼容旧字段 student
+                const displayName = s.name || s.student || '—';
+                const initial = s.avatar || displayName[0] || '?';
+                const color = s.avatarColor || 'indigo';
+                const wrongCount = s.wrongCount != null ? s.wrongCount : '';
+                const topKp = s.topKp || '—';
+                const level = s.level || (s.issue && s.issue.includes('未登录') ? 'danger' : 'warn');
+                const cardClass = `indiv indiv--${level}`;
                 return `
-                <div class="todo todo__ico--${isDanger ? 'danger' : 'warn'}" style="background:var(--surface-2)">
-                  <div class="todo__ico ${isDanger ? 'todo__ico--danger' : 'todo__ico--warn'}">${icon('user')}</div>
-                  <div class="todo__main"><b>${U.esc(s.student)}</b><span>${U.esc(s.issue || '')} · ${U.esc(s.desc || '')}</span></div>
+                <div class="${cardClass}">
+                  <div class="indiv__avatar indiv__avatar--${color}">${U.esc(initial)}</div>
+                  <div class="indiv__main">
+                    <div class="row"><b>${U.esc(displayName)}</b>
+                      <span class="spacer"></span>
+                      ${wrongCount !== '' ? `<span class="badge badge--danger">错 ${wrongCount} 道</span>` : ''}
+                    </div>
+                    <div class="fz-12 t-dim">集中于「${U.esc(topKp)}」${s.desc ? ' · ' + U.esc(s.desc) : ''}</div>
+                  </div>
                   <button class="btn btn--sm btn--outline" data-uid="${s.userId}">查看</button>
                 </div>`;
               }).join('') || '<div class="fz-12 t-dim" style="padding:12px">暂无个性异常</div>'}
