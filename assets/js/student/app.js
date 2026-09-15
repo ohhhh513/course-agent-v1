@@ -11,6 +11,68 @@
     U.$$('.nav-item').forEach(n => n.insertAdjacentHTML('afterbegin', icon(n.dataset.icon, 'nav-item__icon')));
     U.$('#msgBtn').innerHTML = icon('message');
     initTopbar();
+
+    /* ================================================================
+       课程切换器（多课程 · Step 6）
+       数据源 = GET /course/my；切换即 setActiveCourse + 重绘当前视图
+       ================================================================ */
+    const courseSel = U.$('#courseSel');
+    function refreshCourseSel(preferId) {
+      API.course.my().then(list => {
+        const courses = Array.isArray(list) ? list : [];
+        courseSel.innerHTML = '';
+        if (!courses.length) {
+          const o = document.createElement('option');
+          o.value = ''; o.textContent = '未加入课程 · 点 + 加入';
+          courseSel.appendChild(o);
+          return;
+        }
+        courses.forEach(c => {
+          const o = document.createElement('option');
+          o.value = c.courseId; o.textContent = c.name;
+          courseSel.appendChild(o);
+        });
+        const cur = API.config.activeCourseId;
+        const target = preferId || (courses.some(c => c.courseId === cur) ? cur : courses[0].courseId);
+        API.setActiveCourse(target);
+        courseSel.value = target;
+      }).catch(() => {});
+    }
+    refreshCourseSel();
+    courseSel.addEventListener('change', () => {
+      if (!courseSel.value) return;
+      API.setActiveCourse(courseSel.value);
+      Toast.info('已切换课程', courseSel.options[courseSel.selectedIndex].text);
+      Router.rerender();
+    });
+
+    /* —— 凭邀请码加入课程 —— */
+    const joinBtn = U.$('#joinCourseBtn');
+    if (joinBtn) {
+      joinBtn.innerHTML = icon('plus');
+      joinBtn.title = '加入新课程';
+      joinBtn.addEventListener('click', () => {
+        Modal.open({
+          title: '加入新课程',
+          body: `<div class="stack" style="gap:14px">
+            <label class="stack" style="gap:4px"><span class="fz-12 t-dim">课程邀请码</span><input class="input" id="jcCode" placeholder="向授课教师索取，8 位字符" style="text-transform:uppercase"></label>
+          </div>`,
+          footer: `<button class="btn btn--primary" id="jcGo" type="button">加入</button><button class="btn" data-close>取消</button>`,
+          onMount(ov, close) {
+            U.$('#jcGo', ov).addEventListener('click', () => {
+              const code = U.$('#jcCode', ov).value.trim();
+              if (!code) { Toast.warn('请输入邀请码'); return; }
+              API.course.join({ inviteCode: code }).then(r => {
+                close();
+                Toast.ok(r.alreadyJoined ? '你已在该课程中' : '加入成功', r.name);
+                refreshCourseSel(r.courseId);
+                Router.rerender();
+              }).catch(err => Toast.error('加入失败', err && err.message || ''));
+            });
+          }
+        });
+      });
+    }
   
     /* ================================================================
        顶栏：更新时间 + 消息

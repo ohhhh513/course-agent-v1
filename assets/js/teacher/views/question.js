@@ -454,6 +454,7 @@
           <div class="seg" id="bankSeg">
             <button data-s="all" class="is-active">全部</button><button data-s="pending">待审核</button>
             <button data-s="approved">已审</button><button data-s="published">已发布</button><button data-s="archived">归档</button></div>
+          <button class="btn btn--sm" id="bankNew">${icon('pencil')} 新建题目</button>
           <button class="btn btn--sm btn--primary" id="bankImport">${icon('upload')} 批量导入</button>
         </div>
         <div class="card__body card__body--flush">
@@ -467,6 +468,7 @@
         b.classList.add('is-active'); this.bankFilter = b.dataset.s; this.bankPage = 1; this.loadBank();
       }));
       U.$('#bankSearch', box).addEventListener('input', e => { this.bankKeyword = e.target.value.trim(); this.bankPage = 1; this.loadBank(); });
+      U.$('#bankNew', box).addEventListener('click', () => openNewQuestionModal(() => this.loadBank()));
       U.$('#bankImport', box).addEventListener('click', () => {
         Modal.open({
           title: '批量导入题目', size: 'wide',
@@ -840,5 +842,195 @@
       }
     });
   }
+
+/* ================= 手动单题表单（含图结构编辑器 + 同款渲染预览） ================= */
+function openNewQuestionModal(onDone) {
+  const PRESETS = [
+    { v: "single", t: "单选题" },
+  ];
+
+  function chOptions(list) {
+    return list.map(c => `<option value="${U.esc(c.id || "")}">${U.esc(c.name)}</option>`).join("");
+  }
+  function kpOptions(list) {
+    return list.map(k => `<option value="${U.esc(k.id)}">${U.esc(k.name)}（${U.esc(k.chapter)}）</option>`).join("");
+  }
+
+  Modal.open({
+    title: "新建题目", size: "wide",
+    body: `
+      <div class="stack" style="gap:12px">
+        <div style="display:grid;grid-template-columns:1fr 110px 110px;gap:10px">
+          <label class="stack" style="gap:4px"><span class="fz-12 t-dim">知识点标签</span>
+            <select class="select" id="nqKp"><option value="">加载中…</option></select></label>
+          <label class="stack" style="gap:4px"><span class="fz-12 t-dim">难度（1~5）</span>
+            <select class="select" id="nqDiff">${[1,2,3,4,5].map(i => `<option ${i===3?"selected":""}>${i}</option>`).join("")}</select></label>
+          <label class="stack" style="gap:4px"><span class="fz-12 t-dim">分值</span>
+            <input class="input" id="nqScore" type="number" min="1" value="5"></label>
+        </div>
+        <label class="stack" style="gap:4px"><span class="fz-12 t-dim">题干</span>
+          <textarea class="input" id="nqStem" style="min-height:64px" placeholder="输入题干…"></textarea></label>
+        <div class="stack" style="gap:6px">
+          <span class="fz-12 t-dim">选项（单选；勾选圆点为正确答案）</span>
+          <div class="stack" style="gap:6px" id="nqOpts">
+            ${["A","B","C","D"].map((k, i) => `
+              <div class="row" style="gap:8px">
+                <input type="radio" name="nqAns" value="${k}" ${i===0?"checked":""} title="设为正确答案">
+                <span class="fz-12 fw-6" style="width:18px">${k}</span>
+                <input class="input" data-opt="${k}" placeholder="选项 ${k} 内容" style="flex:1">
+                <button class="btn btn--xs btn--ghost" data-delopt="${k}" ${i<2?"disabled":""}>删除</button>
+              </div>`).join("")}
+          </div>
+          <button class="btn btn--xs btn--ghost" id="nqAddOpt" style="align-self:flex-start">+ 添加选项</button>
+        </div>
+        <label class="stack" style="gap:4px"><span class="fz-12 t-dim">解析</span>
+          <textarea class="input" id="nqAnalysis" style="min-height:48px" placeholder="答案解析…"></textarea></label>
+        <label class="row" style="gap:6px"><input type="checkbox" id="nqHasFig">
+          <span class="fz-12">本题含图像（手动编辑图像结构，实时预览）</span></label>
+        <div id="nqFigBox" style="display:none" class="stack" style="gap:10px">
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+            <label class="stack" style="gap:4px"><span class="fz-12 t-dim">图型</span>
+              <select class="select" id="nqFigType">
+                <option value="tree">二叉树</option>
+                <option value="adjacency_matrix">邻接矩阵</option>
+                <option value="graph">一般图</option>
+              </select></label>
+            <label class="stack" style="gap:4px" id="nqFigTreeRoot"><span class="fz-12 t-dim">根节点</span>
+              <input class="input" id="nqFigRoot" value="A"></label>
+          </div>
+          <label class="stack" style="gap:4px" id="nqFigNodes"><span class="fz-12 t-dim">节点（逗号分隔）</span>
+            <input class="input" id="nqFigNodesInput" value="A,B,C,D"></label>
+          <label class="stack" style="gap:4px" id="nqFigEdgesTree"><span class="fz-12 t-dim">边（每行：父,子,left|right）</span>
+            <textarea class="input" id="nqFigEdgesTreeInput" style="min-height:56px;font-family:monospace" placeholder="A,B,left\nA,C,right">A,B,left\nA,C,right</textarea></label>
+          <label class="stack" style="gap:4px" id="nqFigEdgesGraph" style="display:none"><span class="fz-12 t-dim">边（每行：起点,终点,权重）</span>
+            <textarea class="input" id="nqFigEdgesGraphInput" style="min-height:56px;font-family:monospace" placeholder="A,B,4\nB,C,2"></textarea></label>
+          <div id="nqFigMatrix" style="overflow:auto"></div>
+          <div class="stack" style="gap:6px">
+            <span class="fz-12 t-dim">预览（题库同款渲染）</span>
+            <div style="border:1px solid var(--border);border-radius:8px;padding:8px;background:var(--bg-1)"><div id="nqFigPrev" style="min-height:120px"></div></div>
+          </div>
+        </div>
+      </div>`,
+    footer: `<button class="btn" data-close>取消</button>
+      <button class="btn btn--primary" id="nqSubmit">${icon("check")} 保存进题库</button>`,
+    onMount(ov, close) {
+      const $ = (sel) => ov.querySelector(sel);
+
+      // 知识点下拉（按当前课程）
+      API.teacher.structure().then(d => {
+        const sel = $("#nqKp");
+        if (!sel) return;
+        sel.innerHTML = (d.chapters || []).flatMap(c => c.kps.map(k => `<option value="${U.esc(k.id)}">${U.esc(k.name)}（${U.esc(c.name)}）</option>`)).join("") || '<option value="">当前课程暂无知识点</option>';
+      }).catch(() => {});
+
+      // 选项增删
+      ov.querySelector("#nqAddOpt").addEventListener("click", () => {
+        const box = $("#nqOpts");
+        const used = [...box.querySelectorAll("[data-opt]")].map(x => x.dataset.opt);
+        const next = "ABCDEFGH".find(k => !used.includes(k));
+        if (!next) { Toast.warn("最多 8 个选项"); return; }
+        const div = document.createElement("div");
+        div.className = "row"; div.style.cssText = "gap:8px";
+        div.innerHTML = `<input type="radio" name="nqAns" value="${next}"><span class="fz-12 fw-6" style="width:18px">${next}</span>
+          <input class="input" data-opt="${next}" placeholder="选项 ${next} 内容" style="flex:1">
+          <button class="btn btn--xs btn--ghost" data-delopt="${next}">删除</button>`;
+        box.appendChild(div);
+        div.querySelector("[data-delopt]").addEventListener("click", () => div.remove());
+      });
+      ov.addEventListener("click", e => {
+        const d = e.target.closest("[data-delopt]");
+        if (d && !d.disabled) d.closest(".row").remove();
+      });
+
+      // 图编辑器
+      const figBox = $("#nqFigBox");
+      $("#nqHasFig").addEventListener("change", e => {
+        figBox.style.display = e.target.checked ? "" : "none";
+        renderPreview();
+      });
+      const figType = () => $("#nqFigType").value;
+      const nodesList = () => ($("#nqFigNodesInput").value || "").split(/[,，\s]+/).map(s => s.trim()).filter(Boolean);
+      function syncFigUI() {
+        const t = figType();
+        $("#nqFigTreeRoot").style.display = t === "tree" ? "" : "none";
+        $("#nqFigEdgesTree").style.display = t === "tree" ? "" : "none";
+        $("#nqFigEdgesGraph").style.display = t === "graph" ? "" : "none";
+        const mWrap = $("#nqFigMatrix");
+        if (t === "adjacency_matrix") {
+          const nodes = nodesList();
+          mWrap.innerHTML = `<table class="ds-matrix"><thead><tr><th></th>${nodes.map(n => `<th>${U.esc(n)}</th>`).join("")}</tr></thead><tbody>${
+            nodes.map((rn, i) => `<tr><th>${U.esc(rn)}</th>${nodes.map((cn, j) =>
+              `<td><input class="input" data-mr="${i}" data-mc="${j}" style="width:52px;padding:2px 4px" value="0"></td>`).join("")}</tr>`).join("")}</tbody></table>`;
+          mWrap.style.display = "";
+        } else {
+          mWrap.style.display = "none";
+        }
+        renderPreview();
+      }
+      function buildSpec() {
+        const t = figType();
+        const nodes = nodesList();
+        if (!nodes.length) return null;
+        if (t === "tree") {
+          const root = ($("#nqFigRoot").value || nodes[0]).trim();
+          const edges = ($("#nqFigEdgesTreeInput").value || "").split("\n").map(s => s.trim()).filter(Boolean).map(line => {
+            const [from, to, position] = line.split(/[,，]/).map(x => x.trim());
+            return { from, to, position: position === "right" ? "right" : "left" };
+          }).filter(e => e.from && e.to);
+          const all = [...new Set([root, ...nodes, ...edges.flatMap(e => [e.from, e.to])])];
+          return { type: "tree", root, nodes: all, edges };
+        }
+        if (t === "adjacency_matrix") {
+          const m = nodes.map((_, i) => nodes.map((__, j) => {
+            const inp = ov.querySelector(`[data-mr="${i}"][data-mc="${j}"]`);
+            return inp ? (parseFloat(inp.value) || 0) : 0;
+          }));
+          return { type: "adjacency_matrix", nodes, matrix: m };
+        }
+        const edges = ($("#nqFigEdgesGraphInput").value || "").split("\n").map(s => s.trim()).filter(Boolean).map(line => {
+          const [from, to, w] = line.split(/[,，]/).map(x => x.trim());
+          return { from, to, w: w || "" };
+        }).filter(e => e.from && e.to);
+        return { type: "graph", nodes, edges, directed: true };
+      }
+      function renderPreview() {
+        if (figBox.style.display === "none" || !window.DsFigure) return;
+        const spec = buildSpec();
+        const prev = $("#nqFigPrev");
+        if (spec) DsFigure.mount(prev, spec); else prev.innerHTML = "";
+      }
+      ["#nqFigType", "#nqFigNodesInput", "#nqFigEdgesTreeInput", "#nqFigEdgesGraphInput"].forEach(sel =>
+        ov.addEventListener("input", e => { if (e.target.matches(sel)) syncFigUI(); }));
+      syncFigUI();
+
+      // 提交
+      ov.querySelector("#nqSubmit").addEventListener("click", () => {
+        const kp = $("#nqKp").value;
+        const stem = $("#nqStem").value.trim();
+        if (!kp) { Toast.warn("请选择知识点标签"); return; }
+        if (!stem) { Toast.warn("请输入题干"); return; }
+        const opts = [...ov.querySelectorAll("[data-opt]")].map(x => ({ key: x.dataset.opt, text: x.value.trim() }));
+        if (opts.some(o => !o.text)) { Toast.warn("选项内容不能为空"); return; }
+        const answer = (ov.querySelector("input[name=nqAns]:checked") || {}).value || "";
+        const q = {
+          type: "single", difficulty: parseInt($("#nqDiff").value, 10) || 3,
+          score: parseInt($("#nqScore").value, 10) || 5, status: "published",
+          stem, options: opts, answer,
+          analysis: $("#nqAnalysis").value.trim(), kp_id: kp,
+        };
+        if ($("#nqHasFig").checked) {
+          const spec = buildSpec();
+          if (!spec) { Toast.warn("图像结构不完整：请填写节点"); return; }
+          q.figure_json = { graph: spec, has_image: true };
+        }
+        API.teacher.importQuestions({ questions: [q] }).then(() => {
+          close();
+          Toast.ok("题目已保存进题库", "可在题库列表查看");
+          if (onDone) onDone();
+        }).catch(err => Toast.error("保存失败", err && err.message || ""));
+      });
+    }
+  });
+}
 
 Router.register('question', { title: 'AI 出题与题库管理', mount: () => Question.render() });

@@ -38,9 +38,10 @@ def retrieve_chunks(
     source_types: list[str] | None = None,
     top_k: int = 6,
     store: ChunkStore | None = None,
+    course_id: str | None = None,
 ) -> list[dict]:
     store = store or ChunkStore()
-    records = store.load_filtered(course_chapter, section_prefix, source_types)
+    records = store.load_filtered(course_chapter, section_prefix, source_types, course_id=course_id)
     if not records:
         return []
     query_vec = embed_texts([query])[0]

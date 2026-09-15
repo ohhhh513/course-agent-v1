@@ -16,6 +16,7 @@ from ..models.user import User
 from ..models.intervention import TeacherClassDashboard
 from ..models.course import Resource
 from ..middleware.auth import get_current_user
+from ..dependencies import get_current_course_id
 from ..schemas.common import ok, fail, list_response
 from ..utils import loads, fmt_dt
 from sqlalchemy import func
@@ -133,6 +134,7 @@ def create_session(
     req: CreateSessionReq,
     db: Session = Depends(get_db),
     user=Depends(get_current_user),
+    course_id: str = Depends(get_current_course_id),
 ):
     """创建练习会话（组卷）"""
     q = db.query(Question).filter(Question.status == "published")
@@ -172,6 +174,7 @@ def create_session(
     session = PracticeSession(
         session_id=session_id,
         user_id=user.user_id,
+        course_id=course_id,
         mode=req.mode,
         total=count,
         status="running",
@@ -315,6 +318,7 @@ def submit_answer(
         from ..services.alert_detector import detect_alerts
         detect_alerts(db, [user])
     except Exception as e:
+        db.rollback()   # 检测失败必须回滚，否则会话毒化导致后续判分/统计查询 500
         print(f"[alert-detect] 作答后刷新跳过（{e}）")
 
     # 动态统计：该题真实班级正确率、平均用时

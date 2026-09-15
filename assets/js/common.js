@@ -289,6 +289,11 @@ const Router = {
     if (cfg.mount && !cfg._mounted) { cfg.mount(params); cfg._mounted = true; }
     else if (cfg.update) cfg.update(params);
   },
+  rerender() {
+    /* 重新执行当前视图的 mount（各视图 mount 均为全量重绘）——课程切换后刷新数据用 */
+    const cfg = this.views[this.current];
+    if (cfg && cfg.mount) cfg.mount();
+  },
   init(def) {
     U.$$('.nav-item').forEach(n => n.addEventListener('click', () => this.go(n.dataset.view)));
     const h = location.hash.replace('#', '');

@@ -113,7 +113,7 @@ def detect_alerts(db: Session, users=None) -> dict:
                 if row is None:
                     db.add(Alert(
                         alert_id="AL" + uuid.uuid4().hex[:10], course_id=COURSE_ID,
-                        user_id=u.user_id, class_id=cmap.get(u.class_name, ""),
+                        user_id=u.user_id, class_id=cmap.get(u.class_name) or None,
                         level=level, type=ALERT_TYPE, title=title, desc=desc,
                         trigger=TRIGGER, kp_id=kp, kp_name=name,
                         detail_json=detail, suggestions_json=sugs, status="open",

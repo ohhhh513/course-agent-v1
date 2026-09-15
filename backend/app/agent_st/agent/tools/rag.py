@@ -51,6 +51,7 @@ def retrieve_chunks(
         section_prefix=prefix,
         source_types=types,
         top_k=top_k or settings.retrieve_top_k,
+        course_id=(ctx.extra or {}).get("courseId"),
     )
     this_call_empty = (not hits) or hits[0]["score"] < settings.min_retrieve_score
 

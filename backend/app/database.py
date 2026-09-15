@@ -35,43 +35,15 @@ def get_db():
 
 
 def init_db():
-    """初始化数据库表"""
+    """初始化数据库表。
+
+    数据库结构的唯一事实来源是 models/ 的模型定义（面向删库重建）：
+    create_all 会按当前模型建出完整结构。旧库文件的增量迁移体系
+    （原 _migrate/_add_col 兼容层）已按 2026-09-11 约定移除——
+    结构变更 = 改模型 + 删库重建；删除数据请先备份。
+    """
     from .models import user, course, graph, question, practice, ai, alert, intervention, checkin
     from .models import agent_st  # noqa: F401  智能出题草稿表
+    from .models import user_course  # noqa: F401  用户-课程关联（多课程数据地基）
     Base.metadata.create_all(bind=engine)
-    _migrate()
 
-
-def _add_col(conn, table: str, col: str, ddl: str) -> None:
-    """给已存在的表补列（SQLite 无 ADD COLUMN IF NOT EXISTS，用 PRAGMA 守卫，幂等）"""
-    from sqlalchemy import text
-    cols = [r[1] for r in conn.execute(text(f"PRAGMA table_info({table})")).fetchall()]
-    if col not in cols:
-        conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} {ddl}"))
-
-
-def _normalize_resource_category(conn) -> None:
-    """资源分类规范化（幂等）。
-
-    语义：挂到具体知识点（kp_id 非空）→ knowledge（知识点挂载）；
-          章节级/教材（kp_id 为空）→ other（课外/教材）。
-    修复历史库/旧交付备份中 category 曾被写死为 other 的问题，保证各环境启动后一致。
-    """
-    from sqlalchemy import text
-    conn.execute(text(
-        "UPDATE resources SET category = CASE "
-        "WHEN kp_id IS NOT NULL AND kp_id <> '' THEN 'knowledge' ELSE 'other' END"
-    ))
-
-
-def _migrate():
-    """agent_st 集成的列迁移：兼容已有旧库（create_all 不会给旧表加列）"""
-    with engine.connect() as conn:
-        _add_col(conn, "chat_sessions", "flow_id", "VARCHAR(16) DEFAULT 'explain'")
-        _add_col(conn, "chat_messages", "tool_log", "TEXT DEFAULT '[]'")
-        _add_col(conn, "chat_messages", "draft_id", "VARCHAR(32) DEFAULT ''")
-        _add_col(conn, "questions", "figure_json", "TEXT")
-        _add_col(conn, "questions", "has_image", "BOOLEAN DEFAULT 0")
-        _add_col(conn, "answer_records", "mastered", "BOOLEAN DEFAULT 0")
-        _normalize_resource_category(conn)
-        conn.commit()

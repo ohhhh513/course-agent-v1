@@ -19,6 +19,9 @@ class Course(Base):
     knowledge_points = Column(Integer, default=0)
     resources = Column(Integer, default=0)
     questions = Column(Integer, default=0)
+    # 多课程扩展（旧库由 database._migrate 补列）
+    invite_code = Column(String(16), default="")            # 学生凭码入课
+    owner_id = Column(String(64), default="")               # 建课教师 user_id
 
 
 class ResourceProgress(Base):
