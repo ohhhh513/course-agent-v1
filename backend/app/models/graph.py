@@ -23,6 +23,9 @@ class GraphNode(Base):
     difficulty = Column(Integer, default=2)            # 1~5
     is_key = Column(Boolean, default=False)
     hours = Column(Integer, default=0)
+    # 教师拓扑编辑器画布坐标（空=尚未布点，需教师更新图谱）
+    pos_x = Column(Float, nullable=True)
+    pos_y = Column(Float, nullable=True)
 
     # 问题图谱特有
     level = Column(Integer, default=0)

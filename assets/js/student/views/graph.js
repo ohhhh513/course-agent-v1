@@ -14,8 +14,9 @@
     render() {
       const el = U.$('#view-graph');
       const mt = this.meta[this.type];
-      el.innerHTML = `
-      <div class="card" style="margin-bottom:16px">
+      const isKnowledge = this.type === 'knowledge';
+
+      const seg = `
         <div class="graph-toolbar">
           <div class="seg" id="graphSeg">
             <button data-t="knowledge" class="${this.type === 'knowledge' ? 'is-active' : ''}">知识图谱</button>
@@ -24,14 +25,47 @@
           </div>
           <div class="divider divider--v"></div>
           <span class="fz-12 t-dim">${mt.name}</span>
+          ${!isKnowledge ? '<span class="badge badge--warn">开发中</span>' : ''}
           <span class="spacer"></span>
-          <button class="btn btn--sm" id="graphReset">${icon('refresh')} 重置视图</button>
-        </div>
+          ${isKnowledge ? `<button class="btn btn--sm" id="graphReset">${icon('refresh')} 重置视图</button>` : ''}
+        </div>`;
+
+      if (!isKnowledge) {
+        const title = this.type === 'problem' ? '问题图谱' : '目标图谱';
+        el.innerHTML = `
+        <div class="card" style="margin-bottom:16px">${seg}</div>
+        <div class="card">
+          <div class="card__head"><h3>${icon(this.type === 'problem' ? 'flask' : 'award')} ${title}</h3>
+            <span class="badge badge--warn">开发中</span></div>
+          <div class="card__body">
+            <div class="empty" style="padding:56px 24px;text-align:center">
+              <div style="font-size:42px;margin-bottom:12px">🚧</div>
+              <b style="font-size:16px;display:block;margin-bottom:8px">${title} · 正在开发</b>
+              <p style="color:var(--text-3);font-size:13px;line-height:1.8;max-width:440px;margin:0 auto">
+                ${this.type === 'problem'
+                  ? '问题驱动的学习框架将按课程真实结构逐步开放，当前不再展示演示节点。'
+                  : 'OBE 目标达成图谱将与课程知识点绑定后开放，当前不再展示演示节点。'}
+              </p>
+              <p class="fz-12 t-dim" style="margin-top:18px">
+                请先使用 <b>知识图谱</b>（教师端已可按目录编排，学生端实时同步）
+              </p>
+            </div>
+          </div>
+        </div>`;
+        U.$$('#graphSeg button', el).forEach(b => b.addEventListener('click', () => {
+          this.type = b.dataset.t; this.render();
+        }));
+        return;
+      }
+
+      el.innerHTML = `
+      <div class="card" style="margin-bottom:16px">
+        ${seg}
         <div class="graph-box" id="graphBox">
           <div class="graph-hint">滚轮缩放 · 拖拽平移 · 点击节点查看详情</div>
           <div class="graph-legend">
             ${mt.legend.map(([n, c]) => `<div class="row"><i class="lg-line" style="border-color:${c}"></i><span>${n}</span></div>`).join('')}
-            ${this.type === 'knowledge' ? `<div class="row" style="margin-top:2px"><i class="lg-dot" style="background:var(--warn)"></i><span>◆ 边框 = 重难点</span></div>` : ''}
+            <div class="row" style="margin-top:2px"><i class="lg-dot" style="background:var(--warn)"></i><span>◆ 边框 = 重难点</span></div>
           </div>
         </div>
       </div>

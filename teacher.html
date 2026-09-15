@@ -34,9 +34,9 @@
         <button class="nav-item" data-view="report" data-icon="file" data-page-node-id="55PsATW5kG1T67mbU8vNdl"><span class="nav-item__text" data-page-node-id="9QrXV1Bn6J9saoNMXz9R6c">学情分析报告</span></button>
       </div>
       <div class="nav-group" data-page-node-id="x2BYJMWT83D6IJq98CPPRq">
-        <div class="nav-group__label" data-page-node-id="ZbXrVbCngL4elgsxZl0mR1">课程资源</div>
-        <button class="nav-item" data-view="structure" data-icon="layers" data-page-node-id="structureNav"><span class="nav-item__text">课程结构</span></button>
-        <button class="nav-item" data-view="resource" data-icon="folder" data-page-node-id="2AlKWQdoasrxJqle2OA0xy"><span class="nav-item__text" data-page-node-id="7lAcH3flSvpYUHbraIHupF">资源管理</span></button>
+        <div class="nav-group__label" data-page-node-id="ZbXrVbCngL4elgsxZl0mR1">课程</div>
+        <button class="nav-item" data-view="structure" data-icon="folder" data-page-node-id="structureNav"><span class="nav-item__text">课程目录与资源</span></button>
+        <button class="nav-item" data-view="graph-edit" data-icon="route" data-page-node-id="graphEditNav"><span class="nav-item__text">知识图谱编排</span></button>
       </div>
     </nav>
 
@@ -57,6 +57,7 @@
       <div class="topbar__actions" data-page-node-id="u6TBOOsXJll34Bj8boNcBi">
         <select class="select select--sm" id="courseSel" title="切换课程"></select>
         <button class="btn btn--ghost btn--sm" id="newCourseBtn" title="新建课程" data-page-node-id="j2rqC18lrfYoOol1RyA3aZ"></button>
+        <button class="btn btn--ghost btn--sm" id="inviteCodeBtn" title="查看当前课程邀请码" type="button">邀请码</button>
         <span class="badge badge--outline nowrap" id="updateTag" data-page-node-id="WIYjfUNHvMc4exBXC2K0lB"></span>
         <button class="btn btn--ghost btn--icon" id="logoutBtn" data-page-node-id="NLB59FsZWO0ibeCXibsk8D"></button>
       </div>
@@ -71,6 +72,7 @@
       <section class="view" id="view-report" data-page-node-id="RYCuCuSXaNpJ1Q6LeP6N2w"></section>
       <section class="view" id="view-structure"></section>
       <section class="view" id="view-resource" data-page-node-id="kx54c4P4esEMOzNJpOPJih"></section>
+      <section class="view" id="view-graph-edit"></section>
     </main>
   </div>
 </div>
@@ -89,8 +91,8 @@
     <script src="assets/js/teacher/views/question.js"></script>
     <script src="assets/js/teacher/views/intervention.js"></script>
     <script src="assets/js/teacher/views/report.js"></script>
-    <script src="assets/js/teacher/views/resource.js"></script>
     <script src="assets/js/teacher/views/structure.js"></script>
+    <script src="assets/js/teacher/views/graph-edit.js"></script>
     <script src="assets/js/teacher/start.js"></script>
 </body>
 </html>

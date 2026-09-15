@@ -13,7 +13,7 @@
 
 /* —— 全局共享状态（供各视图模块引用） —— */
 const courseSel = U.$('#courseSel');
-const state = { classId: 'CL2301' };   // 班级维度：旧学情接口暂用，随班级体系后续演进
+const state = { classId: '' };   // 已改为课程上下文；classId 仅兼容旧参数，不再写死演示班
 
 /* —— 视图重渲染注册表（课程切换时复用） —— */
 const ViewFns = {
@@ -23,8 +23,9 @@ const ViewFns = {
   question: () => Question.render(),
   intervention: () => Intervention.render(),
   report: () => Report.render(),
-  resource: () => TeacherResource.render(),
+  resource: () => TeacherStructure.render(),
   structure: () => TeacherStructure.render(),
+  'graph-edit': () => TeacherGraphEdit.render(),
 };
 
 /* —— 路由守卫（需提前返回，独立 IIFE） —— */
@@ -45,6 +46,7 @@ function refreshCourseSel(preferId) {
       const o = document.createElement('option');
       o.value = ''; o.textContent = '暂无课程 · 点 + 新建';
       courseSel.appendChild(o);
+      API.setActiveCourse('');
       return;
     }
     courses.forEach(c => {
@@ -110,3 +112,31 @@ courseSel.addEventListener('change', () => {
   Toast.info('已切换课程', courseSel.options[courseSel.selectedIndex].text);
   if (ViewFns[Router.current]) ViewFns[Router.current]();
 });
+
+/* —— 查看当前课程邀请码（GET /course/my 中教师角色带 inviteCode） —— */
+(function () {
+  const btn = U.$('#inviteCodeBtn');
+  if (!btn) return;
+  btn.addEventListener('click', () => {
+    const cid = API.config.activeCourseId || courseSel.value;
+    if (!cid) { Toast.warn('请先选择或创建课程'); return; }
+    API.course.my().then(list => {
+      const c = (list || []).find(x => x.courseId === cid);
+      if (!c || !c.inviteCode) {
+        Toast.warn('当前课程无邀请码', '仅课程教师可查看自己创建的课的邀请码');
+        return;
+      }
+      Modal.open({
+        title: '课程邀请码',
+        body: `<div class="stack" style="gap:8px;text-align:center;padding:12px 0">
+          <div class="fz-14 fw-6">${U.esc(c.name)}</div>
+          <div class="fz-12 t-dim">把邀请码分享给学生，他们凭码加入：</div>
+          <div style="font-size:28px;font-weight:700;letter-spacing:6px;color:var(--brand)">${U.esc(c.inviteCode)}</div>
+          <div class="fz-11 t-dim">课程 ID：${U.esc(c.courseId)}</div>
+          <p class="fz-11 t-dim" style="margin-top:8px">创建课程成功弹窗里也会展示一次；之后随时点顶栏「邀请码」查看。</p>
+        </div>`,
+        footer: `<button class="btn btn--primary" data-close>知道了</button>`,
+      });
+    }).catch(err => Toast.error('获取失败', (err && err.message) || ''));
+  });
+})();

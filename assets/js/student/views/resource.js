@@ -64,8 +64,13 @@
         </div>
       </div>`;
 
-      API.graph.learningPath().then(list => {
-        this._allPaths = list;
+      Promise.all([
+        API.graph.learningPath(),
+        API.student.resources({ size: 500 }).catch(() => ({ list: [] })),
+      ]).then(([list, resPayload]) => {
+        this._allPaths = list || [];
+        const resList = (resPayload && resPayload.list) || [];
+        this._mergeResourceChapters(resList);
 
         // 来自学情矩阵的跳转定位
         if (this._pendingKp) {
@@ -214,6 +219,44 @@
           this.load();
         }, 260);
       });
+    },
+
+    /** 把资源上的章/标签并入学习路径分组，保证教师新建章并上传资源后学生端可见 */
+    _mergeResourceChapters(resList) {
+      const paths = this._allPaths || [];
+      const byChapter = new Map();
+      paths.forEach(p => {
+        const ch = p.chapter || '其他章节';
+        if (!byChapter.has(ch)) byChapter.set(ch, []);
+        byChapter.get(ch).push(p);
+      });
+      (resList || []).forEach(r => {
+        const ch = r.chapter || '';
+        if (!ch) return;
+        if (!byChapter.has(ch)) byChapter.set(ch, []);
+        const kids = r.tags || r.kps || [];
+        kids.forEach(t => {
+          const kpId = t.kpId || t.tagId;
+          const name = t.name || kpId;
+          if (!kpId) return;
+          const arr = byChapter.get(ch);
+          if (!arr.some(x => x.kpId === kpId)) {
+            arr.push({ kpId, name, chapter: ch, step: arr.length + 1, status: 'todo', hours: 0, resCount: 0, mastery: 0, progress: 0 });
+          }
+        });
+      });
+      // 章顺序：按第N章编号
+      const orderKey = (name) => {
+        const m = String(name).match(/第\s*(\d+)\s*章/);
+        return m ? parseInt(m[1], 10) : 10000;
+      };
+      const merged = [];
+      [...byChapter.entries()]
+        .sort((a, b) => orderKey(a[0]) - orderKey(b[0]) || String(a[0]).localeCompare(String(b[0])))
+        .forEach(([, items]) => {
+          items.forEach(it => merged.push(it));
+        });
+      this._allPaths = merged;
     },
 
     /* --- 右侧 chips：章节标签 + 点击弹出知识点 --- */
@@ -400,12 +443,18 @@
               .filter(p => (p.chapter || '其他章节') === this.currentChapter)
               .map(p => p.kpId)
           );
-          const hit = list.filter(x => kpIds.has(x.kpId));
+          const hit = list.filter(x =>
+            kpIds.has(x.kpId) ||
+            (x.kpIds || []).some(id => kpIds.has(id)) ||
+            x.chapter === this.currentChapter
+          );
           const chapterNames = new Set(hit.map(x => x.kp).filter(Boolean));
           items = list.filter(x =>
             kpIds.has(x.kpId) ||
+            (x.kpIds || []).some(id => kpIds.has(id)) ||
             chapterNames.has(x.kp) ||
-            (x.kp || '').startsWith(this.currentChapter)
+            (x.kp || '').startsWith(this.currentChapter) ||
+            x.chapter === this.currentChapter
           );
         }
 
@@ -469,7 +518,9 @@
       }
     },
 
-    /* --- 视频：恢复上次播放位置 + 实时保存进度 --- */
+    /* --- 视频：恢复上次播放位置 + 实时保存进度 ---
+       说明：列表/弹窗「时长」= 视频总长（DB 或浏览器 metadata）；
+       「已观看」= 当前播放位置，会随播放增加，不是总时长。 */
     _showVideoModal(res, pr) {
       const self = this;
       const startAt = (pr && pr.position && pr.position > 0) ? pr.position : 0;
@@ -477,11 +528,17 @@
         <video id="rv" src="${U.esc(res.url)}" controls ${startAt ? '' : 'autoplay'} style="width:100%;border-radius:var(--r-md);background:#000;max-height:60vh"></video>
         <div class="kv" style="margin-top:14px">
           <div class="kv__row"><span>资源类型</span><span>教学视频</span></div>
-          <div class="kv__row"><span>时长</span><span>${U.esc(res.duration || '—')}</span></div>
+          <div class="kv__row"><span>视频总时长</span><span id="rvDur">${U.esc(res.duration || '加载中…')}</span></div>
           <div class="kv__row"><span>关联知识点</span><span>${U.esc(res.kp) || '—'}</span></div>
-          <div class="kv__row"><span>续看进度</span><span id="rvProg" class="mono">${startAt ? '定位到 ' + this._fmt(startAt) : '从头播放'}</span></div>
+          <div class="kv__row"><span>已观看进度</span><span id="rvProg" class="mono">${startAt ? '定位到 ' + this._fmt(startAt) : '从头播放'}</span></div>
         </div>`;
       const footer = `<a class="btn btn--primary" href="${U.esc(res.url)}" download>下载视频</a><button class="btn" data-close>关闭</button>`;
+
+      const fmtSec = (s) => {
+        s = Math.max(0, Math.floor(s || 0));
+        const m = Math.floor(s / 60), ss = s % 60;
+        return m + ':' + String(ss).padStart(2, '0');
+      };
 
       const save = (force) => {
         const v = U.$('#rv');
@@ -489,10 +546,9 @@
         const pos = Math.floor(v.currentTime || 0);
         // 避免初始化/seek 时把进度回写成比上次更低的位置
         if (!force && pos <= startAt && !v.ended) return;
-        const dur = v.duration ? Math.floor(v.duration) : 0;
+        const dur = v.duration && isFinite(v.duration) ? Math.floor(v.duration) : 0;
         let progress = dur ? Math.min(100, Math.round(pos / dur * 100)) : 0;
         if (v.ended) progress = 100;
-        // 已完成资源（进度已达 100%）重复观看/回拖/中途暂停时始终标记完成，不回退
         if (completed && !v.ended) progress = 100;
         const pEl = U.$('#rvProg');
         if (pEl) pEl.textContent = (progress >= 100 ? '已完成 ✓' : '已观看 ' + progress + '%') + (pos ? ' · ' + this._fmt(pos) : '');
@@ -506,15 +562,25 @@
         onMount(ov) {
           const v = U.$('#rv');
           if (!v) return;
+          const durEl = U.$('#rvDur');
           v.addEventListener('loadedmetadata', () => {
+            // 用浏览器解析到的真实总时长刷新展示（避免 DB 时长不准）
+            if (durEl && v.duration && isFinite(v.duration)) {
+              durEl.textContent = fmtSec(v.duration);
+            }
             if (startAt && v.duration && startAt < v.duration - 0.5) {
               try { v.currentTime = startAt; } catch (e) {}
             }
-            // 已看完的视频不再自动播放，避免重新从头播放
             if (!completed) {
               v.play().catch(() => {});
             } else {
               try { v.currentTime = v.duration || 0; } catch (e) {}
+            }
+            save(true);
+          });
+          v.addEventListener('durationchange', () => {
+            if (durEl && v.duration && isFinite(v.duration)) {
+              durEl.textContent = fmtSec(v.duration);
             }
           });
           v.addEventListener('timeupdate', () => {
@@ -522,12 +588,10 @@
             if (!v._lastSave || now - v._lastSave > 2000) { v._lastSave = now; save(); }
           });
           v.addEventListener('ended', () => {
-            // 播放结束停在最后一帧，不循环不自动重播
             try { v.currentTime = v.duration || 0; } catch (e) {}
             save(true);
           });
           v.addEventListener('pause', () => { setTimeout(() => save(true), 300); });
-          // 弹窗关闭时再保存一次（捕获阶段，先于 close 执行）
           ov.addEventListener('click', e => {
             if (e.target === ov || e.target.closest('[data-close]')) { save(true); self.load(); }
           }, true);

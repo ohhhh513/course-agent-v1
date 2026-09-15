@@ -1,6 +1,6 @@
 # ============================================================
-#  Course Agent · Git 忽略规则
-#  重点：1.7GB 课程资源、数据库、密钥一律不入仓库
+#  Course Agent · Git 忽略规则（精简上传版）
+#  目标：只提交代码与文档；不提交数据库、密钥、GB 级资源
 # ============================================================
 
 # ---------- Python ----------
@@ -26,43 +26,10 @@ ENV/
 !.env.example
 *.key
 *.pem
+
+# ---------- 编辑器 / 本地工具 ----------
 /.workbuddy
 /.cursor
-
-# ---------- 数据库 ----------
-backend/app/data/*.db
-backend/app/data/*.db-*
-backend/app/data/*.db.*      # 覆盖 .bak.* 与 before_*_20260906 等历史备份命名
-backend/app/data/*.sqlite
-backend/app/data/*.sqlite3
-# 基准快照需要入仓库，供团队恢复/同步（日常 db 改动不入仓库）
-!backend/app/data/course_agent.db.bak.final_delivery
-!backend/app/data/course_agent.db.bak.baseline
-# 教师个人出题草稿 sidecar（个人数据，不入仓库）
-backend/app/data/st/drafts/
-
-# ---------- 向量库 / AI 索引（由 P1 生成，不入仓库） ----------
-backend/app/data/vector/
-backend/app/data/st/*.db
-*.faiss
-*.index
-
-# ---------- 课程资源（1.7GB，禁止入仓库！） ----------
-# 资源实际存放目录：项目根 resources/（由 main.py 挂载为 /resources，URL 与磁盘一一对应）
-resources/
-
-# ---------- 日志 ----------
-*.log
-logs/
-
-# ---------- 测试产物 ----------
-.pytest_cache/
-backend/tests/results/
-backend/tests/*.png
-!backend/tests/e2e_smoke.js
-backend/data/.pytest-tmp-*/
-
-# ---------- 编辑器 / 系统 ----------
 .vscode/
 .idea/
 *.swp
@@ -71,6 +38,59 @@ backend/data/.pytest-tmp-*/
 Thumbs.db
 desktop.ini
 
-# ---------- Node（仅测试用） ----------
+# ---------- 数据库与备份（禁止入库） ----------
+*.db
+*.db-*
+*.db.*
+*.sqlite
+*.sqlite3
+*.db.bak
+*.db.bak.*
+*.bak
+*.backup
+*.tmp
+backend/app/data/vector/
+backend/app/data/st/drafts/
+backend/.tmp_cid
+
+# 向量库
+*.faiss
+*.index
+
+# 垃圾临时文件
+111.txt
+**/111.txt
+
+# ---------- 课程资源（约 10GB，禁止入仓库） ----------
+# 用 resources/* 而非 resources/，否则 .gitkeep 会被一并忽略
+resources/*
+!resources/.gitkeep
+
+# ---------- 日志 / 测试产物 ----------
+*.log
+logs/
+.pytest_cache/
+backend/tests/results/
+backend/tests/*.png
+backend/data/
+**/.pytest-tmp-*/
+
+# ---------- Node（仅本地测试用） ----------
 node_modules/
 package-lock.json
+
+# ---------- 调试页 / 旧维护脚本 / 本地 main 备份（不上传） ----------
+graph_editor_design_*.html
+graph_editor_preview.html
+backend/app/main.py.bak
+backend/app/main.py.backup
+backend/rebuild_clean_db.py
+backend/restore_resources_from_snapshot.py
+backend/migrate_resource_paths.py
+backend/generate_covers.py
+backend/import_st_bank.py
+backend/regression_test.py
+backend/regression_multicourse.py
+backend/e2e_full_flow.py
+backend/e2e_catalog_flow.py
+backend/test_tag_gapfill.py

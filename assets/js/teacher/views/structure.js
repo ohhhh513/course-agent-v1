@@ -1,12 +1,12 @@
 /* ==========================================================================
-   教师端 · 课程结构（章节/知识点 CRUD + 前置关系编辑）
-   多课程重构配套功能：教师在此搭建课程的知识图谱，学生端三大图谱实时同步。
+   教师端 · 课程目录与资源
+   目录 = 章；标签 = KP（来自资源标签并集）。上传挂到章下。
    ========================================================================== */
 'use strict';
 
 const TeacherStructure = {
-  data: null,      // /teacher/structure 响应
-  selected: null,  // 当前选中的 kpId
+  data: null,
+  selectedChapterId: null,
 
   render() {
     const el = U.$('#view-structure');
@@ -19,233 +19,444 @@ const TeacherStructure = {
     });
   },
 
-  /* ---------------- 主视图 ---------------- */
   _paint() {
     const el = U.$('#view-structure');
     const d = this.data;
-    const tree = d.chapters.map(ch => this._chapterHtml(ch)).join('')
-      || R.empty('还没有章节', '点击右上角「新建章节」开始搭建课程结构', 'layers');
+    const chapters = (d.chapters || []).filter(c => {
+      if (!c.virtual) return true;
+      // 保留有资源的「未分章」；丢弃旧版空的「未分类」虚拟壳
+      return (c.resources || []).length > 0;
+    });
+    const tree = chapters.map(ch => this._chapterHtml(ch)).join('')
+      || R.empty('还没有章节目录', '点击上方「新建章节」开始搭建', 'layers');
 
     el.innerHTML = `
-      <div style="display:grid;grid-template-columns:minmax(0,1fr) 380px;gap:16px;align-items:start">
-        <div class="card">
-          <div class="card__head">
-            <h3>${icon('layers')} 章节与知识点</h3><span class="spacer"></span>
-            <button class="btn btn--primary btn--sm" id="stNewCh">${icon('plus')} 新建章节</button>
-          </div>
-          <div class="card__body card__body--tight" id="stTree">${tree}</div>
+      <div class="card" style="height:calc(100vh - var(--topbar-h) - 44px);display:flex;flex-direction:column;min-height:0">
+        <div class="card__head" style="flex-shrink:0">
+          <h3>${icon('folder')} 课程目录与资源</h3>
+          <span class="spacer"></span>
+          <button class="btn btn--primary btn--sm" id="stNewCh" type="button">${icon('plus')} 新建章节</button>
+          <button class="btn btn--outline btn--sm" id="stUpload" type="button">${icon('upload')} 上传到目录</button>
         </div>
-        <div class="card" id="stEditor">
-          <div class="card__head"><h3>${icon('book')} 知识点编辑</h3></div>
-          <div class="card__body">
-            <p class="fz-12 t-dim" style="line-height:1.8">在左侧选择知识点进行编辑。<br>
-            结构变更会自动同步全体学生的学习路径与学生端图谱。<br>
-            删除知识点前，需先将其资源与题目的知识点标签替换或清除。</p>
-          </div>
-        </div>
+        <div class="card__body" id="stTree" style="overflow:auto;min-height:0;flex:1">${tree}</div>
       </div>`;
 
-    // 顶部新建章节
     U.$('#stNewCh').addEventListener('click', () => this._chapterModal(null));
+    U.$('#stUpload').addEventListener('click', () => this.openUploadModal(this.selectedChapterId));
 
-    // 章节级按钮
     U.$$('#stTree [data-act]').forEach(b => b.addEventListener('click', e => {
       e.stopPropagation();
-      const act = b.dataset.act, id = b.dataset.id;
-      if (act === 'newkp') this._kpModal(id);
+      const act = b.dataset.act;
+      const id = b.dataset.id;
       if (act === 'editch') this._chapterModal(id);
       if (act === 'delch') this._deleteChapter(id);
-      if (act === 'adopt') this._adoptVirtual(b.dataset.name);
+      if (act === 'upload') this.openUploadModal(id);
+      if (act === 'newkp') this._kpModal(id);
+      if (act === 'delkp') this._deleteKp(id, b.dataset.name);
+      if (act === 'editres') {
+        const rid = id;
+        const ch = (this.data.chapters || []).find(c =>
+          c.id === (b.dataset.ch || '') || (c.resources || []).some(r => r.resId === rid));
+        const r = ch && (ch.resources || []).find(x => x.resId === rid);
+        if (r) this.openEditResourceModal(r);
+      }
+      if (act === 'delres') this._deleteResource(id);
     }));
-    // KP 行点击
-    U.$$('#stTree [data-kp]').forEach(row => row.addEventListener('click', () => {
-      this.selected = row.dataset.kp;
-      this._paintEditor();
-      U.$$('#stTree [data-kp]').forEach(x => x.classList.toggle('is-active', x === row));
+
+    U.$$('#stTree [data-ch]').forEach(row => row.addEventListener('click', () => {
+      this.selectedChapterId = row.dataset.ch || null;
+      U.$$('#stTree [data-ch]').forEach(x => x.classList.toggle('is-active', x === row));
     }));
-    // 恢复选中
-    if (this.selected) {
-      const row = U.$(`#stTree [data-kp="${this.selected}"]`);
-      if (row) { row.classList.add('is-active'); this._paintEditor(); }
+  },
+
+  /** 章下「本章知识点（标签）」= 该章全部资源标签的并集 */
+  _chapterTagUnion(ch) {
+    const map = new Map();
+    for (const r of (ch.resources || [])) {
+      for (const t of (r.tags || r.kps || [])) {
+        const id = t.kpId || t.tagId || t.id || t.name;
+        if (!id) continue;
+        if (!map.has(id)) map.set(id, t.name || id);
+      }
+      // 兼容仅 kpIds 无 tags 对象
+      for (const kid of (r.kpIds || [])) {
+        if (!map.has(kid)) {
+          const found = ((this.data && this.data.kpOptions) || []).find(k => k.id === kid);
+          map.set(kid, found ? found.name : kid);
+        }
+      }
     }
+    return [...map.entries()].map(([id, name]) => ({ id, name }));
   },
 
   _chapterHtml(ch) {
-    const kps = ch.kps.map(k => `
-      <div class="list__item list__item--clickable" data-kp="${k.id}" style="padding-left:26px">
+    const tags = this._chapterTagUnion(ch);
+    const tagChips = tags.length
+      ? tags.map(t => `<span class="badge badge--outline">${U.esc(t.name)}</span>`).join('')
+      : '<span class="fz-11 t-dim">本章资源尚未打标签</span>';
+
+    const res = (ch.resources || []).map(r => {
+      const rtags = (r.tags || r.kps || []).map(t =>
+        `<span class="badge badge--outline">${U.esc(t.name)}</span>`).join('');
+      return `
+      <div class="list__item" data-res="${r.resId}" style="padding-left:20px">
         <div class="list__main">
-          <b>${U.esc(k.name)}</b>${k.isKey ? ' <span class="badge badge--brand">重点</span>' : ''}
-          <p class="fz-11 t-dim">资源 ${k.resCount} · 题目 ${k.qCount} · 前置 ${k.preCount}</p>
+          <b class="clamp-2">${U.esc(r.title)}</b>
+          <div class="row fz-11 t-dim" style="gap:6px;flex-wrap:wrap;margin-top:2px">
+            <span class="badge badge--outline">${U.esc(r.type)}</span>
+            ${rtags}
+          </div>
         </div>
-        <span class="list__trail fz-11 t-dim">${k.id}</span>
-      </div>`).join('');
-    const chOps = ch.virtual
-      ? `<button class="btn btn--xs btn--ghost" data-act="adopt" data-name="${U.esc(ch.name)}">节点化此章</button>`
-      : `<button class="btn btn--xs btn--ghost" data-act="newkp" data-id="${ch.id}">${icon('plus')} 知识点</button>
-         <button class="btn btn--xs btn--ghost" data-act="editch" data-id="${ch.id}">改名</button>
-         <button class="btn btn--xs btn--ghost" data-act="delch" data-id="${ch.id}">删除</button>`;
-    return `
-      <div style="padding:12px 14px 4px">
-        <b class="fz-13">${U.esc(ch.name)}</b>
-        <span class="fz-11 t-dim">（${ch.kps.length} 个知识点${ch.virtual ? ' · 历史章节' : ''}）</span>
-        <span style="float:right">${chOps}</span>
-      </div>
-      <div class="list" style="padding:0 8px 8px">${kps || '<p class="fz-12 t-dim" style="padding:4px 20px 8px">暂无知识点</p>'}</div>`;
-  },
-
-  /* ---------------- 右侧编辑器 ---------------- */
-  _paintEditor() {
-    const kp = this._findKp(this.selected);
-    const box = U.$('#stEditor');
-    if (!kp) { this.selected = null; return; }
-    const chOptions = this.data.chapters
-      .filter(c => !c.virtual)
-      .map(c => `<option value="${c.id}" ${this._chapterIdOf(kp) === c.id ? 'selected' : ''}>${U.esc(c.name)}</option>`)
-      .join('');
-    box.innerHTML = `
-      <div class="card__head"><h3>${icon('book')} 编辑知识点</h3><span class="spacer"></span>
-        <span class="fz-11 t-dim">${U.esc(kp.id)}</span></div>
-      <div class="card__body stack" style="gap:12px">
-        <label class="stack" style="gap:4px"><span class="fz-12 t-dim">名称</span>
-          <input class="input" id="seName" value="${U.esc(kp.name)}"></label>
-        <div style="display:grid;grid-template-columns:1fr 110px;gap:10px">
-          <label class="stack" style="gap:4px"><span class="fz-12 t-dim">所属章节</span>
-            <select class="select" id="seChapter">${chOptions}</select></label>
-          <label class="stack" style="gap:4px"><span class="fz-12 t-dim">学时（可选）</span>
-            <input class="input" id="seHours" type="number" min="0" value="${kp.hours || 0}"></label>
+        <div class="row" style="gap:4px">
+          <button class="btn btn--xs btn--ghost" data-act="editres" data-id="${r.resId}" data-ch="${U.esc(ch.id || '')}">编辑</button>
+          <button class="btn btn--xs btn--ghost" data-act="delres" data-id="${r.resId}">删</button>
         </div>
-        <label class="row" style="gap:6px"><input type="checkbox" id="seKey" ${kp.isKey ? 'checked' : ''}>
-          <span class="fz-12">标记为重点知识点</span></label>
-        <label class="stack" style="gap:4px"><span class="fz-12 t-dim">前置知识点（按住 Ctrl 多选；保存时自动环检测）</span>
-          <select class="select" id="sePre" multiple size="6"></select></label>
-        <div class="row" style="gap:8px">
-          <button class="btn btn--primary btn--sm" id="seSave">${icon('check')} 保存全部</button>
-          <span class="spacer"></span>
-          <button class="btn btn--danger btn--sm" id="seDel" ${kp.resCount + kp.qCount > 0 ? 'disabled title="请先将该知识点的资源与题目标签替换或清除"' : ''}>${icon('x')} 删除</button>
-        </div>
-        <p class="fz-11 t-dim" id="seDelHint">${kp.resCount + kp.qCount > 0 ? `该知识点下有 ${kp.resCount} 个资源、${kp.qCount} 道题目：请先将对应资源的知识点标签替换或清除，并处理相关题目后，才可删除。` : ''}</p>
       </div>`;
+    }).join('') || `<p class="fz-11 t-dim" style="padding:6px 0 8px 20px">目录下暂无资源 · 点「上传」加入</p>`;
 
-    // 前置多选候选
-    API.teacher.kpRelations(kp.id).then(r => {
-      const sel = U.$('#sePre');
-      if (!sel) return;
-      sel.innerHTML = (r.candidates || []).map(c =>
-        `<option value="${c.id}" ${r.preKpIds.includes(c.id) ? 'selected' : ''}>${U.esc(c.name)}（${U.esc(c.chapter)}）</option>`).join('');
-    }).catch(() => {});
-
-    U.$('#seSave').addEventListener('click', () => this._saveKp(kp));
-    U.$('#seDel').addEventListener('click', () => this._deleteKp(kp));
+    return `
+      <div class="list__section" data-ch="${U.esc(ch.id || '')}"
+           style="border:1px solid var(--border);border-radius:10px;padding:10px 12px;margin-bottom:12px">
+        <div class="list__item" style="padding-left:0">
+          <div class="list__main">
+            <b>${U.esc(ch.name)}</b>${ch.virtual ? ' <span class="badge badge--outline">未分章</span>' : ''}
+            <p class="fz-11 t-dim">资源 ${(ch.resources || []).length} · 标签 ${tags.length}</p>
+          </div>
+          <div class="row" style="gap:4px;flex-shrink:0">
+            ${ch.virtual ? '' : `
+              <button class="btn btn--xs btn--outline" data-act="upload" data-id="${U.esc(ch.id)}">上传</button>
+              <button class="btn btn--xs btn--ghost" data-act="newkp" data-id="${U.esc(ch.id)}">+KP</button>
+              <button class="btn btn--xs btn--ghost" data-act="editch" data-id="${U.esc(ch.id)}">改名</button>
+              <button class="btn btn--xs btn--ghost" data-act="delch" data-id="${U.esc(ch.id)}">删</button>`}
+          </div>
+        </div>
+        ${res}
+        <div style="padding:8px 0 0 20px;border-top:1px dashed var(--border);margin-top:6px">
+          <div class="fz-11 t-dim" style="margin-bottom:6px;font-weight:600">
+            本章知识点（标签）
+            ${ch.virtual ? '' : `<button class="btn btn--xs btn--ghost" style="margin-left:6px" data-act="newkp" data-id="${U.esc(ch.id)}">+ 添加</button>`}
+          </div>
+          <div class="chips" style="align-items:center">
+            ${(ch.kps || []).length
+              ? (ch.kps || []).map(k => `
+                <span class="chip" style="display:inline-flex;align-items:center;gap:4px;padding-right:4px">
+                  ${U.esc(k.name)}${k.isKey ? ' ★' : ''}
+                  ${ch.virtual ? '' : `<button type="button" class="btn btn--xs btn--ghost" style="height:20px;padding:0 4px;min-width:20px"
+                    data-act="delkp" data-id="${U.esc(k.id)}" data-name="${U.esc(k.name)}" title="删除知识点">✕</button>`}
+                </span>`).join('')
+              : tagChips}
+          </div>
+          ${(ch.kps || []).length && tags.length
+            ? `<p class="fz-11 t-dim" style="margin-top:6px">资源侧标签并集：${tags.map(t => U.esc(t.name)).join('、')}</p>`
+            : ''}
+        </div>
+      </div>`;
   },
 
-  _findKp(id) {
-    for (const ch of this.data.chapters) {
-      const k = ch.kps.find(x => x.id === id);
-      if (k) return { ...k, _chName: ch.name };
+  /* ---------- 上传到章节目录 ---------- */
+  openUploadModal(chapterId) {
+    const chapters = ((this.data && this.data.chapterOptions) || [])
+      .filter(c => c.id); // 去掉虚拟章
+    if (!chapters.length) {
+      Toast.warn('请先新建章节');
+      return;
     }
-    return null;
-  },
+    const kps = (this.data && this.data.kpOptions) || [];
+    const chOpts = chapters.map(c =>
+      `<option value="${U.esc(c.id)}" ${c.id === chapterId ? 'selected' : ''}>${U.esc(c.name)}</option>`).join('');
 
-  _chapterIdOf(kp) {
-    const ch = this.data.chapters.find(c => c.name === kp._chName || c.name === kp.name);
-    return (ch && !ch.virtual) ? ch.id : '';
-  },
+    const body = `
+      <form id="trUploadForm" class="stack" style="gap:12px">
+        <label class="stack" style="gap:4px"><span class="fz-12 t-dim">目录（章）</span>
+          <select class="select" id="trChapter" required>${chOpts}</select></label>
+        <label class="stack" style="gap:4px"><span class="fz-12 t-dim">选择文件</span>
+          <input class="input" type="file" id="trFile" accept=".mp4,.pdf,.ppt,.pptx,.doc,.docx" required></label>
+        <label class="stack" style="gap:4px"><span class="fz-12 t-dim">资源标题</span>
+          <input class="input" type="text" id="trTitle" placeholder="默认使用文件名"></label>
+        <div class="stack" style="gap:6px">
+          <span class="fz-12 t-dim">KP 标签（可多选；标签=知识点）</span>
+          <div id="trKpTags" class="chips" style="max-height:140px;overflow:auto">
+            ${kps.map(k => `<button type="button" class="chip" data-kp="${U.esc(k.id)}" data-ch="${U.esc(k.chapter || '')}">${U.esc(k.name)}</button>`).join('')
+              || '<span class="fz-11 t-dim">暂无知识点，可在下方输入新建</span>'}
+          </div>
+          <div class="row" style="gap:6px">
+            <input class="input" id="trNewKp" placeholder="新建 KP 标签名，回车加入" style="flex:1">
+            <button type="button" class="btn btn--sm btn--outline" id="trAddKp">新建</button>
+          </div>
+        </div>
+        <p class="fz-12 t-dim">PDF / PPT / TXT / JSON 上传后自动 RAG 切片。</p>
+      </form>`;
 
-  _saveKp(kp) {
-    const name = U.$('#seName').value.trim();
-    if (!name) { Toast.warn('请输入名称'); return; }
-    const chapterId = U.$('#seChapter').value;
-    if (!chapterId) { Toast.warn('请先在左侧将该章「节点化」后再编辑归属'); return; }
-    const preKpIds = [...U.$('#sePre').selectedOptions].map(o => o.value);
-    const btn = U.$('#seSave');
-    btn.disabled = true;
-    API.teacher.updateKp(kp.id, {
-      name, chapterId, hours: parseInt(U.$('#seHours').value, 10) || 0, isKey: U.$('#seKey').checked,
-    }).then(() => API.teacher.saveKpRelations(kp.id, { preKpIds }))
-      .then(() => {
-        Toast.ok('已保存', '学习路径与学生端图谱已同步');
-        this.selected = kp.id;
-        this.render();
-      })
-      .catch(err => { btn.disabled = false; Toast.error('保存失败', err && err.message || ''); });
-  },
-
-  _deleteKp(kp) {
-    if (!confirm(`确定删除知识点「${kp.name}」吗？\n删除后其学习路径、前置关系将一并移除，且不可恢复。`)) return;
-    API.teacher.deleteKp(kp.id).then(() => {
-      Toast.ok('已删除');
-      this.selected = null;
-      this.render();
-    }).catch(err => Toast.error('删除失败', err && err.message || ''));
-  },
-
-  /* ---------------- 弹窗：新建/改名章节 ---------------- */
-  _chapterModal(chId) {
-    const editing = chId ? this.data.chapters.find(c => c.id === chId) : null;
     Modal.open({
-      title: editing ? '修改章节' : '新建章节',
-      body: `
-        <div class="stack" style="gap:14px">
-          <label class="stack" style="gap:4px"><span class="fz-12 t-dim">章节名称</span>
-            <input class="input" id="chName" value="${editing ? U.esc(editing.name) : ''}" placeholder="如：第1章 绪论"></label>
-          <label class="stack" style="gap:4px"><span class="fz-12 t-dim">建议学时（可选）</span>
-            <input class="input" id="chHours" type="number" min="0" value="${editing ? editing.hours || 0 : 0}"></label>
-          ${editing ? '' : '<p class="fz-12 t-dim">章节按创建顺序排列；创建后即可在其下新建知识点。</p>'}
-        </div>`,
-      footer: `<button class="btn btn--primary" id="chGo" type="button">${editing ? '保存' : '创建'}</button><button class="btn" data-close>取消</button>`,
+      title: '上传资源到章节目录',
+      body,
+      footer: `<button class="btn btn--primary" id="trSubmit" type="button">${icon('upload')} 开始上传</button><button class="btn" data-close>取消</button>`,
       onMount(ov, close) {
-        U.$('#chGo', ov).addEventListener('click', () => {
-          const body = { name: U.$('#chName', ov).value.trim(), hours: parseInt(U.$('#chHours', ov).value, 10) || 0 };
-          if (!body.name) { Toast.warn('请输入章节名称'); return; }
-          const call = editing ? API.teacher.updateChapter(editing.id, body) : API.teacher.createChapter(body);
-          call.then(() => { close(); Toast.ok(editing ? '已保存' : '章节已创建'); TeacherStructure.render(); })
-            .catch(err => Toast.error('操作失败', err && err.message || ''));
+        const selected = new Set();
+        const tagBox = U.$('#trKpTags', ov);
+
+        const paint = () => {
+          tagBox.querySelectorAll('[data-kp]').forEach(b => {
+            b.classList.toggle('is-on', selected.has(b.dataset.kp));
+            // 兼容主题：is-active 也可
+            b.classList.toggle('is-active', selected.has(b.dataset.kp));
+          });
+        };
+
+        const selectChapterKps = (chId) => {
+          selected.clear();
+          const ch = chapters.find(c => c.id === chId);
+          if (!ch) { paint(); return; }
+          kps.filter(k => k.chapter === ch.name).forEach(k => selected.add(k.id));
+          paint();
+        };
+
+        tagBox.addEventListener('click', e => {
+          const b = e.target.closest('[data-kp]');
+          if (!b) return;
+          const id = b.dataset.kp;
+          if (selected.has(id)) selected.delete(id); else selected.add(id);
+          paint();
+        });
+
+        U.$('#trChapter', ov).addEventListener('change', () => selectChapterKps(U.$('#trChapter', ov).value));
+        selectChapterKps(U.$('#trChapter', ov).value);
+
+        async function addNewKp() {
+          const name = (U.$('#trNewKp', ov).value || '').trim();
+          if (!name) { Toast.warn('请输入标签名'); return; }
+          try {
+            const r = await API.teacher.createKp({
+              name,
+              chapterId: U.$('#trChapter', ov).value,
+              hours: 0,
+              isKey: false,
+            });
+            const id = (r && (r.id || r.kpId)) || '';
+            const chip = document.createElement('button');
+            chip.type = 'button';
+            chip.className = 'chip';
+            chip.dataset.kp = id;
+            chip.textContent = name;
+            tagBox.appendChild(chip);
+            selected.add(id);
+            paint();
+            U.$('#trNewKp', ov).value = '';
+            // 刷新缓存
+            if (TeacherStructure.data) {
+              TeacherStructure.data.kpOptions = TeacherStructure.data.kpOptions || [];
+              TeacherStructure.data.kpOptions.push({ id, name, chapter: '' });
+            }
+            Toast.ok('已新建 KP 标签', name);
+          } catch (err) {
+            Toast.error('新建失败', (err && err.message) || '');
+          }
+        }
+        U.$('#trAddKp', ov).addEventListener('click', addNewKp);
+        U.$('#trNewKp', ov).addEventListener('keydown', e => {
+          if (e.key === 'Enter') { e.preventDefault(); addNewKp(); }
+        });
+
+        U.$('#trFile', ov).addEventListener('change', e => {
+          const f = e.target.files[0];
+          const titleIn = U.$('#trTitle', ov);
+          if (f && !titleIn.value.trim()) {
+            titleIn.value = f.name.replace(/\.[^.]+$/, '').replace(/[_-]/g, ' ');
+          }
+        });
+
+        U.$('#trSubmit', ov).addEventListener('click', () => {
+          const f = U.$('#trFile', ov).files[0];
+          if (!f) { Toast.error('请先选择文件'); return; }
+          const chId = U.$('#trChapter', ov).value;
+          if (!chId) { Toast.error('请选择章节目录'); return; }
+          const ch = chapters.find(c => c.id === chId);
+          const kpIds = [...selected];
+          const fd = new FormData();
+          fd.append('file', f);
+          fd.append('title', U.$('#trTitle', ov).value.trim());
+          fd.append('chapterId', chId);
+          fd.append('chapter', ch ? ch.name : '');
+          fd.append('kpIds', JSON.stringify(kpIds));
+          fd.append('kp_id', kpIds[0] || '');
+          const kpObj = kpIds[0] ? kps.find(k => k.id === kpIds[0]) : null;
+          fd.append('kp', kpObj ? kpObj.name : '');
+          fd.append('category', kpIds.length ? 'knowledge' : 'other');
+          const btn = U.$('#trSubmit', ov);
+          btn.disabled = true; btn.textContent = '上传中…';
+          API.teacher.uploadResource(fd).then(r => {
+            Toast.ok('已上传到目录', ch ? ch.name : '');
+            close();
+            TeacherStructure.render();
+          }).catch(err => {
+            btn.disabled = false; btn.innerHTML = `${icon('upload')} 开始上传`;
+            Toast.error('上传失败', err && err.message || '');
+          });
         });
       }
     });
   },
 
-  /* ---------------- 弹窗：新建知识点 ---------------- */
-  _kpModal(chapterId) {
-    const ch = this.data.chapters.find(c => c.id === chapterId);
-    Modal.open({
-      title: '新建知识点',
-      body: `
-        <div class="stack" style="gap:14px">
-          <div class="fz-12">所属章节：<b>${U.esc(ch ? ch.name : '')}</b></div>
-          <label class="stack" style="gap:4px"><span class="fz-12 t-dim">知识点名称</span>
-            <input class="input" id="kpName" placeholder="如：时间复杂度分析"></label>
-          <div style="display:grid;grid-template-columns:110px 1fr;gap:10px;align-items:end">
-            <label class="stack" style="gap:4px"><span class="fz-12 t-dim">学时（可选）</span>
-              <input class="input" id="kpHours" type="number" min="0" value="0"></label>
-            <label class="row" style="gap:6px;padding-bottom:8px"><input type="checkbox" id="kpKey">
-              <span class="fz-12">标记为重点知识点</span></label>
+  openEditResourceModal(r) {
+    const chapters = ((this.data && this.data.chapterOptions) || []).filter(c => c.id);
+    const kps = (this.data && this.data.kpOptions) || [];
+    const body = `
+      <form class="stack" style="gap:12px">
+        <label class="stack" style="gap:4px"><span class="fz-12 t-dim">标题</span>
+          <input class="input" id="erTitle" value="${U.esc(r.title || '')}"></label>
+        <label class="stack" style="gap:4px"><span class="fz-12 t-dim">目录（章）</span>
+          <select class="select" id="erChapter">
+            <option value="">未分章</option>
+            ${chapters.map(c => `<option value="${U.esc(c.id)}" ${c.id === r.chapterId ? 'selected' : ''}>${U.esc(c.name)}</option>`).join('')}
+          </select></label>
+        <div class="stack" style="gap:6px">
+          <span class="fz-12 t-dim">KP 标签（点击选中 / 取消）</span>
+          <div id="erKpTags" class="chips" style="max-height:140px;overflow:auto">
+            ${kps.map(k => `<button type="button" class="chip" data-kp="${U.esc(k.id)}">${U.esc(k.name)}</button>`).join('')
+              || '<span class="fz-11 t-dim">当前课程暂无知识点</span>'}
           </div>
-          <p class="fz-12 t-dim">创建后可在右侧编辑其前置知识点；全体学生的学习路径将自动同步。</p>
-        </div>`,
-      footer: `<button class="btn btn--primary" id="kpGo" type="button">创建</button><button class="btn" data-close>取消</button>`,
+          <div class="fz-11 t-dim" style="margin-top:4px">已选标签（点击 ✕ 移除）：</div>
+          <div id="erKpSelected" class="chips" style="min-height:28px"></div>
+        </div>
+      </form>`;
+    Modal.open({
+      title: '编辑资源',
+      body,
+      footer: `<button class="btn btn--primary" id="erSave" type="button">保存</button><button class="btn" data-close>取消</button>`,
       onMount(ov, close) {
-        U.$('#kpGo', ov).addEventListener('click', () => {
-          const name = U.$('#kpName', ov).value.trim();
+        const selected = new Set(r.kpIds || (r.kps || []).map(t => t.kpId));
+        const nameOf = (id) => {
+          const k = kps.find(x => x.id === id);
+          return k ? k.name : id;
+        };
+        const paint = () => {
+          U.$('#erKpTags', ov).querySelectorAll('[data-kp]').forEach(b => {
+            b.classList.toggle('is-on', selected.has(b.dataset.kp));
+            b.classList.toggle('is-active', selected.has(b.dataset.kp));
+          });
+          U.$('#erKpSelected', ov).innerHTML = [...selected].map(id =>
+            `<span class="chip is-on" style="display:inline-flex;align-items:center;gap:4px">
+              ${U.esc(nameOf(id))}
+              <button type="button" class="btn btn--xs btn--ghost" data-off="${U.esc(id)}" style="height:18px;padding:0 4px;min-width:18px">✕</button>
+            </span>`).join('') || '<span class="fz-11 t-dim">（无）</span>';
+          U.$('#erKpSelected', ov).querySelectorAll('[data-off]').forEach(btn => {
+            btn.addEventListener('click', () => {
+              selected.delete(btn.dataset.off);
+              paint();
+            });
+          });
+        };
+        U.$('#erKpTags', ov).addEventListener('click', e => {
+          const b = e.target.closest('[data-kp]');
+          if (!b) return;
+          if (selected.has(b.dataset.kp)) selected.delete(b.dataset.kp); else selected.add(b.dataset.kp);
+          paint();
+        });
+        paint();
+        U.$('#erSave', ov).addEventListener('click', () => {
+          API.teacher.updateResource(r.resId, {
+            title: U.$('#erTitle', ov).value.trim(),
+            chapterId: U.$('#erChapter', ov).value,
+            kpIds: [...selected],
+          }).then(() => {
+            Toast.ok('资源已更新');
+            close();
+            TeacherStructure.render();
+          }).catch(err => Toast.error('保存失败', (err && err.message) || ''));
+        });
+      }
+    });
+  },
+
+  _deleteResource(resId) {
+    if (!confirm('确定删除该资源？学生端不可见，并清理 RAG 切片。')) return;
+    API.teacher.deleteResource(resId).then(() => {
+      Toast.ok('已删除');
+      this.render();
+    }).catch(err => Toast.error('删除失败', (err && err.message) || ''));
+  },
+
+  _chapterModal(id) {
+    const ch = id ? (this.data.chapters || []).find(c => c.id === id) : null;
+    Modal.open({
+      title: ch ? '修改章节' : '新建章节',
+      body: `
+        <label class="stack" style="gap:4px"><span class="fz-12 t-dim">章节名称</span>
+          <input class="input" id="chName" value="${U.esc(ch ? ch.name : '')}" placeholder="如：第1章 绪论"></label>
+        <label class="stack" style="gap:4px"><span class="fz-12 t-dim">学时</span>
+          <input class="input" id="chHours" type="number" min="0" value="${ch ? ch.hours || 0 : 0}"></label>
+        <p class="fz-12 t-dim">创建后即可在目录中向该章上传资源，并为资源打 KP 标签。</p>`,
+      footer: `<button class="btn btn--primary" id="chSave">保存</button><button class="btn" data-close>取消</button>`,
+      onMount(ov, close) {
+        U.$('#chSave', ov).addEventListener('click', () => {
+          const name = U.$('#chName', ov).value.trim();
+          const hours = parseInt(U.$('#chHours', ov).value, 10) || 0;
+          if (!name) { Toast.warn('请输入章节名'); return; }
+          const p = ch
+            ? API.teacher.updateChapter(ch.id, { name, hours })
+            : API.teacher.createChapter({ name, hours });
+          p.then(() => {
+            close();
+            TeacherStructure.render();
+            Toast.ok(ch ? '章节已更新' : '章节已创建', '可点击该章「上传」加入资源');
+          }).catch(err => Toast.error('失败', (err && err.message) || ''));
+        });
+      }
+    });
+  },
+
+  _deleteChapter(id) {
+    if (!confirm('确定删除该章节？章下若仍有知识点将被拒绝。')) return;
+    API.teacher.deleteChapter(id).then(() => {
+      Toast.ok('已删除');
+      this.render();
+    }).catch(err => Toast.error('删除失败', (err && err.message) || ''));
+  },
+
+  /** 新建本章知识点（标签） */
+  _kpModal(chapterId) {
+    const ch = (this.data.chapters || []).find(c => c.id === chapterId);
+    Modal.open({
+      title: '添加知识点标签',
+      body: `
+        <div class="stack" style="gap:12px">
+          <label class="stack" style="gap:4px"><span class="fz-12 t-dim">所属章节</span>
+            <input class="input" value="${U.esc(ch ? ch.name : '')}" disabled></label>
+          <label class="stack" style="gap:4px"><span class="fz-12 t-dim">知识点名称</span>
+            <input class="input" id="kpNewName" placeholder="如：二分查找"></label>
+          <label class="row" style="gap:6px"><input type="checkbox" id="kpNewKey"> <span>标记为重点</span></label>
+        </div>`,
+      footer: `<button class="btn btn--primary" id="kpNewSave">添加</button><button class="btn" data-close>取消</button>`,
+      onMount(ov, close) {
+        U.$('#kpNewSave', ov).addEventListener('click', () => {
+          const name = U.$('#kpNewName', ov).value.trim();
           if (!name) { Toast.warn('请输入知识点名称'); return; }
           API.teacher.createKp({
-            name, chapterId,
-            hours: parseInt(U.$('#kpHours', ov).value, 10) || 0,
-            isKey: U.$('#kpKey', ov).checked,
-          }).then(r => { close(); Toast.ok('知识点已创建', r.id); TeacherStructure.render(); })
-            .catch(err => Toast.error('创建失败', err && err.message || ''));
+            name,
+            chapterId,
+            hours: 0,
+            isKey: U.$('#kpNewKey', ov).checked,
+          }).then(() => {
+            close();
+            TeacherStructure.render();
+            Toast.ok('已添加知识点', name);
+          }).catch(err => Toast.error('添加失败', (err && err.message) || ''));
         });
       }
     });
   },
 
-  /* ---------------- 历史字符串章一键节点化 ---------------- */
-  _adoptVirtual(name) {
-    API.teacher.createChapter({ name }).then(() => {
-      Toast.ok('章节已节点化', name);
+  /** 删除知识点标签（API；有资源/题时后端 400） */
+  _deleteKp(kpId, name) {
+    const label = name || kpId;
+    if (!confirm(`确定删除知识点「${label}」？\n若仍挂有资源或题目，将无法删除。`)) return;
+    API.teacher.deleteKp(kpId).then(() => {
+      Toast.ok('已删除知识点', label);
       this.render();
-    }).catch(err => Toast.error('操作失败', err && err.message || ''));
+    }).catch(err => Toast.error('删除失败', (err && err.message) || ''));
   },
 };
 
-Router.register('structure', { title: '课程结构', sub: '章节 · 知识点 · 前置关系', mount: () => TeacherStructure.render() });
+window.TeacherStructure = TeacherStructure;
+Router.register('structure', { title: '课程目录与资源', mount: () => TeacherStructure.render() });
+Router.register('resource', { title: '课程目录与资源', mount: () => TeacherStructure.render() });

@@ -57,11 +57,12 @@ def _duration_to_seconds(s: str) -> int:
 
 
 def _resolve_class_id(db: Session, user: User) -> str:
+    """无班级时返回空串，避免回退演示班 CL2301"""
     if user.class_name:
         row = db.query(ClassInfo.class_id).filter(ClassInfo.name == user.class_name).first()
         if row:
             return row[0]
-    return "CL2301"
+    return ""
 
 
 # =============================================================================
@@ -443,10 +444,17 @@ def student_resources(
         ).all()
     }
 
+    from ..services.catalog_helpers import resource_kp_ids, resolve_kp_labels, kp_name_map
+    name_map = kp_name_map(db, course_id)
+
     items = [
         {
             "resId": r.res_id, "type": r.type, "title": r.title,
+            "chapterId": getattr(r, "chapter_id", "") or "",
+            "chapter": getattr(r, "chapter", "") or "",
             "kpId": r.kp_id, "kp": r.kp, "category": r.category,
+            "kpIds": resource_kp_ids(r),
+            "tags": resolve_kp_labels(db, resource_kp_ids(r), name_map),
             "source": r.source, "views": r.views,
             "progress": prog_map[r.res_id].progress if r.res_id in prog_map else 0,
             "position": prog_map[r.res_id].position if r.res_id in prog_map else 0,

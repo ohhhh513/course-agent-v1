@@ -11,7 +11,7 @@ window.API = (function () {
     mode: 'http',                 // 'mock' | 'http'
     baseURL: '/api/v1',
     token: 'Bearer <JWT>',
-    activeCourseId: 'C2026DS001', // 当前课程上下文（随请求头 X-Course-Id 发送，后端按它做课程隔离）
+    activeCourseId: '', // 当前课程上下文；空=未选课（不发 X-Course-Id，后端取用户第一门课或报错）
     latency: [120, 380]           // mock 模拟网络延迟区间(ms)
   };
 
@@ -29,11 +29,10 @@ window.API = (function () {
    * 只更新请求头来源并持久化；调用方负责在切换后刷新当前视图数据。
    */
   function setActiveCourse(courseId) {
-    if (!courseId) return;
-    config.activeCourseId = courseId;
+    config.activeCourseId = courseId || '';
     try {
       const s = JSON.parse(localStorage.getItem('ca_session') || 'null') || {};
-      s.activeCourseId = courseId;
+      s.activeCourseId = config.activeCourseId;
       localStorage.setItem('ca_session', JSON.stringify(s));
     } catch (e) {}
   }
@@ -66,16 +65,29 @@ window.API = (function () {
         if (qs) url += '?' + qs;
       }
       const isFormData = payload instanceof FormData;
+      const headers = isFormData
+        ? { Authorization: config.token }
+        : { 'Content-Type': 'application/json', Authorization: config.token };
+      if (config.activeCourseId) headers['X-Course-Id'] = config.activeCourseId;
       return fetch(url, {
         method,
-        headers: isFormData
-          ? { Authorization: config.token, 'X-Course-Id': config.activeCourseId }
-          : { 'Content-Type': 'application/json', Authorization: config.token, 'X-Course-Id': config.activeCourseId },
+        headers,
         body: isGet ? undefined : (isFormData ? payload : JSON.stringify(payload || {}))
       })
-        .then(r => r.json())
-        .then(res => {
+        .then(async r => {
+          let res;
+          try { res = await r.json(); } catch (e) { res = { code: r.status, message: r.statusText }; }
+          // FastAPI HTTPException 只有 detail，没有信封
+          if (!r.ok || (res && res.detail && res.code === undefined)) {
+            const msg = (res && (res.detail || res.message)) || ('HTTP ' + r.status);
+            const err = new Error(typeof msg === 'string' ? msg : '接口异常');
+            err.status = r.status;
+            throw err;
+          }
           if (res.code !== 0) throw new Error(res.message || res.detail || '接口异常');
+          return res;
+        })
+        .then(res => {
           // 登录等接口返回 token，自动存进 config + localStorage
           if (res.data && res.data.token) {
             const bearer = res.data.token.startsWith('Bearer ') ? res.data.token : ('Bearer ' + res.data.token);
@@ -111,7 +123,10 @@ window.API = (function () {
       }
       return fetch(url, {
         method,
-        headers: { 'Content-Type': 'application/json', Authorization: config.token, 'X-Course-Id': config.activeCourseId },
+        headers: Object.assign(
+          { 'Content-Type': 'application/json', Authorization: config.token },
+          config.activeCourseId ? { 'X-Course-Id': config.activeCourseId } : {}
+        ),
         body: isGet ? undefined : JSON.stringify(payload || {})
       }).then(async res => {
         const contentType = res.headers.get('content-type') || '';
@@ -230,6 +245,15 @@ window.API = (function () {
   /* ======================================================================
      一、认证与公共
      ====================================================================== */
+  const admin = {
+    /** GET /admin/users  管理员列表账号 params: { role, keyword } */
+    listUsers: (p) => request('GET', '/admin/users', p),
+    /** POST /admin/users  创建教师/学生账号 */
+    createUser: (p) => request('POST', '/admin/users', p),
+    /** DELETE /admin/users/{userId}  删除账号（级联清理个人数据） */
+    deleteUser: (userId, p) => request('DELETE', `/admin/users/${userId}`, p || {}),
+  };
+
   const auth = {
     /** POST /auth/login  账号密码登录，返回 token 与用户信息（mock 模式校验本地账号表） */
     login: (p) => request('POST', '/auth/login', p, (q) => {
@@ -272,7 +296,7 @@ window.API = (function () {
     }),
 
     /** GET /course/{courseId}  获取课程基本信息 */
-    course: (p) => request('GET', '/course/' + (p && p.courseId || 'C2026DS001'), p, () => M().course)
+    course: (p) => request('GET', '/course/' + (p && p.courseId), p, () => M().course)
   };
 
   /* ======================================================================
@@ -582,11 +606,21 @@ window.API = (function () {
     /** GET /teacher/resources/kps  上传时可选择的知识点（按章节分组） */
     resourceKps: () => request('GET', '/teacher/resources/kps'),
 
-    /** POST /teacher/resources/upload  上传资源  body: FormData { file, title, kp, category } */
+    /** POST /teacher/resources/upload  上传资源  body: FormData { file, title, kp, category, tagIds? } */
     uploadResource: (formData) => request('POST', '/teacher/resources/upload', formData),
+
+    /** PUT /teacher/resources/{res_id}  编辑资源（标题/知识点/标签） */
+    updateResource: (resId, p) => request('PUT', `/teacher/resources/${resId}`, p),
 
     /** DELETE /teacher/resources/{res_id}  删除资源 */
     deleteResource: (resId) => request('DELETE', `/teacher/resources/${resId}`),
+
+    /** GET /teacher/tags  当前课程标签列表 */
+    tags: () => request('GET', '/teacher/tags'),
+    /** POST /teacher/tags  新建（或复用）标签 */
+    createTag: (p) => request('POST', '/teacher/tags', p),
+    /** DELETE /teacher/tags/{tagId}  删除标签 */
+    deleteTag: (tagId) => request('DELETE', `/teacher/tags/${tagId}`),
 
     /** GET /teacher/resources/{res_id}/rag-status  查询上传后的 RAG 切片进度 */
     resourceRagStatus: (resId) => request('GET', `/teacher/resources/${resId}/rag-status`),
@@ -602,6 +636,11 @@ window.API = (function () {
     updateChapter: (id, p) => request('PUT', `/teacher/structure/chapters/${id}`, p),
     /** DELETE /teacher/structure/chapters/{id}  删空章节 */
     deleteChapter: (id) => request('DELETE', `/teacher/structure/chapters/${id}`),
+    /** GET /teacher/graph/kp-topology  知识图谱拓扑（节点=课程KP，边=关系） */
+    kpTopology: () => request('GET', '/teacher/graph/kp-topology'),
+    /** PUT /teacher/graph/kp-topology  保存坐标与边 */
+    saveKpTopology: (p) => request('PUT', '/teacher/graph/kp-topology', p),
+
     /** POST /teacher/structure/kps  新建知识点（自动重建全员学习路径） */
     createKp: (p) => request('POST', '/teacher/structure/kps', p),
     /** PUT /teacher/structure/kps/{id}  改知识点 */
@@ -681,7 +720,7 @@ window.API = (function () {
       return { total: list.length, list };
     }),
 
-    /** PUT /question/{qId}  编辑习题（人工校验后修正） */
+    /** PUT /question/{qId}  编辑习题（含 figureJson/hasImage/tagIds） */
     update: (p) => request('PUT', '/question/' + p.qId, p, (q) => ({ qId: q.qId, updated: true })),
 
     /** POST /question/review  批量审核发布  body: { qIds[], action: approve|reject|publish } */
@@ -767,5 +806,5 @@ window.API = (function () {
     join: (p) => request('POST', '/course/join', p),
   };
 
-  return { config, request, download, setActiveCourse, course, auth, graph, student: stu, ai, practice, teacher: tea, analysis, question, intervention, report };
+  return { config, request, download, setActiveCourse, course, auth, admin, graph, student: stu, ai, practice, teacher: tea, analysis, question, intervention, report };
 })();

@@ -73,17 +73,98 @@
             }).catch(err => Toast.error('删除失败', err && err.message || ''));
           }
         }));
+        U.$$('.tr-edit', box).forEach(b => b.addEventListener('click', e => {
+          e.stopPropagation();
+          const rid = b.dataset.res;
+          const item = list.find(x => x.resId === rid);
+          if (item) this.openEditModal(item);
+        }));
       }).catch(err => {
         const box = U.$('#trGrid');
         if (box) box.innerHTML = `<div class="empty">${icon('alert')}<b>加载失败</b><p>${U.esc(err && err.message || '')}</p></div>`;
       });
     },
 
+    openEditModal(r) {
+      const body = `
+      <form id="trEditForm" class="stack" style="gap:14px">
+        <label class="stack" style="gap:4px"><span class="fz-12 t-dim">资源标题</span>
+          <input class="input" id="trETitle" value="${U.esc(r.title || '')}"></label>
+        <label class="stack" style="gap:4px"><span class="fz-12 t-dim">所属章节</span>
+          <select class="select" id="trEChapter"><option value="">自动识别章节</option></select></label>
+        <label class="stack" style="gap:4px"><span class="fz-12 t-dim">挂载知识点</span>
+          <select class="select" id="trEKp"><option value="">（不挂具体知识点）</option></select></label>
+        <label class="stack" style="gap:4px"><span class="fz-12 t-dim">资源分类</span>
+          <select class="select" id="trECat">
+            <option value="other" ${r.category === 'other' ? 'selected' : ''}>课外/教材</option>
+            <option value="knowledge" ${r.category === 'knowledge' ? 'selected' : ''}>知识点挂载</option>
+          </select></label>
+        <div class="stack" style="gap:4px"><span class="fz-12 t-dim">多标签</span><div id="trETags"></div></div>
+      </form>`;
+      const footer = `<button class="btn btn--primary" id="trESave" type="button">${icon('check')} 保存</button><button class="btn" data-close>取消</button>`;
+      Modal.open({
+        title: '编辑资源',
+        body,
+        footer,
+        onMount(ov, close) {
+          const self = TeacherResource;
+          const chSel = U.$('#trEChapter', ov);
+          const kpSel = U.$('#trEKp', ov);
+          const tagPicker = window.TagPicker.mount(U.$('#trETags', ov), r.tags || []);
+
+          const fillKp = (chapterName) => {
+            const cur = (self._kps || []).find(c => c.chapter === chapterName);
+            let html = `<option value="" data-kp-id="">（不挂具体知识点）</option>`;
+            if (cur) {
+              html += cur.items.map(it =>
+                `<option value="${U.esc(it.name)}" data-kp-id="${U.esc(it.kpId)}" ${it.kpId === r.kpId ? 'selected' : ''}>${U.esc(it.name)}</option>`).join('');
+            }
+            kpSel.innerHTML = html;
+          };
+          const initChapters = (chapters) => {
+            chSel.innerHTML = '<option value="">自动识别章节</option>' +
+              chapters.map(c => `<option value="${U.esc(c.chapter)}">${U.esc(c.chapter)}</option>`).join('');
+            const hit = (chapters || []).find(c => (c.items || []).some(it => it.kpId === r.kpId));
+            if (hit) chSel.value = hit.chapter;
+            fillKp(chSel.value);
+            if (r.kpId) kpSel.value = r.kp || '';
+          };
+          chSel.addEventListener('change', () => fillKp(chSel.value));
+
+          const ready = (self._kps && self._kps.length)
+            ? Promise.resolve({ chapters: self._kps })
+            : API.teacher.resourceKps().then(d => {
+              self._kps = d.chapters || [];
+              return { chapters: self._kps };
+            });
+          ready.then(d => initChapters(d.chapters)).catch(() => {});
+
+          U.$('#trESave', ov).addEventListener('click', () => {
+            const selected = kpSel.options[kpSel.selectedIndex];
+            const kpId = selected ? (selected.dataset.kpId || '') : '';
+            const payload = {
+              title: U.$('#trETitle', ov).value.trim(),
+              kp: kpId ? kpSel.value : (chSel.value || ''),
+              kp_id: kpId,
+              category: U.$('#trECat', ov).value,
+              tagIds: tagPicker.getTagIds(),
+            };
+            API.teacher.updateResource(r.resId, payload).then(() => {
+              Toast.ok('资源已更新');
+              close();
+              self.load();
+            }).catch(err => Toast.error('保存失败', (err && err.message) || ''));
+          });
+        }
+      });
+    },
+
     _card(r) {
       const label = { video: '教学视频', ppt: '课堂PPT', doc: '教材文献', quiz: '题库' };
-      const meta = r.duration ? r.duration : (r.pages ? `${r.pages} 页` : '—');
+      const tags = (r.tags || []).map(t => `<span class="badge badge--outline">${U.esc(t.name)}</span>`).join('');
       return `
       <div class="res tr-res" data-res="${r.resId}">
+        <button class="btn btn--ghost btn--icon btn--sm tr-edit" data-res="${r.resId}" title="编辑">${icon('pencil')}</button>
         <button class="btn btn--ghost btn--icon btn--sm tr-del" data-res="${r.resId}" data-title="${U.esc(r.title)}" title="删除">${icon('x')}</button>
         <div class="res__thumb res__thumb--${r.type}">
           <img class="res__cover" src="${r.cover}" alt="" loading="lazy" onerror="this.remove()">
@@ -95,6 +176,7 @@
           <b class="clamp-2">${U.esc(r.title)}</b>
           <div class="row"><span class="badge badge--outline">${label[r.type]}</span><span class="spacer"></span><span>${r.views || 0} 次</span></div>
           <div class="row fz-11 t-dim" style="margin-top:6px"><span>${U.esc(r.kp || '—')}</span><span class="spacer"></span><span>${U.esc(r.source || '')}</span></div>
+          ${tags ? `<div class="chips" style="margin-top:4px">${tags}</div>` : ''}
         </div>
       </div>`;
     },
@@ -107,6 +189,7 @@
         <label class="stack" style="gap:4px"><span class="fz-12 t-dim">所属章节</span><select class="select" id="trChapter"><option value="">自动识别章节</option></select></label>
         <label class="stack" style="gap:4px"><span class="fz-12 t-dim">挂载知识点</span><select class="select" id="trKp"><option value="">（不挂具体知识点）</option></select></label>
         <label class="stack" style="gap:4px"><span class="fz-12 t-dim">资源分类</span><select class="select" id="trCat"><option value="other">课外/教材</option><option value="knowledge">知识点挂载</option></select></label>
+        <div class="stack" style="gap:4px"><span class="fz-12 t-dim">多标签（可选）</span><div id="trTags"></div></div>
         <p class="fz-12 t-dim">支持 MP4 / PDF / PPT / DOC；上传后自动解析时长或页数。<br>其中 <b>PDF / PPT / TXT / JSON</b> 会自动做 RAG 切片，上传完成后即可被 AI 答疑检索。</p>
       </form>`;
 
@@ -122,6 +205,7 @@
           const titleIn = U.$('#trTitle', ov);
           const chSel = U.$('#trChapter', ov);
           const kpSel = U.$('#trKp', ov);
+          const tagPicker = window.TagPicker.mount(U.$('#trTags', ov), []);
 
           // 二级联动：选章节 → 只列出该章节下的知识点
           const fillKp = (chapterName) => {
@@ -206,6 +290,7 @@
             fd.append('kp', kpId ? kpSel.value : (chSel.value || ''));
             fd.append('kp_id', kpId);
             fd.append('category', U.$('#trCat', ov).value);
+            fd.append('tagIds', JSON.stringify(tagPicker.getTagIds()));
             const btn = U.$('#trSubmit', ov);
             btn.disabled = true; btn.textContent = '上传中…';
             API.teacher.uploadResource(fd).then(r => {

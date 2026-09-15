@@ -34,16 +34,51 @@ def get_db():
         db.close()
 
 
+def _add_missing_columns(engine):
+    """仅 ADD COLUMN 的幂等补列（不改已有列/不删数据）。
+
+    项目约定旧完整迁移已退役；此处只为「章目录 + 多 KP」等新增列在
+    已有库上可运行。删库重建仍是最干净路径。
+    """
+    from sqlalchemy import text
+
+    want = {
+        "resources": ["chapter_id", "chapter", "kp_ids"],
+        "questions": ["chapter_id", "chapter", "kp_ids"],
+        "graph_nodes": ["pos_x", "pos_y"],
+    }
+    with engine.connect() as conn:
+        for table, cols in want.items():
+            rows = conn.execute(text(f"PRAGMA table_info({table})")).fetchall()
+            existing = {r[1] for r in rows}
+            if not existing:
+                continue
+            for col in cols:
+                if col in existing:
+                    continue
+                if table == "resources" and col in ("chapter_id", "chapter"):
+                    conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} VARCHAR(64) DEFAULT ''"))
+                elif table == "resources" and col == "kp_ids":
+                    conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} TEXT DEFAULT '[]'"))
+                elif table == "questions" and col in ("chapter_id", "chapter"):
+                    conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} VARCHAR(64) DEFAULT ''"))
+                elif table == "questions" and col == "kp_ids":
+                    conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} TEXT DEFAULT '[]'"))
+                elif table == "graph_nodes" and col in ("pos_x", "pos_y"):
+                    conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} FLOAT"))
+        conn.commit()
+
+
 def init_db():
     """初始化数据库表。
 
     数据库结构的唯一事实来源是 models/ 的模型定义（面向删库重建）：
-    create_all 会按当前模型建出完整结构。旧库文件的增量迁移体系
-    （原 _migrate/_add_col 兼容层）已按 2026-09-11 约定移除——
-    结构变更 = 改模型 + 删库重建；删除数据请先备份。
+    create_all 会按当前模型建出完整结构。
     """
     from .models import user, course, graph, question, practice, ai, alert, intervention, checkin
     from .models import agent_st  # noqa: F401  智能出题草稿表
     from .models import user_course  # noqa: F401  用户-课程关联（多课程数据地基）
+    from .models import tag  # noqa: F401  课程多标签（历史保留；产品语义已并入 KP）
     Base.metadata.create_all(bind=engine)
+    _add_missing_columns(engine)
 

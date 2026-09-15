@@ -15,15 +15,23 @@
     render() {
       const el = U.$('#view-dashboard');
       el.innerHTML = U.skeleton(420);
-      const classId = state.classId;
+      if (!API.config.activeCourseId) {
+        el.innerHTML = `
+        <div class="card"><div class="card__body">
+          <div class="empty" style="padding:48px 20px;text-align:center">
+            <b>尚未创建或选择课程</b>
+            <p class="fz-12 t-dim" style="margin-top:8px">请先在顶栏「+ 新建课程」，再查看教学驾驶舱。</p>
+          </div>
+        </div></div>`;
+        return;
+      }
       const studentsReq = API.teacher.students({
-        classId,
         alertLevel: 'all',
         page: 1,
         size: 10000
       }).catch(() => ({ list: [] }));
       Promise.all([
-        API.teacher.dashboard({ classId }),
+        API.teacher.dashboard(),
         studentsReq
       ]).then(([d, studentsData]) => {
         const classStudents = Array.isArray(studentsData) ? studentsData : ((studentsData && studentsData.list) || []);
@@ -37,7 +45,7 @@
               <span class="badge badge--outline">${ov.studentCount} 名学生</span>
               <span class="badge badge--brand">${ov.className}</span>
             </div>
-            <h2>${ov.className} · 教学驾驶舱</h2>
+            <h2>${ov.className || '当前课程'} · 教学驾驶舱</h2>
             <p>数据更新于 <b class="t-brand">${ov.updatedAt}</b> · 今日活跃 <b>${ov.activeToday}</b> 人 · 提交 <b>${ov.submitToday}</b> 次</p>
           </div>
           <div class="hero__stats">

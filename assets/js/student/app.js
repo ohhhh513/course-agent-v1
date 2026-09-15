@@ -84,13 +84,10 @@
     /* ================================================================
        导航侧栏 · 预警徽标（动态绑定后端真实 red + yellow 数量）
        ================================================================ */
+    // 预警模块开发中：不拉预警接口、不显示角标
     window.refreshAlertBadge = function () {
-      API.student.alerts({ level: 'all' }).then(r => {
-        const o = r.openStats || {};
-        const n = (o.red || 0) + (o.yellow || 0);   // 只算未处理（open）的 red + yellow
-        const b = document.getElementById('alertBadge');
-        if (b) { b.textContent = n; b.style.display = n > 0 ? '' : 'none'; }
-      }).catch(() => {});
+      const b = document.getElementById('alertBadge');
+      if (b) { b.textContent = '0'; b.style.display = 'none'; }
     };
     window.refreshAlertBadge();
   

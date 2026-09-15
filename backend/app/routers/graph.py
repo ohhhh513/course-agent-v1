@@ -144,6 +144,9 @@ def get_graph(
                 "difficulty": n.difficulty,
                 "isKey": bool(n.is_key),
                 "hours": n.hours,
+                # 教师编排保存的坐标：学生端用静态布局，去掉力导向弹力
+                "x": n.pos_x,
+                "y": n.pos_y,
             })
         # 问题图谱字段：errorRate / count 从下属 knowledge 聚合
         elif type == "problem":

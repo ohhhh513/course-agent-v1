@@ -363,3 +363,91 @@ const R = {
     return `<div class="empty">${icon(ic || 'folder')}<b>${title}</b><p>${desc || ''}</p></div>`;
   }
 };
+
+/** 课程多标签选择器：多选已有 + 输入新建 */
+window.TagPicker = {
+  /**
+   * @param {HTMLElement} root 挂载容器
+   * @param {Array<{tagId:string,name:string}>} initial 已选标签
+   * @returns {{ getTagIds: () => string[] }}
+   */
+  mount(root, initial) {
+    let all = [];
+    let selected = new Set((initial || []).map(t => t.tagId).filter(Boolean));
+    root.innerHTML = `
+      <div class="tag-picker" data-tp>
+        <div class="chips tag-picker__sel" data-tp-sel style="min-height:28px"></div>
+        <div class="row" style="gap:6px;margin-top:6px">
+          <input class="input" data-tp-new placeholder="新建标签后回车" style="flex:1;min-width:0">
+          <button type="button" class="btn btn--sm btn--outline" data-tp-add>新建</button>
+        </div>
+        <div class="chips tag-picker__all" data-tp-all style="margin-top:6px;max-height:88px;overflow:auto"></div>
+      </div>`;
+
+    const selBox = root.querySelector('[data-tp-sel]');
+    const allBox = root.querySelector('[data-tp-all]');
+    const newIn = root.querySelector('[data-tp-new]');
+
+    function render() {
+      const byId = Object.fromEntries(all.map(t => [t.tagId, t]));
+      const sel = [...selected].map(id => byId[id] || { tagId: id, name: id });
+      selBox.innerHTML = sel.length
+        ? sel.map(t => `<span class="badge badge--brand" data-tp-off="${U.esc(t.tagId)}" title="点击移除">${U.esc(t.name)} ×</span>`).join('')
+        : '<span class="fz-11 t-dim">未选择标签</span>';
+      allBox.innerHTML = all.map(t => {
+        const on = selected.has(t.tagId);
+        return `<button type="button" class="chip ${on ? 'is-on' : ''}" data-tp-on="${U.esc(t.tagId)}">${U.esc(t.name)}</button>`;
+      }).join('') || '<span class="fz-11 t-dim">暂无标签，可上方新建</span>';
+    }
+
+    function load() {
+      return API.teacher.tags().then(r => {
+        all = (r && r.list) || [];
+        // 确保已选标签在 all 中可见
+        (initial || []).forEach(t => {
+          if (t && t.tagId && !all.some(x => x.tagId === t.tagId)) all.push(t);
+        });
+        render();
+      }).catch(() => render());
+    }
+
+    root.addEventListener('click', e => {
+      const on = e.target.closest('[data-tp-on]');
+      if (on) {
+        const id = on.getAttribute('data-tp-on');
+        if (selected.has(id)) selected.delete(id); else selected.add(id);
+        render();
+        return;
+      }
+      const off = e.target.closest('[data-tp-off]');
+      if (off) {
+        selected.delete(off.getAttribute('data-tp-off'));
+        render();
+      }
+    });
+
+    async function createFromInput() {
+      const name = (newIn.value || '').trim();
+      if (!name) { Toast.warn('请输入标签名'); return; }
+      try {
+        const t = await API.teacher.createTag({ name });
+        if (t && t.tagId) {
+          selected.add(t.tagId);
+          if (!all.some(x => x.tagId === t.tagId)) all.push(t);
+          newIn.value = '';
+          render();
+          Toast.ok('已添加标签', t.name);
+        }
+      } catch (err) {
+        Toast.error('创建标签失败', (err && err.message) || '');
+      }
+    }
+    root.querySelector('[data-tp-add]').addEventListener('click', createFromInput);
+    newIn.addEventListener('keydown', e => {
+      if (e.key === 'Enter') { e.preventDefault(); createFromInput(); }
+    });
+
+    load();
+    return { getTagIds: () => [...selected] };
+  }
+};
