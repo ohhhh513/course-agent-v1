@@ -35,6 +35,7 @@
       <div class="seg" id="roleSeg">
         <button type="button" class="seg__item is-active" data-role="student">学生</button>
         <button type="button" class="seg__item" data-role="teacher">教师</button>
+        <button type="button" class="seg__item" data-role="admin">管理员</button>
       </div>
 
       <form id="loginForm" novalidate>
@@ -51,7 +52,7 @@
         <button class="btn btn--primary btn--block" id="loginBtn" type="submit">登录</button>
       </form>
 
-      <div class="auth-demo" id="demoHint">演示账号：<b>student</b> / 123456（学生）· <b>teacher</b> / 123456（教师）</div>
+      <div class="auth-demo" id="demoHint">演示账号：<b>student</b> / 123456 · <b>teacher</b> / 123456 · 管理员：<b>admin</b> / admin（可创建师生账号）</div>
     </div>
   </main>
 </div>
@@ -70,8 +71,9 @@
     ['file',  '一键生成可分享的学情分析报告']
   ].map(([n, t]) => '<li>' + icon(n) + t + '</li>').join('');
 
-  // 角色切换（支持 ?role=teacher 预选）
-  let role = (new URLSearchParams(location.search).get('role') === 'teacher') ? 'teacher' : 'student';
+  // 角色切换（支持 ?role=teacher|admin 预选）
+  const qRole = new URLSearchParams(location.search).get('role') || 'student';
+  let role = ['teacher', 'admin', 'student'].includes(qRole) ? qRole : 'student';
   const seg = U.$('#roleSeg');
   seg.querySelectorAll('.seg__item').forEach(btn => {
     btn.classList.toggle('is-active', btn.dataset.role === role);
@@ -79,8 +81,18 @@
       seg.querySelectorAll('.seg__item').forEach(b => b.classList.remove('is-active'));
       btn.classList.add('is-active');
       role = btn.dataset.role;
+      U.$('#username').placeholder = role === 'admin' ? '管理员账号' : '用户名 / 手机号 / 邮箱';
+      if (role === 'admin') {
+        U.$('#username').value = 'admin';
+        U.$('#password').placeholder = '默认 admin';
+      }
     });
   });
+  if (role === 'admin') {
+    U.$('#username').value = 'admin';
+    U.$('#username').placeholder = '管理员账号';
+    U.$('#password').placeholder = '默认 admin';
+  }
 
   const form = U.$('#loginForm');
   const errEl = U.$('#loginErr');
@@ -93,8 +105,11 @@
     const btn = U.$('#loginBtn');
     btn.disabled = true; btn.textContent = '登录中…';
     try {
-      await Auth.login({ username, password, role });
-      location.href = (role === 'teacher') ? 'teacher.html' : 'student.html';
+      const session = await Auth.login({ username, password, role });
+      const realRole = (session && session.user && session.user.role) || role;
+      if (realRole === 'teacher') location.href = 'teacher.html';
+      else if (realRole === 'admin') location.href = 'admin.html';
+      else location.href = 'student.html';
     } catch (err) {
       errEl.textContent = (err && err.message) || '登录失败，请重试';
       btn.disabled = false; btn.textContent = '登录';

@@ -12,6 +12,16 @@
     stuLevel: 'all', stuKeyword: '', level: 'all', heatType: 'completion',
     render() {
       const el = U.$('#view-monitor');
+      if (!API.config.activeCourseId) {
+        el.innerHTML = `
+        <div class="card"><div class="card__body">
+          <div class="empty" style="padding:48px 20px;text-align:center">
+            <b>尚未创建或选择课程</b>
+            <p class="fz-12 t-dim" style="margin-top:8px">学情监测按当前课程成员实时计算。请先创建课程并让学生加入。</p>
+          </div>
+        </div></div>`;
+        return;
+      }
       el.innerHTML = `
       <div class="card" style="margin-bottom:16px">
         <div class="card__head">
@@ -81,7 +91,7 @@
     },
 
     loadHeat() {
-      API.teacher.heatmap({ classId: state.classId, type: this.heatType }).then(h => {
+      API.teacher.heatmap({ type: this.heatType }).then(h => {
         Charts.heatmap('#heatChart', h, (val, data) => {
           if (val[2] == null) return; // 灰色格子不可点
           const stu = data.studentAxis[val[1]];
@@ -95,7 +105,7 @@
     },
 
     loadStudents() {
-      API.teacher.students({ classId: state.classId, alertLevel: this.stuLevel, keyword: this.stuKeyword }).then(r => {
+      API.teacher.students({ alertLevel: this.stuLevel, keyword: this.stuKeyword }).then(r => {
         const box = U.$('#stuList'); if (!box) return;
         box.innerHTML = r.list.map(s => `
           <div class="list__item list__item--clickable" data-uid="${s.userId}">
@@ -206,7 +216,7 @@
 
     loadAlerts() {
       const self = this;
-      API.teacher.alerts({ classId: state.classId, level: this.level }).then(r => {
+      API.teacher.alerts({ level: this.level }).then(r => {
         const box = U.$('#alList'); if (!box) return;
         box.innerHTML = r.list.map(a => `
           <div class="alert-card ${a.status === 'ignored' ? 'alert-card--ignored' : U.alertCard[a.level]}">

@@ -15,7 +15,8 @@ class Settings(BaseSettings):
     FRONTEND_DIR: Path = Path(__file__).resolve().parent.parent.parent
 
     # 数据库（SQLite，零配置）
-    DATABASE_URL: str = f"sqlite:///{BASE_DIR}/data/course_agent.db"
+    # Windows 下必须用正斜杠绝对路径，否则引擎可能解析到错误目录，导致「启动建了 admin 但登录找不到」
+    DATABASE_URL: str = "sqlite:///" + (BASE_DIR / "data" / "course_agent.db").as_posix()
 
     # JWT（生产环境务必通过环境变量 JWT_SECRET 设置强随机密钥）
     # 若未显式设置，则每次启动生成一个随机密钥（fail-secure，避免已知占位符被伪造令牌），

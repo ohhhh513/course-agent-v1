@@ -14,6 +14,7 @@ from ..models.question import Question
 from ..models.course import Resource, ResourceProgress
 from ..models.user import User
 from ..middleware.auth import get_current_user, get_current_user_optional
+from ..dependencies import get_current_course_id
 from ..schemas.common import ok
 
 router = APIRouter(prefix="/api/v1/graph", tags=["图谱"])
@@ -65,7 +66,7 @@ CATEGORY_COLORS = {
 
 @router.get("")
 def get_graph(
-    courseId: str = Query("C2026DS001"),
+    courseId: str = Depends(get_current_course_id),
     type: str = Query("knowledge"),
     userId: str = Query(None),
     db: Session = Depends(get_db),
@@ -143,6 +144,9 @@ def get_graph(
                 "difficulty": n.difficulty,
                 "isKey": bool(n.is_key),
                 "hours": n.hours,
+                # 教师编排保存的坐标：学生端用静态布局，去掉力导向弹力
+                "x": n.pos_x,
+                "y": n.pos_y,
             })
         # 问题图谱字段：errorRate / count 从下属 knowledge 聚合
         elif type == "problem":
@@ -439,7 +443,7 @@ def _ensure_learning_path(user_id: str, course_id: str, db: Session):
 
 @router.get("/path")
 def learning_path(
-    courseId: str = Query("C2026DS001"),
+    courseId: str = Depends(get_current_course_id),
     db: Session = Depends(get_db),
     user=Depends(get_current_user),
 ):

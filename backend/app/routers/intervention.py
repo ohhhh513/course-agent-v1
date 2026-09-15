@@ -19,6 +19,7 @@ from ..models.alert import Alert
 from ..models.graph import LearningPath, GraphNode
 from ..models.practice import AnswerRecord
 from ..middleware.auth import get_current_user
+from ..dependencies import get_current_course_id
 from ..schemas.common import ok, list_response
 from ..utils import loads, fmt_dt
 
@@ -419,13 +420,14 @@ def save_template(
 # ====== 报告列表 ======
 @report_router.get("/list")
 def report_list(
-    classId: str = Query("CL2301"),
+    classId: str = Query(None),
     page: int = Query(1),
     size: int = Query(20),
     db: Session = Depends(get_db),
     user=Depends(get_current_user),
+    course_id: str = Depends(get_current_course_id),
 ):
-    rows = db.query(Report).filter(Report.class_id == classId).order_by(Report.created_at.desc()).all()
+    rows = db.query(Report).filter(Report.class_id == course_id).order_by(Report.created_at.desc()).all()
     items = []
     for r in rows:
         detail = loads(r.detail_json) or {}
@@ -453,16 +455,27 @@ def generate_report(
     req: GenerateReportReq,
     db: Session = Depends(get_db),
     user=Depends(get_current_user),
+    course_id: str = Depends(get_current_course_id),
 ):
-    """一键生成学情分析报告 — 数据全部来自真实 DB 查询"""
-    class_id = req.classIds[0] if req.classIds else "CL2301"
-    class_name, students = _get_class_info_for_report(db, class_id)
-    if not class_name:
-        return ok({"reportId": "", "status": "error", "detail": {"error": "班级不存在"}})
+    """一键生成学情分析报告 — 按当前课程成员真实统计"""
+    from ..models.user_course import UserCourse as _UC
+    class_id = course_id
+    students = (
+        db.query(User)
+        .join(_UC, _UC.user_id == User.user_id)
+        .filter(_UC.course_id == course_id, User.role == "student")
+        .all()
+    )
+    class_name = f"课程 {course_id}"
+    if not students:
+        return ok({"reportId": "", "status": "error", "detail": {"error": "当前课程暂无学生"}})
     student_ids = [s.user_id for s in students]
 
-    # 1. 真实统计：整体概况
-    lp_rows = db.query(LearningPath).filter(LearningPath.user_id.in_(student_ids)).all()
+    # 1. 真实统计：整体概况（按课程学习路径）
+    lp_rows = db.query(LearningPath).filter(
+        LearningPath.user_id.in_(student_ids),
+        LearningPath.course_id == course_id,
+    ).all()
     total_kp = len(set(r.kp_id for r in lp_rows))
     done_count = sum(1 for r in lp_rows if r.status == "done")
     active_lps = [r for r in lp_rows if r.status != "todo" and (r.mastery or 0) > 0]
@@ -473,7 +486,11 @@ def generate_report(
     kp_mastery = defaultdict(list)
     for r in active_lps:
         kp_mastery[r.kp_id].append(r.mastery or 0)
-    kp_id_name = {n.id: n.name for n in db.query(GraphNode).filter(GraphNode.graph_type == "knowledge").all()}
+    kp_id_name = {
+        n.id: n.name for n in db.query(GraphNode).filter(
+            GraphNode.graph_type == "knowledge", GraphNode.course_id == course_id
+        ).all()
+    }
     weak_kps = sorted(
         [(kid, round(sum(v) / len(v), 1)) for kid, v in kp_mastery.items()],
         key=lambda x: x[1]
@@ -491,7 +508,7 @@ def generate_report(
 
     # 4. 真实统计：预警情况
     alert_rows = db.query(Alert).filter(
-        Alert.class_id == class_id, Alert.status != "closed"
+        Alert.user_id.in_(student_ids), Alert.status != "closed"
     ).all()
     red_cnt = sum(1 for a in alert_rows if a.level == "red")
     yellow_cnt = sum(1 for a in alert_rows if a.level == "yellow")
@@ -500,7 +517,7 @@ def generate_report(
     section_overview = {
         "title": "一、班级整体概况",
         "paragraphs": [
-            f"《数据结构与算法》课程 - {class_name}，共 {len(students)} 名学生。",
+            f"课程 {course_id} — {class_name}，共 {len(students)} 名学生。",
             f"报告生成时间：{datetime.now().strftime('%Y-%m-%d %H:%M')}。统计范围覆盖 {total_kp} 个知识点的学习数据。",
         ],
         "bullets": [

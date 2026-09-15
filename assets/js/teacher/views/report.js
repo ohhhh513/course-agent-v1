@@ -34,7 +34,7 @@
           <div class="card__body">
             <p class="fz-13 t-2" style="line-height:1.8">基于班级 / 章节 / 时间段，自动汇总<b>整体掌握度、共性短板、个体预警、干预效果、目标达成度</b>，支持 PDF / 网页导出，便于教研与上报。</p>
             <div class="divider"></div>
-            <div class="row fz-12 t-dim"><span>覆盖章节</span><span class="spacer"></span><span>第1章 ~ 第9章 · 25 个知识点</span></div>
+            <div class="row fz-12 t-dim"><span>数据来源</span><span class="spacer"></span><span>当前课程真实学情记录</span></div>
           </div>
         </div>
         <div class="card">
@@ -44,7 +44,11 @@
       </div>`;
 
       U.$('#genReport').addEventListener('click', () => this.openGen());
-      API.report.list({ classId: state.classId }).then(r => {
+      if (!API.config.activeCourseId) {
+        U.$('#repList').innerHTML = `<div class="empty" style="padding:30px;text-align:center"><b>尚未创建或选择课程</b></div>`;
+        return;
+      }
+      API.report.list({}).then(r => {
         U.$('#repList').innerHTML = r.list.map(rp => `
           <div class="list__item list__item--clickable" data-rid="${rp.reportId}">
             <span class="list__lead" style="color:var(--brand-400)">${icon('file')}</span>

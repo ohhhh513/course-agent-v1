@@ -26,22 +26,46 @@ DEFAULT_COURSE_ID = "C2026DS001"
 StateFn = Callable[[str], Tuple[float, str]]
 
 
+def _chapter_order_key(chapter: str, node_id: str = "") -> tuple:
+    """章排序：按「第N章」编号；无编号垫底。"""
+    import re
+    s = chapter or ""
+    m = re.search(r"第\s*([0-9]+)\s*[章讲]", s)
+    if m:
+        return (0, int(m.group(1)), s)
+    m2 = re.search(r"(\d+)", node_id or "")
+    return (1, int(m2.group(1)) if m2 else 10**9, s)
+
+
 def graph_nodes(db: Session, course_id: str = DEFAULT_COURSE_ID) -> List[GraphNode]:
-    """按「章节 → 知识点 ID」排序取全部知识节点（与前端展示顺序一致）。"""
-    return db.query(GraphNode).filter(
+    """知识节点：按章编号 → 节点 id（保证第10章在第9章之后）。"""
+    nodes = db.query(GraphNode).filter(
         and_(GraphNode.graph_type == "knowledge", GraphNode.course_id == course_id)
-    ).order_by(GraphNode.chapter.asc(), GraphNode.id.asc()).all()
+    ).all()
+    nodes.sort(key=lambda n: _chapter_order_key(n.chapter or "", n.id or ""))
+    return nodes
 
 
 def resource_count_map(db: Session, course_id: str = DEFAULT_COURSE_ID) -> Dict[str, int]:
-    """每个知识点实际挂载的资源数。"""
-    rows = db.query(Resource.kp_id).filter(
-        and_(Resource.course_id == course_id, Resource.kp_id.isnot(None))
+    """每个知识点实际挂载的资源数（主 kp_id + kp_ids JSON 多标签都计）。"""
+    import json
+    rows = db.query(Resource).filter(
+        and_(Resource.course_id == course_id)
     ).all()
     counts: Dict[str, int] = {}
-    for (kp_id,) in rows:
-        if kp_id:
-            counts[kp_id] = counts.get(kp_id, 0) + 1
+    for r in rows:
+        kids = []
+        if r.kp_id:
+            kids.append(r.kp_id)
+        try:
+            extra = json.loads(r.kp_ids or "[]")
+            if isinstance(extra, list):
+                kids.extend(str(x) for x in extra if x)
+        except Exception:
+            pass
+        for kid in kids:
+            if kid:
+                counts[kid] = counts.get(kid, 0) + 1
     return counts
 
 
@@ -135,7 +159,10 @@ def sync_user(
     ).all()
 
     if existing:
-        if {r.kp_id for r in existing} == {n.id for n in nodes}:
+        same_set = {r.kp_id for r in existing} == {n.id for n in nodes}
+        path_order = [r.kp_id for r in sorted(existing, key=lambda x: x.step or 0)]
+        graph_order = [n.id for n in nodes]
+        if same_set and path_order == graph_order:
             return "ok"
         for row in existing:
             db.delete(row)

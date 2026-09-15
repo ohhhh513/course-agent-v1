@@ -7,7 +7,7 @@ import random
 from datetime import datetime, timedelta
 
 # 固定种子，保证每次运行生成完全相同的数据
-random.seed(42)
+rng = random.Random(42)   # 固定种子实例：mock 数据可复现，且不污染全局 random（邀请码等真实流程随机性不受影响）
 
 # ============ 时间基准 ============
 BASE = datetime(2026, 9, 2, 17, 0, 0)   # "今天" 17:00
@@ -18,8 +18,8 @@ def days_ago(n, hour_jitter=6):
     # hour_jitter 只用负值或 0，保证结果 <= BASE
     return BASE - timedelta(
         days=n,
-        hours=abs(random.randint(-hour_jitter, 0)),
-        minutes=random.randint(0, 59),
+        hours=abs(rng.randint(-hour_jitter, 0)),
+        minutes=rng.randint(0, 59),
     )
 
 
@@ -470,7 +470,7 @@ def _gen_answer_records():
             today_count = 4
             extra_today_seconds = [180, 900, 720, 1080]  # 合计 2880 秒 = 48 分钟
         else:
-            today_count = random.randint(1, 2)
+            today_count = rng.randint(1, 2)
             extra_today_seconds = None
 
         # 确保过去 12 天每天至少 1 条（保证 streak 至少 12）
@@ -485,7 +485,7 @@ def _gen_answer_records():
                 # 过去 11 天：至少 1 条，其余随机分配
                 remaining_extra = (total - today_count) - 11  # 剩余多出来的
                 count = 1 + max(0, remaining_extra // 11)
-                if remaining_extra > 0 and random.random() < 0.3:
+                if remaining_extra > 0 and rng.random() < 0.3:
                     count += 1  # 30% 概率多一条
                 count = min(count, 4)  # 每天不超过 4 条
                 count = max(count, 1)  # 每天至少 1 条
@@ -502,7 +502,7 @@ def _gen_answer_records():
                     all_times.append((0, chen_today_times[i]))
                 elif day == 0:
                     all_times.append((0, BASE.replace(
-                        hour=random.randint(9, 16), minute=random.randint(0, 59))))
+                        hour=rng.randint(9, 16), minute=rng.randint(0, 59))))
                 else:
                     all_times.append((day, days_ago(day, hour_jitter=5)))
 
@@ -510,7 +510,7 @@ def _gen_answer_records():
         all_times.sort(key=lambda x: x[1])
 
         session_counter = 1
-        session_size = random.randint(4, 6)
+        session_size = rng.randint(4, 6)
         session_id = f"PS{uid}{session_counter:02d}"
         sess_count = 0
         chen_today_idx = 0  # 陈思远今天答题时间分配索引
@@ -518,22 +518,22 @@ def _gen_answer_records():
         for idx, (days_back, created_at) in enumerate(all_times):
             if sess_count >= session_size:
                 session_counter += 1
-                session_size = random.randint(4, 6)
+                session_size = rng.randint(4, 6)
                 session_id = f"PS{uid}{session_counter:02d}"
                 sess_count = 0
 
-            qid = random.choice(q_ids)
+            qid = rng.choice(q_ids)
             kp_id, corr = q_meta[qid]
-            is_correct = 1 if random.random() < correct_letter else 0
-            my_ans = corr if is_correct else random.choice(wrong_choices_by_q[qid])
-            duration = random.randint(30, 120) if is_correct else random.randint(60, 180)
+            is_correct = 1 if rng.random() < correct_letter else 0
+            my_ans = corr if is_correct else rng.choice(wrong_choices_by_q[qid])
+            duration = rng.randint(30, 120) if is_correct else rng.randint(60, 180)
             # 陈思远今天的答题时长用预设值
             if tier == "custom_chen" and days_back == 0 and extra_today_seconds:
                 if chen_today_idx < len(extra_today_seconds):
                     duration = extra_today_seconds[chen_today_idx]
                     chen_today_idx += 1
 
-            error_type = "" if is_correct else random.choice(ERROR_TYPES)
+            error_type = "" if is_correct else rng.choice(ERROR_TYPES)
 
             records.append({
                 "session_id": session_id,
@@ -588,27 +588,27 @@ def _gen_practice_sessions():
             # 陈思远特殊：今天 1 条长 session (48 分钟=2880秒)，过去 11 天每天 1 条短的
             session_times.append((0, 2880, "今天 14:00 - 14:48"))
             for day in range(1, 12):
-                session_times.append((day, random.randint(600, 1200), f"过去{day}天"))
+                session_times.append((day, rng.randint(600, 1200), f"过去{day}天"))
         else:
             for day in range(count):
-                session_times.append((day, random.randint(600, 1800), ""))
+                session_times.append((day, rng.randint(600, 1800), ""))
 
         for i, (days_back, duration, label) in enumerate(session_times[:count]):
-            mode = random.choice(modes)
+            mode = rng.choice(modes)
             session_id = record_sessions[i] if i < len(record_sessions) else f"PS{uid}{i+1:02d}"
 
             created_at = days_ago(days_back, hour_jitter=4) if days_back > 0 else BASE.replace(
-                hour=random.randint(9, 20), minute=random.randint(0, 59))
+                hour=rng.randint(9, 20), minute=rng.randint(0, 59))
             finished_at = created_at + timedelta(seconds=duration)
 
             # 从该 session 的答题记录计算 correct/wrong/total
             sess_records = [r for r in user_records if r["session_id"] == session_id]
-            total = len(sess_records) if sess_records else random.randint(6, 12)
+            total = len(sess_records) if sess_records else rng.randint(6, 12)
             if sess_records:
                 correct = sum(1 for r in sess_records if r["is_correct"])
             else:
                 if tier == "excellent":
-                    correct = random.randint(total - 1, total)
+                    correct = rng.randint(total - 1, total)
                 elif tier == "custom_chen":
                     correct = int(total * 0.68)
                 elif tier == "good":
@@ -673,24 +673,24 @@ def _gen_chat_data():
             ]
         elif tier == "excellent":
             session_infos = [
-                (*random.choice(CHAT_TOPICS), random.randint(4, 7)) for _ in range(3)
+                (*rng.choice(CHAT_TOPICS), rng.randint(4, 7)) for _ in range(3)
             ]
         elif tier == "good":
             session_infos = [
-                (*random.choice(CHAT_TOPICS), random.randint(3, 6)) for _ in range(2)
+                (*rng.choice(CHAT_TOPICS), rng.randint(3, 6)) for _ in range(2)
             ]
         elif tier == "medium":
             session_infos = [
-                (*random.choice(CHAT_TOPICS), random.randint(3, 5)) for _ in range(2)
+                (*rng.choice(CHAT_TOPICS), rng.randint(3, 5)) for _ in range(2)
             ]
         else:
             session_infos = [
-                (*random.choice(CHAT_TOPICS), random.randint(2, 4)) for _ in range(1)
+                (*rng.choice(CHAT_TOPICS), rng.randint(2, 4)) for _ in range(1)
             ]
 
         for s_idx, (title, kp_name, rounds) in enumerate(session_infos):
             session_id = f"CH{uid}{s_idx+1:02d}"
-            created_at = days_ago(random.randint(0, 7), hour_jitter=3)
+            created_at = days_ago(rng.randint(0, 7), hour_jitter=3)
             updated_at = created_at + timedelta(minutes=rounds * 2)
 
             sessions.append({
@@ -723,7 +723,7 @@ def _gen_chat_data():
                 # assistant 消息
                 messages.append({
                     "id": msg_id, "session_id": session_id, "role": "ai",
-                    "method": random.choice(methods),
+                    "method": rng.choice(methods),
                     "content": _ai_msg_content(title, kp_name, r),
                     "citations": _citations_for_kp(kp_name),
                     "time_str": time_str_a,

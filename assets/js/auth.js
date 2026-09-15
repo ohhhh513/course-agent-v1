@@ -95,7 +95,10 @@ window.Auth = (function () {
       const s = getSession();
       if (!s) { location.href = 'index.html'; return false; }
       if (role && s.user.role !== role) {
-        location.href = s.user.role === 'teacher' ? 'teacher.html' : 'student.html';
+        const r = s.user.role;
+        if (r === 'teacher') location.href = 'teacher.html';
+        else if (r === 'admin') location.href = 'admin.html';
+        else location.href = 'student.html';
         return false;
       }
       return true;

@@ -39,6 +39,7 @@ class ChunkRecord:
     extra: dict[str, Any] = field(default_factory=dict)
     embedding: list[float] | None = None
     embedding_model: str = ""
+    course_id: str = "C2026DS001"
 
     def to_hit(self, score: float) -> dict[str, Any]:
         snippet = self.text if len(self.text) <= 400 else self.text[:400] + "…"

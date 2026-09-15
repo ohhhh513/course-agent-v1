@@ -127,11 +127,13 @@ const Charts = (function () {
           top: 10, left: 14, itemWidth: 11, itemHeight: 11, itemGap: 12,
           icon: 'circle'
         }],
-        animationDuration: 900,
-        animationEasingUpdate: 'quinticInOut',
+        animation: false,
+        animationDuration: 0,
+        animationDurationUpdate: 0,
         series: [{
           type: 'graph',
-          layout: 'force',
+          // 教师已布点则用静态坐标（无弹力）；否则退回力导向但关闭布局动画
+          layout: isKnowledge && data.nodes.some(n => n.x != null && n.y != null) ? 'none' : 'force',
           roam: true,
           draggable: true,
           zoom: isKnowledge ? 0.92 : 1,
@@ -140,7 +142,8 @@ const Charts = (function () {
             repulsion: isKnowledge ? 340 : 420,
             edgeLength: isKnowledge ? [70, 150] : [90, 180],
             gravity: 0.09,
-            friction: 0.14
+            friction: 0.6,
+            layoutAnimation: false
           },
           label: {
             show: true, position: 'right', color: t.text, fontSize: 11.5,
@@ -148,7 +151,7 @@ const Charts = (function () {
           },
           emphasis: {
             focus: 'adjacency',
-            scale: 1.12,
+            scale: 1.08,
             label: { fontSize: 12.5, fontWeight: 'bold' },
             lineStyle: { width: 3 }
           },
@@ -157,7 +160,7 @@ const Charts = (function () {
           data: data.nodes.map(n => {
             const color = data.categories[n.category].color;
             const val = n.mastery !== undefined ? n.mastery : (n.achieve !== undefined ? n.achieve : 60);
-            return Object.assign({}, n, {
+            const item = Object.assign({}, n, {
               value: val,
               symbolSize: n.category === 0 && !isKnowledge ? 46 : (n.isKey ? 34 : 26),
               category: n.category,
@@ -168,6 +171,13 @@ const Charts = (function () {
                 shadowBlur: 12, shadowColor: color + '55'
               }
             });
+            // 有教师坐标时写入 ECharts 坐标（layout:none）
+            if (n.x != null && n.y != null) {
+              item.x = n.x;
+              item.y = n.y;
+              item.fixed = true;
+            }
+            return item;
           }),
           links: data.links.map(l => ({
             source: l.source, target: l.target, relation: l.relation,

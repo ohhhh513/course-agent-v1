@@ -16,6 +16,7 @@ from ..database import get_db
 from ..models.ai import ChatSession, ChatMessage
 from ..models.intervention import TeacherClassDashboard
 from ..middleware.auth import get_current_user
+from ..dependencies import get_current_course_id
 from ..schemas.common import ok, fail
 from ..utils import loads, fmt_dt
 from ..agent_st.agent.runtime import run_turn
@@ -42,8 +43,12 @@ class FeedbackReq(BaseModel):
 def ai_sessions(
     db: Session = Depends(get_db),
     user=Depends(get_current_user),
+    course_id: str = Depends(get_current_course_id),
 ):
-    rows = db.query(ChatSession).filter(ChatSession.user_id == user.user_id).order_by(ChatSession.updated_at.desc()).all()
+    rows = db.query(ChatSession).filter(
+        ChatSession.user_id == user.user_id,
+        ChatSession.course_id == course_id,
+    ).order_by(ChatSession.updated_at.desc()).all()
     items = [
         {
             "sessionId": s.session_id, "title": s.title,
@@ -107,11 +112,11 @@ def suggest_questions(
     return ok([])
 
 
-def _agent_events(req: ChatReq, user):
+def _agent_events(req: ChatReq, user, course_id=None):
     """运行 explain 流 Agent，返回事件 dict 生成器（流式/非流式共用）"""
     raw_sid = (req.sessionId or '').strip()
     session_id = None if (not raw_sid or raw_sid.lower() == 'new') else raw_sid
-    context = {"courseId": req.courseId}
+    context = {"courseId": course_id or req.courseId}   # 头优先；未传时回退 body 默认值
     if req.kpId:
         context["kpId"] = req.kpId
     return run_turn(
@@ -128,6 +133,7 @@ def ai_chat(
     req: ChatReq,
     db: Session = Depends(get_db),
     user=Depends(get_current_user),
+    course_id: str = Depends(get_current_course_id),
 ):
     """AI 智能答疑（非流式聚合版）：内部复用 explain 流 Agent，落库由 AgentStore 完成"""
     content_parts: list[str] = []
@@ -135,7 +141,7 @@ def ai_chat(
     session_id = ""
     out_of_scope = False
     demo = False
-    for ev in _agent_events(req, user):
+    for ev in _agent_events(req, user, course_id):
         etype = ev.get("type")
         if etype == "session":
             session_id = ev.get("session_id") or ""
@@ -163,6 +169,7 @@ def ai_chat(
 async def ai_chat_stream(
     req: ChatReq,
     user=Depends(get_current_user),
+    course_id: str = Depends(get_current_course_id),
 ):
     """SSE 真实流式答疑：meta → tool_start/tool_end → content(逐 token) → citations → done"""
     from sse_starlette.sse import EventSourceResponse
@@ -170,7 +177,7 @@ async def ai_chat_stream(
     def gen():  # 同步生成器：sse_starlette 会放入线程池迭代，避免阻塞事件循环
         session_id = ""
         out_of_scope = False
-        for ev in _agent_events(req, user):
+        for ev in _agent_events(req, user, course_id):
             etype = ev.get("type")
             if etype == "session":
                 session_id = ev.get("session_id") or ""

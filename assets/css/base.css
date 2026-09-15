@@ -349,7 +349,8 @@ a.badge--outline:hover { border-color: var(--brand-400); color: var(--brand-300)
   transition: all var(--t-fast);
 }
 .chip:hover { border-color: var(--brand-400); color: var(--text); }
-.chip.is-active { background: var(--brand-500); border-color: var(--brand-500); color: #fff; }
+.chip.is-active,
+.chip.is-on { background: var(--brand-500); border-color: var(--brand-500); color: #fff; }
 
 /* segmented 分段控制器 */
 .seg {

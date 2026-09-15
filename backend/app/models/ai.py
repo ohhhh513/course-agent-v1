@@ -12,6 +12,7 @@ class ChatSession(Base):
 
     session_id = Column(String(32), primary_key=True)          # CH...
     user_id = Column(String(64), ForeignKey("users.user_id"), index=True)
+    course_id = Column(String(32), ForeignKey("courses.course_id"), default="C2026DS001", index=True)  # 课程隔离（旧库由 _migrate 补列）
     title = Column(String(256), default="")
     kp_name = Column(String(64), default="")
     flow_id = Column(String(16), default="explain")            # explain / generate_items

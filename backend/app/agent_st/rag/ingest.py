@@ -33,7 +33,7 @@ def _infer_section(unit: ParsedUnit, fallback_name: str) -> tuple[int, str]:
     return 0, unit.section_hint or fallback_name
 
 
-def units_to_records(units: list[ParsedUnit], source_name: str) -> list[ChunkRecord]:
+def units_to_records(units: list[ParsedUnit], source_name: str, course_id: str = "C2026DS001") -> list[ChunkRecord]:
     records: list[ChunkRecord] = []
     model = active_model_name()
     seq = 0
@@ -59,16 +59,17 @@ def units_to_records(units: list[ParsedUnit], source_name: str) -> list[ChunkRec
                     page_or_slide=unit.page,
                     extra=unit.extra,
                     embedding_model=model,
+                    course_id=course_id,
                 )
             )
     return records
 
 
-def ingest_path(path: Path, store: ChunkStore | None = None, replace_source: bool = True) -> dict:
+def ingest_path(path: Path, store: ChunkStore | None = None, replace_source: bool = True, course_id: str = "C2026DS001") -> dict:
     path = Path(path)
     parser = get_parser(path)
     units = parser.parse(path)
-    records = units_to_records(units, path.name)
+    records = units_to_records(units, path.name, course_id=course_id)
     if not records:
         return {"ok": False, "error": "未产生切片", "path": str(path)}
     vectors = embed_texts([r.text for r in records])
@@ -79,7 +80,7 @@ def ingest_path(path: Path, store: ChunkStore | None = None, replace_source: boo
         if path.suffix.lower() == ".json":
             store.delete_source_types(["question_stem", "question_analysis"])
         else:
-            store.delete_source(path.name)
+            store.delete_source(path.name, course_id=course_id)
     n = store.upsert_many(records)
     types = sorted({r.source_type for r in records})
     return {

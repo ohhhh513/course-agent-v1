@@ -16,6 +16,7 @@ CREATE TABLE IF NOT EXISTS chunks (
     source_id TEXT NOT NULL,
     course_chapter INTEGER NOT NULL,
     section TEXT NOT NULL,
+    course_id TEXT NOT NULL DEFAULT 'C2026DS001',
     question_id INTEGER,
     page_or_slide INTEGER,
     extra_json TEXT,
@@ -49,6 +50,11 @@ class ChunkStore:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self._conn() as conn:
             conn.executescript(CREATE_SQL)
+            # 课程隔离：旧 rag.db 无 course_id 列（补列 + 存量回填默认课程，幂等）
+            cols = [r[1] for r in conn.execute("PRAGMA table_info(chunks)").fetchall()]
+            if "course_id" not in cols:
+                conn.execute("ALTER TABLE chunks ADD COLUMN course_id TEXT NOT NULL DEFAULT 'C2026DS001'")
+            conn.execute("UPDATE chunks SET course_id='C2026DS001' WHERE course_id IS NULL OR course_id=''")
 
     def _conn(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.path)
@@ -60,9 +66,15 @@ class ChunkStore:
             row = conn.execute("SELECT COUNT(*) AS n FROM chunks").fetchone()
             return int(row["n"] if row else 0)
 
-    def delete_source(self, source_id: str) -> int:
+    def delete_source(self, source_id: str, course_id: str | None = None) -> int:
         with self._conn() as conn:
-            cur = conn.execute("DELETE FROM chunks WHERE source_id = ?", (source_id,))
+            if course_id:
+                cur = conn.execute(
+                    "DELETE FROM chunks WHERE source_id = ? AND course_id = ?",
+                    (source_id, course_id),
+                )
+            else:
+                cur = conn.execute("DELETE FROM chunks WHERE source_id = ?", (source_id,))
             conn.commit()
             return cur.rowcount
 
@@ -92,6 +104,7 @@ class ChunkStore:
                 json.dumps(r.extra or {}, ensure_ascii=False),
                 _pack(r.embedding),
                 r.embedding_model,
+                r.course_id,
             )
             for r in records
         ]
@@ -100,8 +113,8 @@ class ChunkStore:
                 """
                 INSERT OR REPLACE INTO chunks (
                     chunk_id, text, source_type, source_id, course_chapter, section,
-                    question_id, page_or_slide, extra_json, embedding, embedding_model
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    question_id, page_or_slide, extra_json, embedding, embedding_model, course_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 rows,
             )
@@ -113,9 +126,13 @@ class ChunkStore:
         course_chapter: int | None = None,
         section_prefix: str | None = None,
         source_types: list[str] | None = None,
+        course_id: str | None = None,
     ) -> list[ChunkRecord]:
         clauses = ["1=1"]
         args: list = []
+        if course_id:
+            clauses.append("course_id = ?")
+            args.append(course_id)
         if course_chapter:
             clauses.append("course_chapter = ?")
             args.append(course_chapter)
@@ -180,4 +197,5 @@ class ChunkStore:
             extra=extra,
             embedding=_unpack(row["embedding"]),
             embedding_model=row["embedding_model"] or "",
+            course_id=row["course_id"] if "course_id" in row.keys() else "C2026DS001",
         )

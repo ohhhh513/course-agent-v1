@@ -17,6 +17,7 @@ from ..models.graph import GraphNode, LearningPath
 from ..models.practice import AnswerRecord, PracticeSession
 from ..models.checkin import StudyCheckin
 from ..middleware.auth import get_current_user
+from ..dependencies import get_current_course_id
 from ..schemas.common import ok, fail, list_response
 from ..utils import loads, fmt_dt
 
@@ -56,11 +57,12 @@ def _duration_to_seconds(s: str) -> int:
 
 
 def _resolve_class_id(db: Session, user: User) -> str:
+    """无班级时返回空串，避免回退演示班 CL2301"""
     if user.class_name:
         row = db.query(ClassInfo.class_id).filter(ClassInfo.name == user.class_name).first()
         if row:
             return row[0]
-    return "CL2301"
+    return ""
 
 
 # =============================================================================
@@ -71,6 +73,7 @@ def _resolve_class_id(db: Session, user: User) -> str:
 def student_dashboard(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
+    course_id: str = Depends(get_current_course_id),
 ):
     """学习驾驶舱 — 所有指标从用户的 transaction 表动态计算"""
     uid = user.user_id
@@ -81,6 +84,7 @@ def student_dashboard(
         from ..services.alert_detector import detect_alerts
         detect_alerts(db, [user])
     except Exception as e:
+        db.rollback()   # 检测失败必须回滚，否则会话毒化导致后续全部查询 500
         print(f"[alert-detect] 跳过（{e}）")
 
     # 综合掌握率（答题正确率 ∪ 资源完成率）→ 资源中心展示用
@@ -90,7 +94,10 @@ def student_dashboard(
     acc_by_kp = quiz_accuracy_by_kp(db, uid)   # {kp: (答题正确率, 不同题目数)} —— 靶向/薄弱点用
 
     # --- learning_path（用户专属）---
-    lp_rows = db.query(LearningPath).filter(LearningPath.user_id == uid).order_by(LearningPath.step).all()
+    lp_rows = db.query(LearningPath).filter(
+        LearningPath.user_id == uid,
+        LearningPath.course_id == course_id,   # 课程隔离：只统计当前课程
+    ).order_by(LearningPath.step).all()
     lp_total = len(lp_rows)
     lp_done = [r for r in lp_rows if r.status == "done"]
     lp_doing = [r for r in lp_rows if r.status == "doing"]
@@ -111,7 +118,7 @@ def student_dashboard(
         # 无学习记录时，默认推荐课程第一个知识点，避免前端空指针
         first = db.query(GraphNode).filter(
             GraphNode.graph_type == "knowledge",
-            GraphNode.course_id == "C2026DS001",
+            GraphNode.course_id == course_id,
         ).order_by(GraphNode.id).first()
         if first:
             current_node = {"kpId": first.id, "name": first.name}
@@ -410,8 +417,10 @@ def student_resources(
     size: int = Query(20),
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
+    course_id: str = Depends(get_current_course_id),
 ):
-    q = db.query(Resource)
+    # 课程隔离：只返回当前课程下的资源（X-Course-Id 头，缺省回退默认课程）
+    q = db.query(Resource).filter(Resource.course_id == course_id)
     if type and type != "all":
         q = q.filter(Resource.type == type)
     if kpId:
@@ -435,10 +444,17 @@ def student_resources(
         ).all()
     }
 
+    from ..services.catalog_helpers import resource_kp_ids, resolve_kp_labels, kp_name_map
+    name_map = kp_name_map(db, course_id)
+
     items = [
         {
             "resId": r.res_id, "type": r.type, "title": r.title,
+            "chapterId": getattr(r, "chapter_id", "") or "",
+            "chapter": getattr(r, "chapter", "") or "",
             "kpId": r.kp_id, "kp": r.kp, "category": r.category,
+            "kpIds": resource_kp_ids(r),
+            "tags": resolve_kp_labels(db, resource_kp_ids(r), name_map),
             "source": r.source, "views": r.views,
             "progress": prog_map[r.res_id].progress if r.res_id in prog_map else 0,
             "position": prog_map[r.res_id].position if r.res_id in prog_map else 0,
@@ -451,13 +467,13 @@ def student_resources(
 
 
 @router.get("/resources/{res_id}/progress")
-def get_resource_progress(res_id: str, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+def get_resource_progress(res_id: str, db: Session = Depends(get_db), user: User = Depends(get_current_user), course_id: str = Depends(get_current_course_id)):
     """获取某个资源的真实学习进度（视频：秒；文档：页码/百分比）"""
     p = db.query(ResourceProgress).filter(
         ResourceProgress.user_id == user.user_id,
         ResourceProgress.res_id == res_id,
     ).first()
-    r = db.query(Resource).filter(Resource.res_id == res_id).first()
+    r = db.query(Resource).filter(Resource.res_id == res_id, Resource.course_id == course_id).first()
     if not r:
         return fail("资源不存在", 404)
     dur_sec = _duration_to_seconds(r.duration) if r.duration else 0
@@ -487,9 +503,10 @@ def save_resource_progress(
     body: dict,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
+    course_id: str = Depends(get_current_course_id),
 ):
     """保存学习进度：body = {progress: 0~100, position: 秒/页码}"""
-    r = db.query(Resource).filter(Resource.res_id == res_id).first()
+    r = db.query(Resource).filter(Resource.res_id == res_id, Resource.course_id == course_id).first()
     if not r:
         return fail("资源不存在", 404)
     progress = int(body.get("progress", 0) or 0)
@@ -604,9 +621,9 @@ def _add_watch_seconds(db: Session, uid: str, day: date, delta: int):
 
 
 @router.post("/resources/{res_id}/view")
-def resource_view(res_id: str, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+def resource_view(res_id: str, db: Session = Depends(get_db), user: User = Depends(get_current_user), course_id: str = Depends(get_current_course_id)):
     """记录一次资源查看，返回最新观看次数"""
-    r = db.query(Resource).filter(Resource.res_id == res_id).first()
+    r = db.query(Resource).filter(Resource.res_id == res_id, Resource.course_id == course_id).first()
     if not r:
         return fail("资源不存在", 404)
     r.views = (r.views or 0) + 1
@@ -615,10 +632,10 @@ def resource_view(res_id: str, db: Session = Depends(get_db), user: User = Depen
 
 
 @router.get("/resource-stats")
-def resource_stats(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
-    """学习资源进度统计 — 从 ResourceProgress 聚合"""
+def resource_stats(db: Session = Depends(get_db), user: User = Depends(get_current_user), course_id: str = Depends(get_current_course_id)):
+    """学习资源进度统计 — 从 ResourceProgress 聚合（仅统计当前课程）"""
     uid = user.user_id
-    resources = db.query(Resource).all()
+    resources = db.query(Resource).filter(Resource.course_id == course_id).all()
     res_map = {r.res_id: r for r in resources}
     progress_rows = db.query(ResourceProgress).filter(ResourceProgress.user_id == uid).all()
     progress_map = {p.res_id: p for p in progress_rows}

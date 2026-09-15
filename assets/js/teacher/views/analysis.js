@@ -7,11 +7,14 @@
     render() {
       const el = U.$('#view-analysis');
       el.innerHTML = U.skeleton(420);
-      API.analysis.errors({ classId: state.classId }).then(d => {
-        // 防御性检查：确保所有字段存在且为数组
+      if (!API.config.activeCourseId) {
+        el.innerHTML = `<div class="card"><div class="card__body"><div class="empty" style="padding:48px;text-align:center"><b>尚未创建或选择课程</b><p class="fz-12 t-dim">请先建课后再查看归因分析。</p></div></div></div>`;
+        return;
+      }
+      API.analysis.errors({}).then(d => {
         const topWrongQuestions = Array.isArray(d.topWrongQuestions) ? d.topWrongQuestions : [];
         const causes = Array.isArray(d.causes) ? d.causes : [];
-        const scope = d.scope || { chapter: '全部章节', timeRange: '全部', classId: state.classId || 'CL2301' };
+        const scope = d.scope || { chapter: '全部章节', timeRange: '全部', classId: API.config.activeCourseId };
         const weakChain = d.weakChain || { root: {}, mid: {}, leaf: {}, explain: '' };
         const commonVsIndividual = d.commonVsIndividual || { common: [], individual: [] };
         const common = Array.isArray(commonVsIndividual.common) ? commonVsIndividual.common : [];
@@ -19,7 +22,7 @@
 
         el.innerHTML = `
         <div class="callout callout--brand" style="margin-bottom:16px">${icon('flask')}
-          <div><b>分析范围</b>${U.esc(scope.chapter)} · ${U.esc(scope.timeRange)} · ${scope.classId}
+          <div><b>分析范围</b>${U.esc(scope.chapter)} · ${U.esc(scope.timeRange)} · ${U.esc(scope.classId || API.config.activeCourseId || '—')}
           · 系统通过对错题记录聚类与 AI 归因，识别共性薄弱与个性异常。</div></div>
 
         <div class="card" style="margin-bottom:16px">
