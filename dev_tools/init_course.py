@@ -4,9 +4,13 @@
 隔离约定：
   - 仅本目录脚本；不被 backend/app 启动链路 import
   - 只访问已运行的后端（默认 127.0.0.1:8000），不用 TestClient
-  - 不修改演示课默认数据，除非配置显式 useCourseId
 
-用法见 dev_tools/README.md
+交互模式（推荐）:
+  python dev_tools/init_course.py
+  → 提示教师账号/密码、选择或新建课程、可选统一资源根目录
+
+非交互:
+  python dev_tools/init_course.py --config xxx.json --course CXXX --teacher user --password 123456
 """
 from __future__ import annotations
 
@@ -17,7 +21,18 @@ import sys
 import urllib.error
 import urllib.request
 from pathlib import Path
-from typing import Any
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from cli_common import (  # noqa: E402
+    apply_path_roots,
+    apply_resources_root,
+    ask,
+    ask_password,
+    http_json,
+    pick_teacher,
+    prompt_course,
+    prompt_edit_chapters,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -93,9 +108,11 @@ def load_config(path: Path) -> dict:
 
 
 def resolve_path(p: str) -> Path:
-    path = Path(p)
+    """解析资源路径：去引号、正斜杠、Windows 盘符绝对路径。"""
+    s = (p or "").strip().strip('"').strip("'").strip().replace("\\", "/")
+    path = Path(s)
     if not path.is_absolute():
-        path = ROOT / p
+        path = ROOT / s
     return path
 
 
@@ -167,11 +184,22 @@ def upload_resource(api: Api, item: dict, kp_name_to_id: dict, ch_name_to_id: di
 
 
 def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(description="通过 API 初始化课程（开发用）")
-    ap.add_argument("--config", default=str(Path(__file__).parent / "sample_config.json"))
-    ap.add_argument("--base", default=None, help="覆盖 baseUrl，如 http://127.0.0.1:8000")
+    ap = argparse.ArgumentParser(description="通过 API 初始化课程（开发用·支持交互）")
+    ap.add_argument("--config", default=str(Path(__file__).parent / "course_structure_ds.json"))
+    ap.add_argument("--base", default=None, help="服务地址，如 http://127.0.0.1:8000")
+    ap.add_argument("--teacher", default=None, help="教师用户名")
+    ap.add_argument("--password", default=None, help="教师密码（不传则交互输入）")
+    ap.add_argument("--course", default=None, dest="course_id", help="已有课程 ID（跳过建课）")
+    ap.add_argument("--resources-root", default=None, help="统一资源根目录（三类文件共用时）")
+    ap.add_argument("--textbooks-root", default=None, help="PDF 教材根目录")
+    ap.add_argument("--videos-root", default=None, help="视频根目录")
+    ap.add_argument("--slides-root", default=None, help="PPT 课件根目录")
     ap.add_argument("--skip-uploads", action="store_true", help="不上传资源文件")
+    ap.add_argument("--interactive", "-i", action="store_true", help="强制交互问答（默认无参时自动）")
     args = ap.parse_args(argv)
+
+    # 是否交互：显式 -i，或未给出 course/teacher 时
+    interactive = args.interactive or (not args.course_id or not args.teacher)
 
     cfg_path = Path(args.config)
     if not cfg_path.is_file():
@@ -182,37 +210,147 @@ def main(argv: list[str] | None = None) -> int:
     api = Api(base)
     print(f"[init] base={base}")
     print("[init] 本脚本仅开发用，不会随服务自动执行。")
+    print(f"[init] 配置: {cfg_path}")
 
-    # 1) 登录教师
-    t = cfg["teacher"]
-    st, j = api.req(
-        "POST",
-        "/api/v1/auth/login",
-        body={"username": t["username"], "password": t["password"]},
-        headers={"Content-Type": "application/json"},
-    )
-    if st != 200 or j.get("code") != 0:
-        print(f"[error] 教师登录失败: {j}")
+    # --- 资源路径：三类文件目录（textbooks / videos / slides）---
+    root = args.resources_root or ""  # 兼容旧参数，交互流程不使用
+    tb = args.textbooks_root or cfg.get("textbooksRoot") or ""
+    vd = args.videos_root or cfg.get("videosRoot") or ""
+    sl = args.slides_root or cfg.get("slidesRoot") or ""
+    res_root = cfg.get("resourcesRoot") or root or ""
+
+    def _save_roots(tb_, vd_, sl_, res_=""):
+        raw_cfg = json.loads(cfg_path.read_text(encoding="utf-8")) if cfg_path.is_file() else {}
+        raw_cfg["textbooksRoot"] = tb_
+        raw_cfg["videosRoot"] = vd_
+        raw_cfg["slidesRoot"] = sl_
+        if res_:
+            raw_cfg["resourcesRoot"] = res_
+        else:
+            raw_cfg.pop("resourcesRoot", None)
+        cfg_path.write_text(json.dumps(raw_cfg, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        print(f"[init] 已将本次修改设置为默认路径 → {cfg_path}")
+
+    if interactive and cfg.get("resources") and not args.skip_uploads:
+        has_any = bool(tb or vd or sl or res_root)
+        if not has_any:
+            print("\n—— 本机资源存放目录（当前为空，请完成初次配置）——")
+            print("  textbooksRoot : （未设置）")
+            print("  videosRoot    : （未设置）")
+            print("  slidesRoot    : （未设置）")
+            print("\n请填入三类文件所在文件夹（文件直接放在该目录下）：")
+            tb = ask("教材 PDF 目录 textbooksRoot", "", allow_empty=True)
+            vd = ask("视频 MP4 目录 videosRoot", "", allow_empty=True)
+            sl = ask("课件 PPT 目录 slidesRoot", "", allow_empty=True)
+            if tb or vd or sl:
+                _save_roots(tb, vd, sl)
+                cfg["textbooksRoot"], cfg["videosRoot"], cfg["slidesRoot"] = tb, vd, sl
+            else:
+                print("[warn] 未填写任何目录，将跳过资源上传")
+                args.skip_uploads = True
+        else:
+            print("\n—— 本机资源存放目录（当前配置默认值）——")
+            print(f"  textbooksRoot : {tb or '（未设置）'}")
+            print(f"  videosRoot    : {vd or '（未设置）'}")
+            print(f"  slidesRoot    : {sl or '（未设置）'}")
+            if res_root:
+                print(f"  resourcesRoot : {res_root}")
+            print("直接回车 = 使用以上默认值；输入 y 或 yes = 修改并写回配置文件。")
+            ans = ask("是否修改资源路径？(y=修改，回车=保持默认)", "", allow_empty=True).lower()
+            if ans in ("y", "yes", "1", "s"):
+                tb = ask("教材 PDF 目录 textbooksRoot", tb) or tb
+                vd = ask("视频 MP4 目录 videosRoot", vd) or vd
+                sl = ask("课件 PPT 目录 slidesRoot", sl) or sl
+                _save_roots(tb, vd, sl)
+                cfg["textbooksRoot"], cfg["videosRoot"], cfg["slidesRoot"] = tb, vd, sl
+            else:
+                print("[init] 使用配置中的默认资源路径")
+    elif interactive and not args.skip_uploads and not cfg.get("resources"):
+        print("\n（配置中无 resources 列表，跳过资源上传）")
+        args.skip_uploads = True
+
+    # 非交互：兼容旧 resourcesRoot → 拆成三类
+    if not interactive and res_root and not (tb or vd or sl):
+        tb = vd = sl = res_root
+
+    roots = {"textbooks": tb, "videos": vd, "slides": sl}
+    if any(roots.values()) or res_root:
+        cfg = apply_path_roots(cfg, roots, single_root=res_root)
+        print(f"[init] textbooksRoot = {tb or res_root or '（未用）'}")
+        print(f"[init] videosRoot    = {vd or res_root or '（未用）'}")
+        print(f"[init] slidesRoot    = {sl or res_root or '（未用）'}")
+
+    # --- 章节 / 知识点（可选交互编辑） ---
+    if interactive:
+        cfg["chapters"] = prompt_edit_chapters(cfg.get("chapters") or [])
+        # 只回写 chapters，避免把已解析的绝对路径写回共享配置
+        if args.config and cfg_path.is_file():
+            try:
+                raw_cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
+                raw_cfg["chapters"] = cfg["chapters"]
+                cfg_path.write_text(json.dumps(raw_cfg, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+                print(f"[init] 已写回 chapters → {cfg_path}")
+            except Exception as e:
+                print(f"[warn] 写回 chapters 失败（不影响本次运行）: {e}")
+
+    # --- 教师 ---
+    cfg_teacher = cfg.get("teacher") or {}
+    tuser = args.teacher or ""
+    tpass = args.password or ""
+    if interactive and not args.teacher:
+        print("\n—— 登录教师 ——")
+        tuser = pick_teacher(base, default_user=cfg_teacher.get("username") or "")
+        tpass = ask_password(f"教师「{tuser}」的密码", cfg_teacher.get("password") if cfg_teacher.get("username") == tuser else "")
+    elif interactive and args.teacher:
+        tuser = args.teacher
+        tpass = ask_password(f"教师「{tuser}」的密码", args.password or "")
+    else:
+        tuser = tuser or cfg_teacher.get("username") or ""
+        tpass = tpass or cfg_teacher.get("password") or ""
+    try:
+        api.token = None
+        st, j = api.req(
+            "POST",
+            "/api/v1/auth/login",
+            body={"username": tuser, "password": tpass, "role": "teacher"},
+            headers={"Content-Type": "application/json"},
+        )
+        if st != 200 or j.get("code") != 0:
+            print(f"[error] 教师登录失败: {j}")
+            return 1
+        api.token = j["data"]["token"]
+        print(f"[init] 教师登录成功: {tuser}")
+    except Exception as e:
+        print(f"[error] 登录异常: {e}")
         return 1
-    api.token = j["data"]["token"]
-    print(f"[init] 教师登录成功: {t['username']}")
 
-    # 2) 课程
-    cmeta = cfg["course"]
+    # --- 课程 ---
+    cmeta = cfg.get("course") or {}
     invite = ""
-    if cmeta.get("useCourseId"):
-        api.course_id = cmeta["useCourseId"]
-        # 校验成员
+    course_id = args.course_id or cmeta.get("useCourseId")
+    if interactive and not course_id:
+        try:
+            api.course_id, invite = prompt_course(
+                api.token, base,
+                create_name=cmeta.get("name") or "数据结构与算法",
+            )
+            course_id = api.course_id
+        except Exception as e:
+            print(f"[error] 选择课程失败: {e}")
+            return 1
+    elif course_id:
+        api.course_id = str(course_id)
         st, j = api.req("GET", "/api/v1/teacher/structure", headers=api.hdrs())
         if st != 200 or j.get("code") != 0:
-            print(f"[error] 无法访问课程 {api.course_id}（未加入或课号错误）: {j.get('message') or j.get('detail')}")
+            print(f"[error] 无法访问课程 {api.course_id}: {j.get('message') or j.get('detail')}")
             return 1
         print(f"[init] 使用已有课程: {api.course_id}")
     else:
+        # 非交互且无课号：按配置新建
         st, j = api.req(
             "POST",
             "/api/v1/teacher/courses",
-            body={"name": cmeta["name"], "term": cmeta.get("term") or "", "code": cmeta.get("code") or ""},
+            body={"name": cmeta.get("name") or "新建课程", "term": cmeta.get("term") or "", "code": cmeta.get("code") or ""},
             headers={"Authorization": f"Bearer {api.token}"},
         )
         if st != 200 or j.get("code") != 0:

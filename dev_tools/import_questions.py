@@ -1,12 +1,12 @@
 """
-开发用：通过 HTTP API 批量导入已转换题库（questions_after_class_import.json）。
+开发用：通过 HTTP API 批量导入已转换题库。
 
 隔离：仅 dev_tools；不随服务启动；只打已运行后端。
 
-用法（项目根，先启动后端）:
+用法:
   python dev_tools/import_questions.py
-  python dev_tools/import_questions.py --course CXXXXXXX
-  python dev_tools/import_questions.py --file dev_tools/questions_after_class_import.json --teacher dev_teacher --password 123456
+    → 交互：教师账号 + 选择课程 + 可选 dry-run
+  python dev_tools/import_questions.py --course CXXX --teacher xxx --password yyy
   python dev_tools/import_questions.py --dry-run
 """
 from __future__ import annotations
@@ -20,6 +20,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE))
+from cli_common import ask, prompt_course, prompt_teacher  # noqa: E402
+
 DEFAULT_FILE = HERE / "questions_after_class_import.json"
 BATCH = 50
 
@@ -50,26 +53,24 @@ def api_req(base, method, path, token="", course_id="", body=None, timeout=180):
 
 
 def main(argv=None):
-    ap = argparse.ArgumentParser(description="导入转换后的题库（HTTP API）")
+    ap = argparse.ArgumentParser(description="导入转换后的题库（HTTP API·支持交互）")
     ap.add_argument("--base", default="http://127.0.0.1:8000")
-    ap.add_argument("--teacher", default="dev_teacher")
-    ap.add_argument("--password", default="123456")
-    ap.add_argument("--course", default="", dest="course_id", help="目标课程 ID（必填，除非 --list-only）")
+    ap.add_argument("--teacher", default=None)
+    ap.add_argument("--password", default=None)
+    ap.add_argument("--course", default=None, dest="course_id", help="目标课程 ID")
     ap.add_argument("--file", default=str(DEFAULT_FILE))
     ap.add_argument("--batch", type=int, default=BATCH)
     ap.add_argument("--dry-run", action="store_true", help="只校验文件与 KP 匹配，不调用导入")
+    ap.add_argument("--interactive", "-i", action="store_true")
     args = ap.parse_args(argv)
+
+    interactive = args.interactive or (not args.course_id or not args.teacher)
 
     qpath = Path(args.file)
     if not qpath.is_absolute():
         qpath = ROOT / qpath
     if not qpath.is_file():
         print(f"[error] 题库文件不存在: {qpath}")
-        return 1
-
-    if not args.course_id:
-        print("[error] 请指定 --course <courseId>（题库将写入该课）")
-        print("        课号可从教师端顶栏课程下拉，或 init_course 输出的 courseId 获取")
         return 1
 
     qlist = json.loads(qpath.read_text(encoding="utf-8"))
@@ -79,16 +80,38 @@ def main(argv=None):
     print(f"[load] {qpath.name}: {len(qlist)} 题")
 
     base = args.base.rstrip("/")
+    tuser = args.teacher or "dev_teacher"
+    tpass = args.password or "123456"
+    if interactive or not args.password:
+        print("\n—— 登录教师 ——")
+        tuser = ask("教师用户名", tuser)
+        tpass = ask("教师密码", tpass)
+
     st, j = api_req(base, "POST", "/api/v1/auth/login", body={
-        "username": args.teacher,
-        "password": args.password,
+        "username": tuser,
+        "password": tpass,
     })
     if st != 200 or not isinstance(j, dict) or j.get("code") != 0:
         print(f"[error] 教师登录失败: {j}")
         return 1
     token = j["data"]["token"]
+
     cid = args.course_id
-    print(f"[auth] teacher={args.teacher} course={cid}")
+    if interactive and not cid:
+        try:
+            cid, _invite = prompt_course(token, base)
+        except Exception as e:
+            print(f"[error] 选择课程失败: {e}")
+            return 1
+    if not cid:
+        print("[error] 请指定 --course <courseId> 或使用交互模式选择课程")
+        return 1
+    if interactive and not args.dry_run:
+        yn = ask("确认导入到该课并继续？(y/n)", "y").lower()
+        if yn not in ("y", "yes"):
+            print("已取消")
+            return 0
+    print(f"[auth] teacher={tuser} course={cid}")
 
     # 结构：解析 kpNames → kp_id，并校验教师可访问该课
     st, j = api_req(base, "GET", "/api/v1/teacher/structure", token=token, course_id=cid)
