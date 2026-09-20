@@ -92,7 +92,7 @@
               </div>
               <div class="stat stat--sm" style="--_c:var(--accent-500)">
                 <div class="stat__label">累计观看</div>
-                <div class="stat__value"><span>${rs.watchMinutes}</span><small>分钟</small></div>
+                <div class="stat__value"><span>${U.durMin(rs.watchMinutes)}</span><small>时长</small></div>
               </div>
               <div class="stat stat--sm" style="--_c:var(--warn)">
                 <div class="stat__label">累计阅读</div>

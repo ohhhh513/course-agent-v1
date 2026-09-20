@@ -59,6 +59,7 @@
 ```js
 Graph = {
   graphType: 'knowledge'|'problem'|'goal',
+<<<<<<< Updated upstream:docs/数据模型与Mock说明.md
   categories: [ { name, color } ],           // 节点分类与配色
   nodes: [ {
     id, name,
@@ -68,38 +69,112 @@ Graph = {
     difficulty,                              // 1~5 难度
     isKey,                                   // 是否重难点
     hours                                    // 建议学时
+=======
+  categories: [ { name, color } ],            // knowledge 固定 5 项：
+                                              // 0 已掌握 #22c55e / 1 学习中 #6366f1 / 2 待加强 #f59e0b
+                                              // 3 未开始 #64748b / 4 薄弱预警 #ef4444
+  nodes: [ {
+    id, name,
+    chapter?,                                 // 章节（知识图谱有）
+    category,                                 // categories 下标（= 学生对该知识点的真实学习状态）
+    mastery,                                  // 0~100 掌握率（由 answer_records + resource_progress 实时计算）
+    difficulty,                               // 1~5 难度
+    isKey,                                    // 是否重难点
+    hours                                     // 建议学时
+>>>>>>> Stashed changes:docs/数据模型与字段说明.md
   } ],
   links: [ { source, target, relation } ]    // relation: pre|advance|parallel|split|map|error|support
 }
 ```
 
+> **`nodes[].category`（知识图谱）由后端按真实学习记录计算，不再取 `graph_nodes.category` 的库值：**
+>
+> | category | 状态 | 判定（`_knowledge_state_category`） |
+> | --- | --- | --- |
+> | 0 | 已掌握 | 资源学习完成率 = 100%，或答题正确率 ≥ 80% |
+> | 1 | 学习中 | 有答题且正确率 50~79%，或有资源进度但未达标 |
+> | 2 | 待加强 | 有答题且正确率 40~49% |
+> | 3 | 未开始 | 无任何答题与资源记录（未登录查看图谱时也统一按此展示） |
+> | 4 | 薄弱预警 | 有答题且正确率 < 40%（与驾驶舱 weakPoints 的 danger 线一致） |
+>
+> problem / goal 图谱的 `category` 仍来自教师编排（`graph_nodes.category`）。
+
 ### 2.4 KpDetail（知识点详情）
 ```js
 { name, summary, completionRate, masteryRate, classAvgMastery,
+  studyMinutes,                                          // 个人学习时长(分)，见口径说明
+  courseAvgCompletion, courseAvgMastery, courseAvgMinutes,  // 课程平均三项
+  courseStudentCount, courseStudiedCount,                // 平均分母 / 有记录人数
   resources: [ { type, title, duration?, pages?, progress } ],
   relatedProblems: [ { qId, title, errorRate, mastery } ] }
 ```
+<<<<<<< Updated upstream:docs/数据模型与Mock说明.md
+=======
+
+> - **`kp_details.summary` = 「知识点介绍」**（2026-09-18 启用）：由教师在「课程目录与资源 → 新增知识点 /
+>   知识点详情」中录入，落库后学生端与教师端图谱详情面板均读取展示（`POST/PUT /teacher/structure/kps` 的
+>   `summary` 字段）。此前该列一直为空、前端显示的「暂无解释文本」占位曾是写死文案，现已改为空态样式。
+> - 学情口径集中在 `backend/app/services/kp_stats.py`：掌握度 = max(答题正确率[按题去重], 资源完成率)；
+>   完成度取 `learning_paths`；**学习时长** = Σ`resource_progress.position`（video）+ Σ`answer_records.duration_seconds`。
+>   课程平均的分母 = `user_courses` 中该课程全部学生（未学习者按 0 计入，同时返回 `courseStudiedCount`）。
+> - ⚠️ 历史数据里 `kp_details` 行数可能少于知识点数；缺失时后端从 `GraphNode` 兜底（此时 `summary` 为空），
+>   `PUT /teacher/structure/kps/{kpId}` 会自动补建 KpDetail 行，保证「知识点介绍」始终有落库位置。
+>>>>>>> Stashed changes:docs/数据模型与字段说明.md
 
 ### 2.5 LearningPath（推荐路径）
 ```js
 [ { step, name, status:'done|doing|todo|warn', hours, resCount, mastery, progress, locked } ]
 ```
+<<<<<<< Updated upstream:docs/数据模型与Mock说明.md
+=======
+> - `resCount` 由 `GET /graph/path` **以 `resources` 表实时统计后返回**（主 `kp_id` + `kp_ids`
+>   多标签都计入，同一资源对同一知识点只算一次），并顺手回写 `learning_paths.res_count`。
+>   表里的 `res_count` 只是派生缓存，别再当作事实来源 —— 历史上它只在教师端
+>   上传/删除资源时同步，学生端会一直显示建路径时的旧值（新建行甚至是 0）。
+> - 前端章节行显示的「N 个资源」按**去重后的资源条数**统计（同一资源挂多个知识点只算一次），
+>   所以章节合计 ≤ 该章各知识点 `resCount` 之和。
+> - `mastery` / `progress` / `status` 在每次 `GET /graph/path` 时按真实答题与资源进度刷新。
+>>>>>>> Stashed changes:docs/数据模型与字段说明.md
 
 ### 2.6 Dashboard（驾驶舱）
 学生 `studentDashboard`：
 ```js
 { overview: { courseProgress, currentNode:{kpId,name}, streakDays, streakHistory:[0~4...],
-              currentStreak, maxStreak, totalDays, todayStudyMinutes, status:'ok|warn|danger' },
+              currentStreak, maxStreak, totalDays,
+              todayStudyMinutes, todayStudySeconds, todayPracticeSeconds, todayResourceSeconds,
+              status:'ok|warn|danger' },
   coreMetrics: { completionRate, masteryRate, goalAchieveRate, updatedAt },
-  todos: [ { id, type, level, title, desc, action, target, kpId? } ],
+  todos: [ { id, type, level, title, desc, action, target, kpId?, kpName?, sessionId?, mode? } ],
   weakPoints: [ { kpId, name, masteryRate, chapter, errorCount, trend, level } ],
   suggestedQuestions: [ string ],
-  recentActivities: [ { id, type, title, meta, time, level } ] }
+  recentActivities: [ { id, type:'practice|resource', title, meta, time, level } ] }
 ```
+<<<<<<< Updated upstream:docs/数据模型与Mock说明.md
+=======
+> `todayStudySeconds`（当天练习用时 + 当天视频观看秒数，本地日历日）用于驾驶舱
+> 「今日累计学习时长」徽标，并由 `GET /student/study-duration` 轮询刷新；
+> `todos[].target` 取值必须是前端路由名（`resource` / `practice` / `graph` / `alerts`），
+> 否则 `Router.go()` 会静默失败导致按钮点了没反应。
+
+>>>>>>> Stashed changes:docs/数据模型与字段说明.md
 教师 `teacherDashboard`：
 ```js
 { classOverview:{...}, liveFeed:[...], todos:[...], kpRanking:[...] }
 ```
+
+### 2.6.1 ResourceProgress（资源学习进度 / 视频记录点）
+
+```js
+resource_progress = { user_id, res_id, progress:0~100, position, updated_at }
+// 视频 position = 秒（下次进入的续播记录点）；文档/PPT position = 页码
+```
+> - 写入：`POST /student/resources/{resId}/progress`，`progress`/`position` **取最大值不回退**；
+>   视频另带 `watchedDelta`（本次真实播放秒数）用于累计当日观看时长。
+> - ⚠️ 该表**没有 (user_id, res_id) 唯一约束**，历史并发上报会留下重复行
+>   （同一资源两行：一行 0/0、一行真实进度）。所以读写必须走 `services/resource_progress.py`：
+>   读 `progress_map()` 取最优行，写 `consolidate()` 合并成一行。
+>   **要彻底根治需补唯一约束（表结构变更，需先确认）。**
+> - 前端卡片/路径/掌握率、后端驾驶舱动态与 `resource-stats` 都已改用统一口径，重复行不会再让进度显示成 0%。
 
 ### 2.7 StudentOverview / Heatmap
 ```js

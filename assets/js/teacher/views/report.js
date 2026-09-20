@@ -57,24 +57,19 @@
     },
 
     async openGen() {
-      const [classes, kps] = await Promise.all([
-        API.teacher.classes().then(r => Array.isArray(r) ? r : ((r && r.list) || [])).catch(() => []),
+      const [courses, kps] = await Promise.all([
+        API.course.my().then(r => Array.isArray(r) ? r : []).catch(() => []),
         API.teacher.resourceKps().then(d => (d && d.chapters) || []).catch(() => [])
       ]);
-      // 与学生端「学习资源」中的课程章节保持完全一致，不能按接口返回的字典序排列，
-      // 也不能只依赖当前已有知识点，否则会漏掉暂时还没有数据的章节。
-      const CHAPTER_ORDER = [
-        ['第1章', '第1章 绪论'], ['第2章', '第2章 线性表'], ['第3章', '第3章 栈和队列'],
-        ['第4章', '第4章 串'], ['第5章', '第5章 数组和广义表'], ['第6章', '第6章 树和二叉树'],
-        ['第7章', '第7章 图'], ['第8章', '第8章 查找'], ['第9章', '第9章 排序']
-      ].map(([value, label]) => ({ value, label }));
-      const knownChapters = new Set(CHAPTER_ORDER.map(c => c.value));
-      const extraOptions = kps
-        .map(c => ({ value: c.chapter, label: c.chapter }))
-        .filter((c, i, arr) => c.value && !knownChapters.has(c.value) && arr.findIndex(x => x.value === c.value) === i);
-      // 当前报告接口以 chapter 字段承载统计范围；复选框保留多选能力。
-      const courseOptions = CHAPTER_ORDER.concat(extraOptions);
-      const scopeOptions = courseOptions.length ? courseOptions : [{ value: '全课程', label: '全课程' }];
+      // 统计范围（章节）以真实图谱章节为准，按「第N章」归一去重，避免短名与全名同显造成重复。
+      const normKey = ch => { const m = /第\s*(\d+)\s*章/.exec(ch || ''); return m ? '第' + m[1] + '章' : (ch || ''); };
+      const seen = new Set();
+      const scopeOptions = [];
+      (kps || []).map(c => c.chapter).filter(Boolean).forEach(ch => {
+        const k = normKey(ch);
+        if (k && !seen.has(k)) { seen.add(k); scopeOptions.push({ value: k, label: ch }); }
+      });
+      if (!scopeOptions.length) scopeOptions.push({ value: '全课程', label: '全课程' });
       const today = new Date();
       const maxDate = formatDateInput(today);
       const minDateObj = new Date(today);
@@ -86,17 +81,17 @@
       Modal.open({
         title: '生成学情分析报告',
         body: `<div class="stack" style="gap:14px">
-          <div><p class="fz-12 t-dim" style="margin-bottom:6px">选择班级</p>
-            <select class="select" id="rgClass">${classes.map(c => `<option value="${U.esc(c.classId)}">${U.esc(c.name)}</option>`).join('')}</select></div>
+          <div><p class="fz-12 t-dim" style="margin-bottom:6px">选择课程</p>
+            <select class="select" id="rgCourse">${courses.map(c => `<option value="${U.esc(c.courseId)}">${U.esc(c.name || c.courseId)}</option>`).join('') || '<option value="">（暂无课程）</option>'}</select></div>
           <div>
-            <p class="fz-12 t-dim" style="margin-bottom:6px">统计范围（可多选课程）</p>
+            <p class="fz-12 t-dim" style="margin-bottom:6px">统计范围（可多选章节，默认不选）</p>
             <div class="report-scope-list" id="rgScope">
               ${scopeOptions.map(c => `<label class="report-scope-option" title="${U.esc(c.label)}">
-                <input type="checkbox" name="rgCourse" value="${U.esc(c.value)}" checked>
+                <input type="checkbox" name="rgCourse" value="${U.esc(c.value)}">
                 <span>${U.esc(c.label)}</span>
               </label>`).join('')}
             </div>
-            <div class="report-scope-foot"><span id="rgScopeCount">已选 ${scopeOptions.length} 个课程</span><span>可多选</span></div>
+            <div class="report-scope-foot"><span id="rgScopeCount">已选 0 个章节</span><span>可多选</span></div>
           </div>
           <div class="grid g-2 report-date-grid"><div>
             <p class="fz-12 t-dim" style="margin-bottom:6px">开始日期</p>
@@ -119,7 +114,7 @@
             const count = scopeInputs.filter(input => input.checked).length;
             const countEl = U.$('#rgScopeCount', ov);
             const generateButton = U.$('#rgGo', ov);
-            if (countEl) countEl.textContent = `已选 ${count} 个课程`;
+            if (countEl) countEl.textContent = `已选 ${count} 个章节`;
             if (generateButton) generateButton.disabled = count === 0;
           };
           const syncDateRange = () => {
@@ -139,12 +134,12 @@
             const selectedCourses = scopeInputs.filter(input => input.checked).map(input => input.value);
             const startDate = startInput && startInput.value;
             const endDate = endInput && endInput.value;
-            if (!selectedCourses.length) return Toast.warn('请至少选择一个统计课程');
+            if (!selectedCourses.length) return Toast.warn('请至少选择一个统计章节');
             if (!startDate || !endDate) return Toast.warn('请选择完整的日期范围');
             if (startDate > endDate) return Toast.warn('开始日期不能晚于结束日期');
             const sections = U.$$('#rgSec .chip.is-active', ov).map(c => c.textContent);
             API.report.generate({
-              classIds: [U.$('#rgClass', ov).value], chapter: selectedCourses.join('、'),
+              courseId: U.$('#rgCourse', ov).value, chapter: selectedCourses.join('、'),
               startDate, endDate, sections
             }).then(r => { Toast.ok('报告已生成', r.reportId); close(); this.openDetail(r.reportId); });
           });

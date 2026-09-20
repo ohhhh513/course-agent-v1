@@ -119,4 +119,10 @@
     }
   };
 
+<<<<<<< Updated upstream
 Router.register('alerts', { title: '预警与提醒中心', mount: () => Alerts.render() });
+=======
+  // 注册路由：学生端侧栏「预警与提醒」与驾驶舱待办「去处理」都指向 alerts，
+  // 未注册会导致 Router.go('alerts') 静默失败（点击无任何反应）。
+  Router.register('alerts', { title: '预警与提醒', mount: () => Alerts.render() });
+>>>>>>> Stashed changes

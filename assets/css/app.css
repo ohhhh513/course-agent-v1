@@ -24,6 +24,44 @@
 }
 .card__head--col .badge { align-self: flex-start; }
 
+<<<<<<< Updated upstream
+=======
+/* ---------- 教学驾驶舱 · 卡片滚动与对齐 ---------- */
+.dash-todo-card { min-width: 0; align-self: stretch; overflow: hidden; }
+.dash-todo-card__body { height: 320px; min-height: 320px; flex: 0 0 320px; overflow-y: auto; overflow-x: hidden; }
+.dash-kp-ranking-card { min-width: 0; min-height: 0; align-self: stretch; }
+.dash-kp-ranking-card__body { flex: 1 1 0; min-height: 0; overflow-y: auto; overflow-x: hidden; }
+
+/* ---------- 教学驾驶舱 · 实时动态 ---------- */
+.dash-live-card { min-width: 0; align-self: stretch; }
+.dash-live-filter { max-width: 180px; min-width: 108px; }
+.dash-live-filter span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dash-live-filter svg { width: 13px; height: 13px; }
+.dash-live-card__body { height: 320px; min-height: 320px; flex: 0 0 320px; overflow: hidden; }
+.dash-live-panel { height: 100%; min-height: 0; }
+.dash-live-feed { height: 100%; overflow-y: auto; overflow-x: hidden; }
+.dash-live-feed .list__item:last-child { border-bottom: 1px solid var(--border-soft); }
+.dash-live-empty,
+.dash-live-picker__empty { min-height: 100%; display: flex; align-items: center; justify-content: center; color: var(--text-3); font-size: 13px; }
+.dash-live-picker { height: 100%; position: relative; background: var(--surface-2); padding: 8px 10px; }
+.dash-live-picker__options { height: 100%; min-height: 0; display: flex; flex-wrap: wrap; align-content: flex-start; gap: 6px; overflow-y: auto; }
+.dash-live-student-option { width: auto; flex: 0 0 auto; display: flex; align-items: center; padding: 7px 12px; border: 1px solid transparent; border-radius: var(--r-sm); background: transparent; color: var(--text); text-align: left; cursor: pointer; }
+.dash-live-student-option:hover { background: var(--surface); border-color: var(--border); }
+.dash-live-student-option.is-active { background: var(--brand-soft); border-color: var(--brand-300, var(--brand-500)); }
+.dash-live-student-option b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+
+/* ---------- 教学驾驶舱 · 顶部三指标环状图（平铺：均分剩余宽度） ---------- */
+.hero__rings { display: flex; align-items: flex-start; justify-content: space-evenly; gap: 8px; position: relative; flex: 2.2 1 480px; }
+.hero__ring { display: flex; flex-direction: column; align-items: center; gap: 2px; flex: 1 1 150px; max-width: 230px; min-width: 124px; text-align: center; }
+.hero__ring b { font-size: 12.5px; font-weight: 600; }
+.hero__ring > span { max-width: 170px; line-height: 1.5; }
+.chart--ring { width: 124px; height: 104px; }
+
+/* ---------- 教学驾驶舱 · 待办忽略（仅当日，无恢复入口） ---------- */
+.dash-todo-ignore { flex: 0 0 auto; color: var(--text-3); }
+.dash-todo-ignore:hover { color: var(--danger); border-color: var(--danger); }
+
+>>>>>>> Stashed changes
 .hero {
   position: relative; overflow: hidden;
   border: 1px solid var(--border); border-radius: var(--r-lg);
@@ -44,7 +82,8 @@
 .hero__main p { font-size: 13px; color: var(--text-2); }
 .hero__stats { display: flex; align-items: flex-start; gap: 22px; position: relative; flex-wrap: wrap; flex: 1.4 1 380px; justify-content: flex-start; }
 .hero__stat { display: flex; flex-direction: column; gap: 4px; min-width: 96px; }
-.hero__stat--streak { min-width: 320px; max-width: 620px; width: 100%; }
+/* 签到网格尽量平铺：不限制右栏宽度上限，让热力图吃满可用宽度 */
+.hero__stat--streak { min-width: 320px; max-width: 100%; width: 100%; }
 
 /* ---------- 学习贡献图（GitHub 风格 7×52）---------- */
 .streak-cal {
@@ -52,6 +91,13 @@
   background: var(--surface-2); border: 1px solid var(--border); border-radius: 10px;
   animation: streakCalIn .25s ease;
   width: 100%;
+<<<<<<< Updated upstream
+=======
+  /* 热力图格子高度上限：列数由 JS 的 --cal-weeks 决定，列宽按 1fr 平铺吃满整行；
+     窄屏时格子为正方形，宽屏时格子变「扁平瓦片」，始终铺满不留左右空白。
+     想再扁/再高只改这一个值。 */
+  --cal-cell-max: 30px;
+>>>>>>> Stashed changes
 }
 @keyframes streakCalIn { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
 
@@ -80,6 +126,7 @@
 .cal-grid-wrap { display: block; overflow-x: auto; padding-bottom: 2px; }
 .cal-grid {
   display: grid;
+<<<<<<< Updated upstream
   grid-template-rows: repeat(7, 10px);
   grid-template-columns: repeat(52, 10px);
   grid-auto-flow: column;
@@ -88,6 +135,20 @@
 }
 .cal-cell {
   width: 10px; height: 10px; border-radius: 2px;
+=======
+  grid-template-rows: repeat(7, auto);
+  /* 列宽用 1fr：网格横向平铺填满容器（不再固定 20px 后居中留白）；
+     最小 10px 保证窄屏时格子仍可辨认，超出则横向滚动 */
+  grid-template-columns: repeat(var(--cal-weeks, 52), minmax(10px, 1fr));
+  grid-auto-flow: column;
+  gap: 3px;
+  width: 100%;
+}
+.cal-cell {
+  width: 100%; height: auto; aspect-ratio: 1 / 1;
+  max-height: var(--cal-cell-max, 30px);
+  border-radius: 3px;
+>>>>>>> Stashed changes
   background: #ebedf0; display: block;
   transition: transform var(--t-fast);
   cursor: default;
@@ -102,11 +163,20 @@
 
 .cal-months {
   display: grid;
+<<<<<<< Updated upstream
   grid-template-columns: repeat(52, 10px);
   gap: 2px;
   margin-top: 6px;
   width: fit-content;
   font-size: 10.5px; color: var(--text-3);
+=======
+  /* 与 .cal-grid 用同一套列宽定义，保证「第N周」标签与所在列对齐 */
+  grid-template-columns: repeat(var(--cal-weeks, 52), minmax(10px, 1fr));
+  gap: 3px;
+  margin-top: 6px;
+  width: 100%;
+  font-size: 10px; color: var(--text-3);
+>>>>>>> Stashed changes
 }
 .cal-month-label { grid-row: 1; white-space: nowrap; }
 
@@ -163,6 +233,90 @@
   background: color-mix(in srgb, var(--surface) 88%, transparent);
   border: 1px solid var(--border); border-radius: var(--r-full); padding: 4px 11px;
   backdrop-filter: blur(8px);
+}
+
+/* ===== 图谱 + 右侧知识点详情面板（两栏） ===== */
+.graph-layout {
+  display: grid; grid-template-columns: minmax(0, 1fr) 336px;
+  align-items: stretch;
+}
+.graph-layout .graph-box { height: 560px; border-right: 1px solid var(--border-soft); }
+
+/* 知识图谱视图：铺满可用区域（图谱占满剩余高度，重难点清单压到底部并自带滚动）
+   注意必须带 .is-active，否则 #id 优先级会让未激活的视图也显示出来 */
+.view.is-active#view-graph.fill {
+  display: flex; flex-direction: column;
+  height: calc(100vh - var(--topbar-h) - 44px); min-height: 540px;
+}
+#view-graph.fill .graph-card {
+  flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column;
+  margin-bottom: 12px; overflow: hidden;
+}
+#view-graph.fill .graph-card > .graph-toolbar { flex: 0 0 auto; }
+#view-graph.fill .graph-layout { flex: 1 1 auto; min-height: 0; }
+#view-graph.fill .graph-layout .graph-box { height: 100%; }
+#view-graph.fill .kp-side { min-height: 0; }
+#view-graph.fill .kp-side__body { min-height: 0; }
+#view-graph.fill .key-card {
+  flex: 0 0 auto; display: flex; flex-direction: column;
+  max-height: 208px; min-height: 0; overflow: hidden;
+}
+#view-graph.fill .key-card .card__body { min-height: 0; overflow-y: auto; }
+.kp-side { display: flex; flex-direction: column; min-width: 0; background: var(--surface); }
+.kp-side__head { padding: 14px 16px 10px; border-bottom: 1px solid var(--border-soft); }
+.kp-side__head h3 { font-size: 15.5px; line-height: 1.4; margin-bottom: 8px; }
+.kp-side__empty { padding: 40px 18px; text-align: center; color: var(--text-3); font-size: 12.5px; line-height: 1.9; }
+.kp-tabs { display: flex; gap: 6px; padding: 10px 14px 0; }
+.kp-tabs button {
+  flex: 1; height: 30px; border-radius: 8px; border: 1px solid var(--border);
+  background: var(--surface-2); font-size: 12px; color: var(--text-2); cursor: pointer;
+}
+.kp-tabs button.on { background: rgba(15,118,110,.12); border-color: #5eead4; color: var(--brand); font-weight: 600; }
+.kp-side__body { flex: 1; min-height: 0; overflow-y: auto; padding: 12px 14px 16px; }
+.kp-sec { margin-bottom: 16px; }
+.kp-sec__t {
+  display: flex; align-items: center; gap: 7px; font-size: 12px; font-weight: 700;
+  color: var(--text-2); margin-bottom: 8px;
+}
+.kp-sec__t::before { content: ''; width: 3px; height: 13px; border-radius: 2px; background: var(--brand); }
+.kp-sec__note { font-size: 11px; color: var(--text-3); font-weight: 400; margin-left: auto; }
+.kp-text { font-size: 12.5px; line-height: 1.85; color: var(--text-2); position: relative; }
+.kp-text.is-clamped { max-height: 5.6em; overflow: hidden; }
+.kp-text.is-clamped::after {
+  content: ''; position: absolute; left: 0; right: 0; bottom: 0; height: 2.2em;
+  background: linear-gradient(transparent, var(--surface-2));
+}
+.kp-intro {
+  background: var(--surface-2); border: 1px solid var(--border);
+  border-radius: var(--r-md); padding: 10px 12px;
+}
+.kp-intro--empty {
+  border-style: dashed; background: transparent; color: var(--text-3);
+  font-size: 12px; line-height: 1.7;
+}
+.kp-row__t { font-size: 11px; color: var(--text-3); margin: 0 0 6px; }
+.kp-more {
+  margin-top: 6px; font-size: 11.5px; color: var(--brand); cursor: pointer;
+  background: none; border: 0; padding: 0;
+}
+.kp-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.kp-stat {
+  border: 1px solid var(--border); border-radius: var(--r-md); padding: 9px 6px; text-align: center;
+  background: var(--surface-2);
+}
+.kp-stat b { display: block; font-size: 17px; font-family: ui-monospace, monospace; line-height: 1.35; }
+.kp-stat span { font-size: 11px; color: var(--text-3); }
+.kp-stat--avg { background: transparent; border-style: dashed; }
+.kp-stat--avg b { font-size: 14px; color: var(--text-2); }
+.kp-attrs { display: flex; flex-wrap: wrap; gap: 6px; }
+.kp-side__foot {
+  display: flex; gap: 8px; padding: 10px 14px; border-top: 1px solid var(--border-soft);
+  background: var(--surface-2); flex-shrink: 0;
+}
+.kp-side__foot .btn { flex: 1; justify-content: center; }
+@media (max-width: 1180px) {
+  .graph-layout { grid-template-columns: minmax(0, 1fr); }
+  .graph-layout .graph-box { border-right: 0; border-bottom: 1px solid var(--border-soft); }
 }
 
 /* 知识点详情抽屉 */
@@ -288,6 +442,55 @@
 .res__body { padding: 11px 12px; flex: 1; display: flex; flex-direction: column; gap: 6px; }
 .res__body b { font-size: 13px; font-weight: 600; line-height: 1.4; }
 .res__body .row { font-size: 11.5px; color: var(--text-3); }
+
+/* ---------- 资源播放器（视频）：整段加载遮罩 + 播放进度记录点 ---------- */
+.rv-wrap { position: relative; border-radius: var(--r-md); overflow: hidden; background: #0b1220; }
+.rv-video { display: block; width: 100%; max-height: 60vh; background: #0b1220; }
+.rv-load {
+  position: absolute; inset: 0; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: 10px; padding: 20px;
+  background: linear-gradient(180deg, rgba(11,18,32,.94), rgba(11,18,32,.88));
+  color: #e6eefc; text-align: center; transition: opacity var(--t);
+}
+.rv-wrap.is-ready .rv-load { opacity: 0; visibility: hidden; pointer-events: none; }
+.rv-load__spin {
+  width: 30px; height: 30px; border-radius: 50%;
+  border: 3px solid rgba(226,238,252,.25); border-top-color: var(--brand-400);
+  animation: rv-spin .8s linear infinite;
+}
+@keyframes rv-spin { to { transform: rotate(360deg); } }
+.rv-load__title { font-size: 14px; }
+.rv-load__bar {
+  width: min(320px, 70%); height: 6px; border-radius: var(--r-full);
+  background: rgba(226,238,252,.18); overflow: hidden;
+}
+.rv-load__bar i {
+  display: block; height: 100%; width: 0;
+  background: linear-gradient(90deg, var(--brand-500), var(--cyan-500));
+  transition: width var(--t-fast);
+}
+.rv-load__hint { font-size: 12px; line-height: 1.7; color: rgba(226,238,252,.72); max-width: 380px; }
+
+.rv-track {
+  position: relative; height: 10px; margin-top: 10px;
+  border-radius: var(--r-full); background: var(--surface-3); cursor: pointer;
+}
+.rv-track__buffer {
+  position: absolute; left: 0; top: 0; bottom: 0; width: 0;
+  border-radius: var(--r-full); background: var(--border);
+}
+.rv-track__played {
+  position: absolute; left: 0; top: 0; bottom: 0; width: 0;
+  border-radius: var(--r-full); background: linear-gradient(90deg, var(--brand-500), var(--accent-500));
+}
+.rv-track__mark {
+  position: absolute; top: -4px; width: 2px; height: 18px; margin-left: -1px;
+  border-radius: 1px; background: var(--danger);
+}
+.rv-meta {
+  display: flex; align-items: center; gap: 8px; margin-top: 7px;
+  font-size: 11.5px; color: var(--text-3);
+}
 
 .tr-res { position: relative; }
 .tr-del {
@@ -493,6 +696,13 @@
 .wrong-item:last-child { border-bottom: none; }
 .wrong-item__stem { font-size: 13.5px; line-height: 1.62; margin-bottom: 8px; }
 .wrong-item__tags { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+
+/* 错题本 · 按章节知识点归纳 */
+.wb-group { padding: 10px 0; border-bottom: 1px dashed var(--border-soft); }
+.wb-group:last-child { border-bottom: none; padding-bottom: 2px; }
+.wb-group:first-child { padding-top: 0; }
+.wb-group .chip--chapter { height: 26px; font-size: 12px; font-weight: 600; }
+.wb-group .chip--kp { height: 25px; font-size: 12px; }
 
 /* 错题详情弹窗内的选项：只读，无交互感 */
 .opts--readonly .opt { cursor: default; }
@@ -704,8 +914,10 @@
 .bank-page-btn:hover:not(:disabled) { border-color: var(--brand-400); color: var(--brand-600); }
 .bank-page-btn.is-active { border-color: var(--brand-500); background: var(--brand-500); color: #fff; }
 .bank-page-btn:disabled { opacity: .45; cursor: not-allowed; }
+.bank-page-ellipsis { border-color: transparent; background: transparent; color: var(--text-3); letter-spacing: 1px; }
+.bank-page-ellipsis:hover:not(:disabled) { color: var(--brand-600); }
 .bank-stem-scroll {
-  max-width: 280px; max-height: 3.2em; overflow-y: auto;
+  max-width: 280px; height: 3.2em; overflow-y: auto;
   line-height: 1.6; white-space: normal; overflow-wrap: anywhere;
   scrollbar-width: thin; scrollbar-color: var(--brand-300) var(--surface-3);
 }

@@ -267,9 +267,8 @@ window.API = (function () {
       return map[q.type || 'knowledge'];
     }),
 
-    /** GET /graph/kp/{kpId}  知识点详情（含前后置、资源、习题统计） */
-    kpDetail: (p) => request('GET', '/graph/kp/' + p.kpId, p, (q) =>
-      M().kpDetail[q.kpId] || M().kpDetail.KP52),
+    /** GET /graph/kp/{kpId}  知识点详情（含前后置、资源、习题统计、真实学情与课程均值） */
+    kpDetail: (p) => request('GET', '/graph/kp/' + p.kpId, p),
 
     /** GET /graph/path  基于知识图谱前后置关系生成的推荐学习路径 */
     learningPath: (p) => request('GET', '/graph/path', p, () => M().learningPath)
@@ -281,6 +280,13 @@ window.API = (function () {
   const stu = {
     /** GET /student/dashboard  学习驾驶舱聚合数据 */
     dashboard: (p) => request('GET', '/student/dashboard', p, () => M().studentDashboard),
+
+    /**
+     * GET /student/study-duration  当天累计学习时长
+     * 返回 { todaySeconds, todayMinutes, practiceSeconds, resourceSeconds }
+     * 供驾驶舱「今日累计学习时长」轻量轮询刷新（不触发预警重算）
+     */
+    studyDuration: () => request('GET', '/student/study-duration'),
 
     /** GET /student/resources  资源中心列表  params: { type, kpId, keyword, page, size } */
     resources: (p) => request('GET', '/student/resources', p, (q) => {
@@ -566,7 +572,53 @@ window.API = (function () {
     uploadResource: (formData) => request('POST', '/teacher/resources/upload', formData),
 
     /** DELETE /teacher/resources/{res_id}  删除资源 */
+<<<<<<< Updated upstream
     deleteResource: (resId) => request('DELETE', `/teacher/resources/${resId}`)
+=======
+    deleteResource: (resId) => request('DELETE', `/teacher/resources/${resId}`),
+
+    /** GET /teacher/tags  当前课程标签列表 */
+    tags: () => request('GET', '/teacher/tags'),
+    /** POST /teacher/tags  新建（或复用）标签 */
+    createTag: (p) => request('POST', '/teacher/tags', p),
+    /** DELETE /teacher/tags/{tagId}  删除标签 */
+    deleteTag: (tagId) => request('DELETE', `/teacher/tags/${tagId}`),
+
+    /** GET /teacher/resources/{res_id}/rag-status  查询上传后的 RAG 切片进度 */
+    resourceRagStatus: (resId) => request('GET', `/teacher/resources/${resId}/rag-status`),
+
+    /** POST /teacher/courses  新建课程（生成邀请码，教师自动成为成员） */
+    createCourse: (p) => request('POST', '/teacher/courses', p),
+
+    /** GET /teacher/structure  课程结构（章节树 + 知识点 + 统计） */
+    structure: () => request('GET', '/teacher/structure'),
+    /** POST /teacher/structure/chapters  新建章节 */
+    createChapter: (p) => request('POST', '/teacher/structure/chapters', p),
+    /** PUT /teacher/structure/chapters/{id}  改章节（重命名同步章下知识点） */
+    updateChapter: (id, p) => request('PUT', `/teacher/structure/chapters/${id}`, p),
+    /** DELETE /teacher/structure/chapters/{id}  删空章节 */
+    deleteChapter: (id) => request('DELETE', `/teacher/structure/chapters/${id}`),
+    /** GET /teacher/graph/kp-detail  知识点详情（结构 + 图谱关系 + 课程学情，全部真实表计算） */
+    kpDetail: (p) => request('GET', '/teacher/graph/kp-detail', p),
+    /** GET /teacher/graph/kp-topology  知识图谱拓扑（节点=课程KP，边=关系） */
+    kpTopology: () => request('GET', '/teacher/graph/kp-topology'),
+    /** PUT /teacher/graph/kp-topology  保存坐标与边 */
+    saveKpTopology: (p) => request('PUT', '/teacher/graph/kp-topology', p),
+
+    /** POST /teacher/structure/kps  新建知识点（自动重建全员学习路径） */
+    createKp: (p) => request('POST', '/teacher/structure/kps', p),
+    /** PUT /teacher/structure/kps/{id}  改知识点 */
+    updateKp: (id, p) => request('PUT', `/teacher/structure/kps/${id}`, p),
+    /** DELETE /teacher/structure/kps/{id}  删知识点（有资源/题目时 400 拒绝） */
+    deleteKp: (id) => request('DELETE', `/teacher/structure/kps/${id}`),
+    /** GET /teacher/structure/kps/{id}/relations  前置列表 + 候选 */
+    kpRelations: (id) => request('GET', `/teacher/structure/kps/${id}/relations`),
+    /** PUT /teacher/structure/kps/{id}/relations  覆盖保存前置（环检测） */
+    saveKpRelations: (id, p) => request('PUT', `/teacher/structure/kps/${id}/relations`, p),
+
+    /** POST /question/import  批量导入题目（含单题；支持 figure_json 图结构） */
+    importQuestions: (p) => request('POST', '/question/import', p)
+>>>>>>> Stashed changes
   };
 
   /* ======================================================================

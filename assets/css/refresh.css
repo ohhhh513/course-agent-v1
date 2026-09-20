@@ -1,0 +1,728 @@
+/* ==========================================================================
+   Course Agent · Knowledge Atlas Refresh
+   Visual layer only: loaded after base.css + app.css, preserving all view logic.
+   ========================================================================== */
+
+:root {
+  --brand-50: #e7fbf8;
+  --brand-300: #70ded1;
+  --brand-400: #25bcae;
+  --brand-500: #0d9488;
+  --brand-600: #0b7a72;
+  --brand-700: #075e59;
+  --brand: var(--brand-500);
+  --brand-soft: rgba(13, 148, 136, .11);
+  --accent-500: #4f6ed8;
+  --cyan-500: #0da7b5;
+  --info: #2f7fc1;
+  --info-soft: rgba(47, 127, 193, .12);
+  --ok: #159b70;
+  --ok-soft: rgba(21, 155, 112, .12);
+  --warn: #d88914;
+  --warn-soft: rgba(216, 137, 20, .13);
+  --danger: #dc4f58;
+  --danger-soft: rgba(220, 79, 88, .12);
+
+  /* 图谱「关系」配色（学生端知识图谱与教师端图谱编排共用，避免两端色彩漂移）
+     前置·青绿沿用品牌色；进阶·品红与青绿拉开色相与明度：
+     CIEDE2000 ΔE≈45.7（旧两端取值分别为 35.5 / 7.2），白底对比度 6.32 可读，
+     且距最近的知识点状态色 ΔE≈21.3，不会与节点撞色。 */
+  --rel-pre: #0d9488;
+  --rel-advance: #a21caf;
+  --rel-parallel: #718793;
+  --rel-split: #a21caf;
+  --rel-map: #2f7fc1;
+  --rel-error: #dc4f58;
+  --rel-support: #2f7fc1;
+
+  --bg: #eef3f5;
+  --bg-grad: none;
+  --surface: #ffffff;
+  --surface-2: #f4f8f9;
+  --surface-3: #e7eff2;
+  --border: #cbd9df;
+  --border-soft: #e0e9ec;
+  --text: #102b3d;
+  --text-2: #405d6d;
+  --text-3: #758995;
+  --shadow-sm: 0 1px 2px rgba(16, 43, 61, .055);
+  --shadow: 0 12px 34px -26px rgba(16, 43, 61, .42);
+  --shadow-lg: 0 28px 70px -35px rgba(7, 34, 53, .48);
+  --overlay: rgba(7, 30, 48, .53);
+  --grid-line: rgba(16, 43, 61, .055);
+  --chart-axis: #718793;
+  --chart-split: rgba(16, 43, 61, .09);
+  --r-xs: 3px;
+  --r-sm: 5px;
+  --r-md: 7px;
+  --r-lg: 10px;
+  --r-xl: 16px;
+  --font: "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI", "PingFang SC", sans-serif;
+  --font-num: "Bahnschrift", "Segoe UI Variable Display", "Microsoft YaHei UI", sans-serif;
+  --ease-out: cubic-bezier(.16, 1, .3, 1);
+}
+
+html { background: var(--bg); }
+body {
+  background-color: var(--bg);
+  background-image:
+    linear-gradient(rgba(16, 43, 61, .035) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(16, 43, 61, .035) 1px, transparent 1px),
+    radial-gradient(720px 380px at 88% -8%, rgba(13, 148, 136, .095), transparent 67%);
+  background-size: 24px 24px, 24px 24px, auto;
+  background-attachment: fixed;
+}
+
+::selection { background: rgba(13, 148, 136, .23); }
+:focus-visible { outline: 2px solid var(--brand-400); outline-offset: 2px; }
+
+/* ---------- App shell: instrument rail + graph-paper workspace ---------- */
+.app { min-height: 100dvh; }
+.sidebar {
+  --sidebar-w: 244px;
+  isolation: isolate;
+  overflow: hidden;
+  color: #d8e7ef;
+  background: #09243a;
+  border-right: 0;
+  box-shadow: 14px 0 36px -32px rgba(2, 23, 38, .8);
+}
+.sidebar::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -2;
+  opacity: .22;
+  background-image:
+    linear-gradient(rgba(170, 218, 225, .13) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(170, 218, 225, .13) 1px, transparent 1px);
+  background-size: 28px 28px;
+  mask-image: linear-gradient(to bottom, #000 0, transparent 82%);
+}
+.sidebar::after {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  width: 260px;
+  height: 260px;
+  left: -120px;
+  bottom: -110px;
+  border: 1px solid rgba(112, 222, 209, .22);
+  border-radius: 50%;
+  box-shadow:
+    0 0 0 34px rgba(112, 222, 209, .035),
+    0 0 0 72px rgba(112, 222, 209, .025);
+}
+.sidebar__brand {
+  height: 68px;
+  padding: 0 18px;
+  border-bottom-color: rgba(184, 218, 229, .14);
+}
+.brand-logo {
+  border-radius: 13px 4px 13px 4px;
+  background: #18b9aa;
+  color: #052b34;
+  box-shadow: 0 0 0 4px rgba(24, 185, 170, .1), 0 8px 22px -10px rgba(24, 185, 170, .7);
+}
+.brand-text b { color: #f3fbfd; font-weight: 680; }
+.brand-text span { color: #8ca8b8; }
+.sidebar__nav { padding: 14px 12px 20px; }
+.nav-group { margin-bottom: 10px; }
+.nav-group__label {
+  color: #7997aa;
+  padding: 12px 10px 7px;
+  font-size: 10.5px;
+  letter-spacing: .1em;
+}
+.nav-item {
+  min-height: 40px;
+  margin-bottom: 3px;
+  padding: 9px 10px;
+  border: 1px solid transparent;
+  color: #a9bfcc;
+  border-radius: 6px;
+}
+.nav-item::before {
+  content: "";
+  position: absolute;
+  left: -13px;
+  top: 50%;
+  width: 8px;
+  height: 1px;
+  background: rgba(112, 222, 209, .26);
+  transition: width var(--t), background var(--t);
+}
+.nav-item:hover {
+  color: #effbfd;
+  background: rgba(128, 200, 211, .08);
+  border-color: rgba(128, 200, 211, .12);
+}
+.nav-item.is-active {
+  color: #f5ffff;
+  background: linear-gradient(90deg, rgba(24, 185, 170, .24), rgba(24, 185, 170, .075));
+  border-color: rgba(112, 222, 209, .3);
+  box-shadow: inset 3px 0 0 #31cbb9;
+}
+.nav-item.is-active::before { width: 15px; background: #31cbb9; }
+.nav-item.is-active .nav-item__icon { color: #62e3d5; opacity: 1; }
+.nav-item__icon { color: #88a6b8; opacity: .92; }
+.nav-item__badge { color: #fff; background: var(--danger); }
+.sidebar__foot { border-top-color: rgba(184, 218, 229, .13); }
+.user-chip { color: #e8f4f8; }
+.user-chip:hover { background: rgba(128, 200, 211, .08); }
+.user-chip__info span { color: #8ba7b7; }
+.avatar { background: #17aa9d; }
+
+.main { background: transparent; }
+.topbar {
+  height: 68px;
+  flex-basis: 68px;
+  padding: 0 24px;
+  background: rgba(244, 248, 249, .84);
+  border-bottom-color: rgba(160, 184, 195, .58);
+  backdrop-filter: blur(18px) saturate(1.2);
+}
+.topbar__title h1 { font-size: 18px; letter-spacing: -.025em; }
+/* 标题后的装饰短线已移除：它会在每个板块名称后面留下一条孤立线段（视觉噪点） */
+.topbar__actions { gap: 10px; flex: 0 0 auto; }
+/* 顶栏操作区统一高度：所有控件 28px；图标按钮与「添加课程」同尺寸（28×28）。
+   同时禁止 flex 压缩 —— 否则「私信 / 退出」会被挤成 15px 宽的细高条。 */
+.topbar__actions > * { flex: 0 0 auto; }
+/* base.css 给 .select 设了 min-height:34px / width:100%，必须一并覆盖，
+   否则下拉框高度仍是 34px 且会被撑到整行宽 */
+.topbar__actions .select {
+  flex: 0 0 auto; width: 190px; min-width: 0;
+  height: 28px; min-height: 0;
+  padding: 4px 26px 4px 9px; font-size: 12px; text-overflow: ellipsis;
+}
+.topbar__actions .btn { height: 28px; border-radius: var(--r-xs); }
+.topbar__actions .btn--sm { padding: 0 10px; font-size: 12px; }
+.topbar__actions .btn--icon { width: 28px; padding: 0; }
+.topbar__actions .btn svg { width: 14px; height: 14px; }
+.topbar__actions .badge { height: 28px; padding: 0 10px; border-radius: var(--r-xs); font-size: 11.5px; }
+.content { padding: 24px; max-width: 1640px; }
+
+/* ---------- Editorial data components ---------- */
+.card {
+  border-color: var(--border);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-sm);
+}
+.card__head {
+  min-height: 52px;
+  padding: 13px 18px;
+  background: linear-gradient(90deg, rgba(13, 148, 136, .045), transparent 48%);
+}
+.card__head h3 { letter-spacing: -.012em; }
+.card__head h3 svg { color: var(--brand-500); }
+.stat {
+  border-radius: var(--r-lg);
+  padding: 16px 18px 16px 20px;
+}
+.stat::after {
+  inset: 14px auto 14px 0;
+  width: 3px;
+  height: auto;
+  border-radius: 0 3px 3px 0;
+}
+.stat:hover, .stat--link:hover { border-color: color-mix(in srgb, var(--_c, var(--brand-500)) 60%, var(--border)); }
+.stat__value, .hero__ring b, .cal-stat__num, .kp-stat b {
+  font-family: var(--font-num);
+  font-variant-numeric: tabular-nums;
+}
+.btn {
+  border-color: #c6d5db;
+  border-radius: var(--r-sm);
+  background: rgba(255, 255, 255, .72);
+  font-weight: 620;
+  transition: transform .18s var(--ease-out), background var(--t-fast), border-color var(--t-fast), color var(--t-fast), box-shadow var(--t-fast);
+}
+.btn:hover { transform: translateY(-1px); background: #fff; border-color: #9cb4bf; box-shadow: 0 6px 16px -12px rgba(16, 43, 61, .65); }
+.btn:active { transform: translateY(0) scale(.985); }
+.btn--primary { background: var(--brand-500); border-color: var(--brand-500); box-shadow: none; }
+.btn--primary:hover { background: var(--brand-600); border-color: var(--brand-600); }
+.btn--outline { color: var(--brand-600); border-color: var(--brand-400); }
+.btn--outline:hover { background: var(--brand-50); }
+.badge { border-radius: 4px; background: #edf3f5; }
+.badge--brand { color: var(--brand-600); background: var(--brand-soft); }
+.badge--info { color: var(--info); background: var(--info-soft); }
+.badge--accent { color: var(--accent-500); background: rgba(79, 110, 216, .11); }
+.badge--warn { color: #a9680c; background: var(--warn-soft); }
+.badge--danger { color: #b63d47; background: var(--danger-soft); }
+.badge--outline { background: rgba(255,255,255,.46); }
+.chip { border-radius: 4px; }
+.chip:hover { border-color: var(--brand-400); background: var(--brand-50); }
+.seg { border-radius: 6px; background: #e9f0f3; border-color: #cedce1; }
+/* 分段控件：（1）所有按钮常驻 1px 透明边框，激活态只换颜色、不改盒子几何；
+   （2）只过渡绘制类属性（原来 base 的 transition:all 会把边框宽度也带上动画）；
+   （3）去掉激活态的下划线 —— 它会让盒子高度/文字基线在切换分类时抖动，
+   表现出来就是「选项框异常挪动」。 */
+.seg button {
+  border: 1px solid transparent;
+  border-radius: 3px;
+  transition: background-color var(--t-fast), color var(--t-fast),
+              border-color var(--t-fast), box-shadow var(--t-fast);
+}
+.seg button.is-active {
+  color: var(--brand-600);
+  background: var(--surface);
+  border-color: var(--brand-300);
+  box-shadow: 0 3px 9px -7px rgba(16, 43, 61, .75);
+}
+.tabs button.is-active { color: var(--brand-600); border-bottom-color: var(--brand-500); }
+.input, .select, .textarea {
+  border-color: #c8d7dd;
+  background: rgba(250, 253, 253, .92);
+  border-radius: 5px;
+}
+.input:focus, .select:focus, .textarea:focus {
+  border-color: var(--brand-400);
+  box-shadow: 0 0 0 3px rgba(13, 148, 136, .13);
+}
+.list__item { transition: background var(--t-fast), transform var(--t-fast), border-color var(--t-fast); }
+.list__item:hover { background: #f5fafb; transform: translateX(2px); }
+.list__item--clickable.is-active { background: var(--brand-soft); border-left-color: var(--brand-500); }
+.callout { border-radius: 6px; }
+.callout--brand { background: var(--brand-soft); border-color: rgba(13, 148, 136, .26); }
+.callout--brand svg { color: var(--brand-500); }
+.divider { background: var(--border-soft); }
+.empty svg { color: var(--brand-400); opacity: .7; }
+.bar { background: #e1eaed; }
+.bar > i { transform-origin: left center; animation: atlas-bar-grow .72s var(--ease-out) both; }
+@keyframes atlas-bar-grow { from { transform: scaleX(.04); } to { transform: scaleX(1); } }
+
+/* ---------- Dashboard: learning route + status signal ---------- */
+.hero {
+  border-radius: var(--r-lg);
+  border-color: #bfd2d9;
+  border-left: 4px solid var(--brand-500);
+  padding: 22px 26px;
+  background:
+    linear-gradient(rgba(13, 148, 136, .04) 1px, transparent 1px) 0 0/22px 22px,
+    linear-gradient(90deg, rgba(13, 148, 136, .04) 1px, transparent 1px) 0 0/22px 22px,
+    #fff;
+  box-shadow: 0 18px 46px -38px rgba(16, 43, 61, .75);
+}
+.hero::before {
+  content: "";
+  position: absolute;
+  right: 34%;
+  top: -42px;
+  width: 78px;
+  height: 78px;
+  border: 1px solid rgba(13, 148, 136, .18);
+  border-radius: 50%;
+  box-shadow: 0 0 0 18px rgba(13, 148, 136, .025), 0 0 0 36px rgba(13, 148, 136, .018);
+}
+.hero::after {
+  width: 190px;
+  height: 190px;
+  right: -72px;
+  top: -84px;
+  background: radial-gradient(circle, rgba(13, 148, 136, .14), transparent 68%);
+}
+.hero__main h2 { font-size: 22px; letter-spacing: -.03em; }
+.hero__main p { line-height: 1.8; }
+.hero__stats { align-items: stretch; }
+.hero__ring, .hero__stat {
+  border-radius: 7px;
+  transition: background var(--t), transform var(--t);
+}
+.hero__ring:hover, .hero__stat:hover { transform: translateY(-2px); }
+.streak-cal {
+  border-color: #cddde2 !important;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.9);
+}
+.cal-cell, .streak-cal [class*="cell"] { border-radius: 3px; }
+.todo {
+  border-color: #d4e0e4;
+  border-radius: 7px !important;
+  background: #fbfdfd;
+}
+.todo:hover { border-color: var(--brand-400); box-shadow: 0 10px 24px -22px rgba(16, 43, 61, .65); }
+.todo__ico { border-radius: 6px; }
+
+/* Knowledge graph workspace */
+.graph-card { border-color: #bdced5; }
+.graph-toolbar { background: #f2f7f8; }
+.graph-box {
+  background-color: #fbfdfd;
+  background-image:
+    linear-gradient(rgba(16, 43, 61, .058) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(16, 43, 61, .058) 1px, transparent 1px),
+    linear-gradient(rgba(13, 148, 136, .045) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(13, 148, 136, .045) 1px, transparent 1px);
+  background-size: 96px 96px, 96px 96px, 24px 24px, 24px 24px;
+}
+.graph-hint, .graph-legend {
+  border-radius: 5px;
+  background: rgba(255, 255, 255, .9);
+  box-shadow: 0 10px 28px -24px rgba(16, 43, 61, .8);
+}
+.kp-side { background: #fff; }
+.kp-tabs button { border-radius: 4px; }
+.kp-tabs button.on { background: var(--brand-soft); border-color: var(--brand-300); color: var(--brand-600); }
+.kp-intro, .kp-stat { border-radius: 5px; background: #f5fafb; }
+.kp-side__foot { background: #f1f7f8; }
+
+/* Resources / practice / learning records */
+.res { border-radius: 8px; }
+.res:hover { border-color: var(--brand-400); box-shadow: 0 16px 34px -30px rgba(16, 43, 61, .85); }
+.res__thumb, .res__cover { border-radius: 6px 6px 2px 2px; }
+.opt, .question, .practice-card { border-radius: 7px; }
+.tools { border-radius: 5px; }
+.tools__head { background: #f1f7f8; }
+.bubble { animation: atlas-message-in .34s var(--ease-out) both; }
+@keyframes atlas-message-in { from { opacity: 0; transform: translateY(7px) scale(.985); } to { opacity: 1; transform: none; } }
+.stream-cursor { box-shadow: 0 0 0 3px var(--brand-soft); }
+
+/* Tables and density */
+table th { background: #f3f8f9; color: #506b7a; font-weight: 650; }
+table td, table th { border-color: var(--border-soft); }
+.table-wrap { border-color: var(--border); border-radius: 6px; }
+
+/* ---------- Public pages: course field guide ---------- */
+.auth-page {
+  min-height: 100dvh;
+  display: grid;
+  grid-template-columns: minmax(390px, 44%) minmax(0, 1fr);
+  background:
+    linear-gradient(rgba(16, 43, 61, .03) 1px, transparent 1px) 0 0/24px 24px,
+    linear-gradient(90deg, rgba(16, 43, 61, .03) 1px, transparent 1px) 0 0/24px 24px,
+    #f3f7f8;
+}
+.auth-aside {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  padding: 46px 48px 40px;
+  background: #09243a;
+  color: #e8f5f8;
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+}
+.auth-aside::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -2;
+  opacity: .3;
+  background-image:
+    linear-gradient(rgba(157, 215, 220, .13) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(157, 215, 220, .13) 1px, transparent 1px);
+  background-size: 32px 32px;
+  mask-image: linear-gradient(to bottom, #000, transparent 88%);
+}
+.auth-aside::after {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  width: 480px;
+  height: 480px;
+  right: -220px;
+  top: -140px;
+  border: 1px solid rgba(91, 218, 203, .22);
+  border-radius: 50%;
+  box-shadow: 0 0 0 48px rgba(91, 218, 203, .035), 0 0 0 110px rgba(91, 218, 203, .018);
+}
+.auth-aside__brand .brand-logo { background: #18b9aa; color: #062c36; }
+.auth-aside__brand h1 { color: #f4fbfd; font-size: 30px; letter-spacing: -.035em; }
+.auth-aside__brand p { color: #abc3ce; line-height: 1.8; }
+.auth-aside .badge { border: 1px solid rgba(184, 225, 228, .16); }
+.auth-aside .badge--brand { color: #83eadd; background: rgba(24, 185, 170, .14); }
+.auth-aside .badge--info { color: #8dd1ff; background: rgba(47, 127, 193, .16); }
+.auth-aside .badge--accent { color: #b9c5ff; background: rgba(79, 110, 216, .17); }
+.auth-aside__feats { gap: 15px; }
+.auth-aside__feats li { color: #c7dbe3; }
+.auth-page .auth-aside__feats svg { color: #4ed3c3; }
+.auth-aside__copy { color: #7f9daa; }
+.auth-main { display: grid; place-items: center; padding: 42px 30px; }
+.auth-card {
+  position: relative;
+  width: 100%;
+  max-width: 420px;
+  padding: 32px;
+  background: rgba(255, 255, 255, .94);
+  border: 1px solid #c7d7dc;
+  border-radius: 10px;
+  box-shadow: 0 28px 70px -38px rgba(7, 34, 53, .55);
+}
+.auth-card::before {
+  content: "";
+  position: absolute;
+  left: 32px;
+  top: -2px;
+  width: 92px;
+  height: 4px;
+  background: var(--brand-500);
+}
+.auth-card h2 { font-size: 26px; letter-spacing: -.035em; }
+.auth-sub { color: var(--text-3); }
+.auth-card .seg { display: flex; width: 100%; }
+.auth-card .seg button { flex: 1; height: 32px; }
+.auth-demo { text-align: left; border: 1px solid var(--border-soft); border-radius: 5px; background: #f5f9fa; line-height: 1.7; }
+.auth-foot { text-align: left; }
+
+.login-page {
+  min-height: 100dvh;
+  background-image:
+    linear-gradient(rgba(16, 43, 61, .035) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(16, 43, 61, .035) 1px, transparent 1px);
+  background-size: 24px 24px;
+}
+.login-nav {
+  height: 68px;
+  padding: 0 7vw;
+  border-bottom-color: rgba(160, 184, 195, .65);
+  background: rgba(244, 248, 249, .84);
+  backdrop-filter: blur(16px);
+}
+.login-nav__brand { color: #103047; font-weight: 720; }
+.login-wrap { padding-top: 64px; }
+.login-hd { max-width: 720px; margin: 0 auto 32px; text-align: center; }
+.login-hd .brand-logo { margin: 0 auto; background: var(--brand-500); }
+.login-hd h1 { color: #0c2b41; letter-spacing: -.05em; }
+.login-hd p { color: #577182; }
+.role-grid { max-width: 980px; gap: 22px; }
+.role {
+  border-radius: 10px;
+  border-color: #c8d8de;
+  background: rgba(255, 255, 255, .95);
+  box-shadow: 0 18px 46px -38px rgba(16, 43, 61, .8);
+}
+.role::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 4px;
+  background: var(--brand-500);
+}
+.role--teacher::before { background: var(--accent-500); }
+.role:hover { transform: translateY(-3px); border-color: #9fbdc6; box-shadow: 0 24px 52px -34px rgba(16, 43, 61, .62); }
+.role__ico { border-radius: 10px 4px 10px 4px; }
+.role__ico { background: var(--brand-500); }
+.role--teacher .role__ico { background: var(--accent-500); }
+.login-ft { color: var(--text-3); }
+
+/* ---------- Motion: one coherent reveal per view; actions answer input ---------- */
+.view.is-active > .card,
+.view.is-active > .hero,
+.view.is-active > .grid > *,
+.view.is-active > .stack > * {
+  animation: atlas-panel-in .48s var(--ease-out) both;
+}
+.view.is-active > *:nth-child(2),
+.view.is-active > .grid > *:nth-child(2),
+.view.is-active > .stack > *:nth-child(2) { animation-delay: 55ms; }
+.view.is-active > *:nth-child(3),
+.view.is-active > .grid > *:nth-child(3),
+.view.is-active > .stack > *:nth-child(3) { animation-delay: 105ms; }
+.view.is-active > *:nth-child(4),
+.view.is-active > .grid > *:nth-child(4),
+.view.is-active > .stack > *:nth-child(4) { animation-delay: 150ms; }
+.view.is-active > *:nth-child(n+5),
+.view.is-active > .grid > *:nth-child(n+5),
+.view.is-active > .stack > *:nth-child(n+5) { animation-delay: 190ms; }
+@keyframes atlas-panel-in {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.ui-ripple-host { position: relative; overflow: hidden; }
+.ui-ripple {
+  position: absolute;
+  z-index: 0;
+  width: 12px;
+  height: 12px;
+  margin: -6px;
+  border-radius: 50%;
+  pointer-events: none;
+  background: currentColor;
+  opacity: .15;
+  transform: scale(0);
+  animation: atlas-ripple .5s var(--ease-out) forwards;
+}
+/* 宿主内的子元素抬到涟漪之上。必须排除 .ui-ripple 自身：
+   它带 margin:-6px，若被这条规则（权重 0,2,0，高于 .ui-ripple 的 0,1,0）
+   改成 position:relative，就会以行内盒参与排版，把按钮内容宽度吃掉 12px ——
+   按钮被压窄，文字再被宿主 .ui-ripple-host 的 overflow:hidden 裁掉，
+   呈现成一个没有文字的空白小方块；分段控件整体宽度同时缩短，
+   右对齐时整块横移，看起来就是「点击切换时选项框异常挪动」。 */
+.ui-ripple-host > *:not(.ui-ripple) { position: relative; z-index: 1; }
+.ui-ripple-host > .ui-ripple { position: absolute; z-index: 0; }
+@keyframes atlas-ripple { to { opacity: 0; transform: scale(14); } }
+.toast { animation: atlas-toast-in .35s var(--ease-out) both; }
+@keyframes atlas-toast-in { from { opacity: 0; transform: translateX(16px); } to { opacity: 1; transform: none; } }
+.modal { border-radius: 8px; animation: atlas-modal-in .3s var(--ease-out) both; }
+@keyframes atlas-modal-in { from { opacity: 0; transform: translateY(14px) scale(.985); } to { opacity: 1; transform: none; } }
+.drawer { border-radius: 0; animation: atlas-drawer-in .38s var(--ease-out) both; }
+@keyframes atlas-drawer-in { from { transform: translateX(100%); } to { transform: none; } }
+
+/* ---------- Responsive: phone becomes app bar + single-column work area ---------- */
+@media (max-width: 1024px) {
+  .sidebar { --sidebar-w: 72px; }
+  .content { padding: 20px; }
+}
+
+@media (max-width: 760px) {
+  :root { --sidebar-w: 100%; --topbar-h: auto; }
+  .app { display: block; }
+  .sidebar {
+    position: sticky;
+    top: 0;
+    width: 100%;
+    height: auto;
+    flex: none;
+    overflow: visible;
+    border-right: 0;
+    border-bottom: 1px solid rgba(128, 177, 191, .35);
+    box-shadow: 0 12px 30px -26px rgba(2, 23, 38, .9);
+  }
+  .sidebar::after { display: none; }
+  .sidebar__brand {
+    height: 54px;
+    justify-content: flex-start;
+    padding: 0 14px;
+    border-bottom: 0;
+  }
+  .brand-text,
+  .nav-item__text,
+  .nav-group__label,
+  .user-chip__info { display: block; }
+  .brand-text span { font-size: 10px; }
+  .sidebar__nav {
+    display: flex;
+    gap: 5px;
+    padding: 0 10px 10px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none;
+  }
+  .sidebar__nav::-webkit-scrollbar { display: none; }
+  .nav-group { display: flex; gap: 4px; margin: 0; }
+  .nav-group + .nav-group { padding-left: 6px; border-left: 1px solid rgba(128, 200, 211, .18); }
+  .nav-group__label { display: none; }
+  .nav-item {
+    width: auto;
+    min-height: 36px;
+    flex: 0 0 auto;
+    justify-content: flex-start;
+    gap: 6px;
+    margin: 0;
+    padding: 8px 10px;
+    font-size: 12.5px;
+  }
+  .nav-item::before { display: none; }
+  .nav-item__icon { width: 15px; height: 15px; flex-basis: 15px; }
+  .nav-item__badge { position: static; margin-left: 5px; }
+  .sidebar__foot { display: none; }
+
+  .main { width: 100%; min-width: 0; }
+  .topbar {
+    position: static;
+    height: auto;
+    min-height: 58px;
+    flex-wrap: wrap;
+    padding: 9px 12px;
+    gap: 8px;
+  }
+  .topbar__title { flex: 1 1 100%; }
+  .topbar__title h1 { font-size: 16px; }
+  .topbar__title h1::after { width: 16px; }
+  .topbar__actions {
+    width: 100%;
+    gap: 7px;
+    overflow-x: auto;
+    padding-bottom: 1px;
+    scrollbar-width: none;
+  }
+  .topbar__actions::-webkit-scrollbar { display: none; }
+  #courseSel { flex: 1 1 170px; min-width: 150px; }
+  .content { padding: 12px; overflow: hidden; }
+  .g-2, .g-3, .g-4, .g-21, .g-12, .g-31 { grid-template-columns: minmax(0, 1fr) !important; }
+  .card, .hero { border-radius: 7px; }
+  .card__head { flex-wrap: wrap; row-gap: 8px; padding: 12px 14px; }
+  .card__head h3 { white-space: normal; }
+  .card__body { padding: 14px; }
+  .hero { padding: 16px; gap: 14px; }
+  .hero__main { flex-basis: 100%; min-width: 0; }
+  .hero__main h2 { font-size: 19px; }
+  .hero__stats, .hero__rings { width: 100%; flex-basis: 100%; gap: 12px; }
+  .hero__stat--streak { min-width: 0; width: 100%; }
+  .hero__rings { overflow-x: auto; justify-content: flex-start; }
+  .hero__ring { flex: 0 0 150px; }
+  .streak-cal { overflow-x: auto; }
+  .todo { align-items: flex-start; flex-wrap: wrap; }
+  .todo__main { flex: 1 1 calc(100% - 46px); }
+  .todo > .btn { margin-left: 42px; }
+  .graph-toolbar { padding: 10px 12px; }
+  .graph-box { height: 390px !important; }
+  #view-graph.fill { display: block; height: auto; min-height: 0; }
+  #view-graph.fill .graph-card { display: block; max-height: none; overflow: visible; }
+  #view-graph.fill .graph-layout { display: block; }
+  #view-graph.fill .graph-layout .graph-box { height: 390px !important; border-right: 0; border-bottom: 1px solid var(--border-soft); }
+  #view-graph.fill .kp-side { min-height: 320px; }
+  #view-graph.fill .key-card { display: block; max-height: none; }
+  .kp-stats { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .chart { min-height: 240px; }
+  .modal { max-height: 92vh; }
+  .modal__head, .modal__body, .modal__foot { padding-left: 16px; padding-right: 16px; }
+  .toasts { left: 12px; right: 12px; bottom: 12px; }
+  .toast { width: 100%; }
+
+  .auth-page { display: block; min-height: 100dvh; }
+  .auth-aside {
+    min-height: 300px;
+    padding: 26px 22px 24px;
+    gap: 18px;
+  }
+  .auth-aside__brand h1 { font-size: 25px; }
+  .auth-aside__feats { margin-top: 6px; gap: 9px; }
+  .auth-aside__feats li:nth-child(n+3) { display: none; }
+  .auth-aside__copy { display: none; }
+  .auth-main { padding: 22px 14px 28px; }
+  .auth-card { padding: 24px 20px; }
+  .auth-card::before { left: 20px; }
+  .login-wrap { padding: 42px 16px 30px; }
+  .login-hd h1 { font-size: 28px; }
+  .role-grid { grid-template-columns: minmax(0, 1fr); }
+  .role { padding: 20px; }
+}
+
+@media (max-width: 430px) {
+  .brand-text span { display: none; }
+  .nav-item { padding-inline: 8px; }
+  .nav-item__text { font-size: 12px; }
+  .topbar__actions .badge { display: none; }
+  .hero__rings { padding-bottom: 3px; }
+  .hero__ring { flex-basis: 138px; }
+  .kp-stats { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 5px; }
+  .kp-stat { padding-inline: 3px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    scroll-behavior: auto !important;
+    animation-duration: .01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .01ms !important;
+  }
+}
+
+@media print {
+  .sidebar, .topbar { display: none !important; }
+  .content { padding: 0; }
+  body { background: #fff; }
+  .card { box-shadow: none; break-inside: avoid; }
+}
+
+/* Semantic action colors stay legible after the base button restyle. */
+.btn--danger { color: #fff; background: var(--danger); border-color: var(--danger); }
+.btn--danger:hover { color: #fff; background: #c9424b; border-color: #c9424b; }
+.btn--warn { color: #fff; background: var(--warn); border-color: var(--warn); }
+.btn--warn:hover { color: #fff; background: #ba730e; border-color: #ba730e; }
+.nav-item.is-active .nav-item__icon { animation: atlas-node-pulse 2.6s ease-in-out infinite; }
+@keyframes atlas-node-pulse {
+  0%, 100% { filter: drop-shadow(0 0 0 rgba(98, 227, 213, 0)); }
+  50% { filter: drop-shadow(0 0 5px rgba(98, 227, 213, .78)); }
+}

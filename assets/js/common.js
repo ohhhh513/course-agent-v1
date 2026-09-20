@@ -157,6 +157,27 @@ const U = {
     if (v == null) return '';
     const up = v >= 0;
     return `<span class="stat__delta ${up ? 'delta-up' : 'delta-down'}">${icon(up ? 'trend' : 'down')} ${up ? '+' : ''}${v}${unit || 'pp'}</span>`;
+  },
+
+  /**
+   * 时长统一展示格式：分'秒"（60 进制；分用单引号，秒用双引号）。
+   * 例：202s → 3'22"；45s → 45"；0 → 0"；3725s → 1:02'05"
+   * 全站「时长」类数值一律走这里，避免各页各写一套（曾出现直接显示 202″ 的写法）。
+   */
+  dur(seconds) {
+    const total = Math.max(0, Math.round(Number(seconds) || 0));
+    const h = Math.floor(total / 3600);
+    const m = Math.floor((total % 3600) / 60);
+    const s = total % 60;
+    const pad = (n) => String(n).padStart(2, '0');
+    if (h > 0) return `${h}:${pad(m)}'${pad(s)}"`;
+    if (m > 0) return `${m}'${pad(s)}"`;
+    return `${s}"`;
+  },
+
+  /** 分钟（可含小数）→ 分'秒" ；用于接口返回「分钟」的时长字段 */
+  durMin(minutes) {
+    return U.dur((Number(minutes) || 0) * 60);
   }
 };
 
@@ -203,6 +224,10 @@ const Toast = {
   ok(t, d) { this.show(t, d, 'ok'); },
   warn(t, d) { this.show(t, d, 'warn'); },
   err(t, d) { this.show(t, d, 'danger'); },
+  /** `error` 是 `err` 的别名：全站有近 30 处调用写的是 Toast.error，
+   *  而这里过去只有 err —— 于是所有失败分支都会抛 "Toast.error is not a function"，
+   *  用户看不到任何提示（表现为「点了没反应」）。保留别名兜住这类写法。 */
+  error(t, d) { this.show(t, d, 'danger'); },
   info(t, d) { this.show(t, d, 'info'); },
   loading(title) {
     // 如果已有 loading toast，先移除
@@ -301,15 +326,42 @@ const Router = {
 };
 
 /* ---------------- 7. 顶栏通用初始化 ---------------- */
+
+/**
+ * 退出登录二次确认（学生端/教师端/管理端共用）
+ * @param {string} redirect 退出后跳转地址，默认 index.html
+ */
+function confirmLogout(redirect) {
+  const u = (window.Auth && Auth.currentUser) ? Auth.currentUser() : null;
+  const roleText = u && u.role === 'teacher' ? '教师' : u && u.role === 'student' ? '学生' : '管理员';
+  Modal.open({
+    title: '退出登录',
+    body: `
+      <div class="callout callout--warn" style="margin:0">
+        ${icon('alert')}
+        <div><b>确定要退出登录吗？</b><br>
+          退出后需要重新输入账号密码；页面上未保存的编辑内容将丢失。</div>
+      </div>
+      ${u && (u.name || u.userId) ? `<p class="fz-13 t-2" style="margin:14px 0 0">
+        当前账号：<b>${U.esc(u.name || u.userId)}</b>${u.role ? ` · ${roleText}` : ''}</p>` : ''}`,
+    footer: `<button class="btn" data-close>取消</button>
+      <button class="btn btn--danger" id="logoutConfirm">${icon('logout')} 退出登录</button>`,
+    onMount(ov, close) {
+      U.$('#logoutConfirm', ov).addEventListener('click', () => {
+        close();
+        if (window.Auth) Auth.logout();
+        location.href = redirect || 'index.html';
+      });
+    }
+  });
+}
+
 function initTopbar() {
   const out = U.$('#logoutBtn');
   if (out) {
     out.innerHTML = icon('logout');
     out.title = '退出登录';
-    out.addEventListener('click', () => {
-      if (window.Auth) Auth.logout();
-      location.href = 'index.html';
-    });
+    out.addEventListener('click', () => confirmLogout());
   }
   if (window.Auth) Auth.applyUserBadge();
 }
@@ -318,8 +370,15 @@ function initTopbar() {
 const R = {
   /** 待办条 */
   todo(t) {
+    const idAttr = t.id ? ' data-todo-id="' + U.esc(t.id) + '"' : '';
     const actionData = t.userId ? ` data-action="${U.esc(t.action)}" data-user-id="${U.esc(t.userId)}" data-user-name="${U.esc(t.userName || '')}"` : '';
+<<<<<<< Updated upstream
     return `<div class="todo" data-target="${t.target || ''}"${actionData}>
+=======
+    // kpName：待办目标为资源中心时，用于定位到对应知识点（与「我的学情」下钻同一机制）
+    const kpData = t.kpName ? ` data-kp-name="${U.esc(t.kpName)}"` : '';
+    return `<div class="todo"${idAttr} data-target="${t.target || ''}"${t.sessionId ? ` data-session="${U.esc(t.sessionId)}"` : ''}${t.mode ? ` data-mode="${U.esc(t.mode)}"` : ''}${kpData}${actionData}>
+>>>>>>> Stashed changes
       <div class="todo__ico todo__ico--${t.level}">${icon(t.type === 'alert' ? 'alert' : t.type === 'homework' ? 'pencil' : t.type === 'practice' ? 'target' : 'sparkle')}</div>
       <div class="todo__main"><b>${U.esc(t.title)}</b><span>${U.esc(t.desc)}</span></div>
       <button class="btn btn--sm ${t.level === 'danger' ? 'btn--danger' : t.level === 'brand' ? 'btn--primary' : ''}">${t.action}</button>

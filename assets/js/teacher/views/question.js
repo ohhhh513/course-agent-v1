@@ -454,7 +454,11 @@
           <div class="seg" id="bankSeg">
             <button data-s="all" class="is-active">全部</button><button data-s="pending">待审核</button>
             <button data-s="approved">已审</button><button data-s="published">已发布</button><button data-s="archived">归档</button></div>
+<<<<<<< Updated upstream
           <button class="btn btn--sm btn--primary" id="bankImport">${icon('upload')} 批量导入</button>
+=======
+          <button class="btn btn--sm" id="bankNew">${icon('pencil')} 新建题目</button>
+>>>>>>> Stashed changes
         </div>
         <div class="card__body card__body--flush">
           <div class="tbl-wrap bank-table-scroll"><table class="tbl" id="bankTbl"></table></div>
@@ -467,6 +471,7 @@
         b.classList.add('is-active'); this.bankFilter = b.dataset.s; this.bankPage = 1; this.loadBank();
       }));
       U.$('#bankSearch', box).addEventListener('input', e => { this.bankKeyword = e.target.value.trim(); this.bankPage = 1; this.loadBank(); });
+<<<<<<< Updated upstream
       U.$('#bankImport', box).addEventListener('click', () => {
         Modal.open({
           title: '批量导入题目', size: 'wide',
@@ -595,6 +600,9 @@
           }
         });
       });
+=======
+      U.$('#bankNew', box).addEventListener('click', () => openNewQuestionModal(() => this.loadBank()));
+>>>>>>> Stashed changes
       this.loadBank();
     },
 
@@ -607,18 +615,25 @@
         const totalPages = Math.max(1, Math.ceil((r.total || 0) / this.bankPageSize));
         if (this.bankPage > totalPages) { this.bankPage = totalPages; return this.loadBank(); }
         const stMap = { pending: ['待审核', 'badge--warn'], approved: ['已审', 'badge--ok'], published: ['已发布', 'badge--brand'], archived: ['归档', 'badge--outline'] };
+        const TYPE_LABEL = { single: '单选题', multiple: '多选题', blank: '填空题', judge: '判断题', essay: '简答题' };
         t.innerHTML = `
-          <thead><tr><th>题号</th><th>题干</th><th>题型</th><th>知识点</th><th>难度</th><th class="t-right">正确率</th><th>状态</th><th></th></tr></thead>
+          <thead><tr>
+            <th>题号</th><th>题干</th><th>题型</th><th>知识点</th><th>难度</th>
+            <th class="t-center">重难点</th>
+            <th class="t-center">正确率</th><th class="t-center">状态</th><th class="t-center">操作</th>
+          </tr></thead>
           <tbody>${r.list.map(q => {
             const [lbl, bd] = stMap[q.status] || ['—', 'badge--outline'];
+            const typeLabel = TYPE_LABEL[q.type] || q.type || '—';
             return `<tr>
               <td class="mono fz-12">${q.qId}</td>
               <td><div class="bank-stem-scroll">${U.esc(q.stem)}</div></td>
-              <td>${q.type}</td><td>${U.esc(q.kp)}</td>
+              <td>${typeLabel}</td><td>${U.esc(q.kp)}</td>
               <td>${U.stars(q.difficulty)}</td>
-              <td class="t-right num ${q.correctRate === null ? 't-dim' : (q.correctRate < 60 ? 't-danger' : '')}">${q.correctRate === null ? '—' : q.correctRate + '%'}</td>
-              <td><span class="badge ${bd}">${lbl}</span>${q.isKey ? ' <span class="badge badge--warn">◆</span>' : ''}</td>
-              <td class="t-right"><button class="btn btn--xs btn--ghost" data-edit="${q.qId}">编辑</button>
+              <td class="t-center">${q.isKey ? '<span class="badge badge--warn">◆ 重点</span>' : '<span class="t-dim">' + '—' + '</span>'}</td>
+              <td class="t-center num ${q.correctRate === null ? 't-dim' : (q.correctRate < 60 ? 't-danger' : '')}">${q.correctRate === null ? '—' : q.correctRate + '%'}</td>
+              <td class="t-center"><span class="badge ${bd}">${lbl}</span></td>
+              <td class="t-center"><button class="btn btn--xs btn--ghost" data-edit="${q.qId}">编辑</button>
                 <button class="btn btn--xs btn--ghost" data-del="${q.qId}">删除</button></td>
             </tr>`;
           }).join('')}</tbody>`;
@@ -629,23 +644,69 @@
 
         const pager = U.$('#bankPagination');
         if (!pager) return;
+        /* wallpaper 风格紧凑页码：首尾页恒显，当前页前后共 ~7 页，间隔处渲染可点击的「…」 */
+        const WIN = 7; /* 页码窗口宽度 */
+        const pages = [];
+        if (totalPages <= WIN + 2) {
+          for (let p = 1; p <= totalPages; p++) pages.push(p);
+        } else {
+          let lo = Math.max(2, this.bankPage - Math.floor((WIN - 1) / 2));
+          let hi = Math.min(totalPages - 1, lo + WIN - 2);
+          lo = Math.max(2, hi - WIN + 2);
+          pages.push(1);
+          if (lo > 2) pages.push('...');
+          for (let p = lo; p <= hi; p++) pages.push(p);
+          if (hi < totalPages - 1) pages.push('...');
+          pages.push(totalPages);
+        }
         pager.innerHTML = `
-          <button class="bank-page-btn" data-page-action="first" aria-label="第一页" ${this.bankPage === 1 ? 'disabled' : ''}>«</button>
-          <button class="bank-page-btn" data-page-action="prev" aria-label="上一页" ${this.bankPage === 1 ? 'disabled' : ''}>‹</button>
-          ${Array.from({ length: totalPages }, (_, i) => i + 1).map(p =>
-            `<button class="bank-page-btn ${p === this.bankPage ? 'is-active' : ''}" data-page="${p}">${p}</button>`
+          <button class="bank-page-btn" data-page-action="prev" aria-label="上一页" ${this.bankPage === 1 ? 'disabled' : ''}>«</button>
+          ${pages.map(p => p === '...'
+            ? `<button class="bank-page-btn bank-page-ellipsis" data-page-action="jump" title="输入页码跳转">...</button>`
+            : `<button class="bank-page-btn ${p === this.bankPage ? 'is-active' : ''}" data-page="${p}">${p}</button>`
           ).join('')}
-          <button class="bank-page-btn" data-page-action="next" aria-label="下一页" ${this.bankPage === totalPages ? 'disabled' : ''}>›</button>
-          <button class="bank-page-btn" data-page-action="last" aria-label="最后一页" ${this.bankPage === totalPages ? 'disabled' : ''}>»</button>`;
+          <button class="bank-page-btn" data-page-action="next" aria-label="下一页" ${this.bankPage === totalPages ? 'disabled' : ''}>»</button>`;
         const go = page => {
           if (page < 1 || page > totalPages || page === this.bankPage) return;
           this.bankPage = page; this.loadBank();
         };
+        const openJumpModal = () => {
+          Modal.open({
+            title: '输入页码',
+            body: `<input class="input" id="bankJumpInput" type="number" min="1" max="${totalPages}" placeholder="1 - ${totalPages}" style="width:100%">
+              <p class="modal__hint" id="bankJumpHint"></p>`,
+            footer: `<button class="btn btn--ghost" data-close>取消</button>
+              <button class="btn btn--primary" id="bankJumpOk">确认</button>`,
+            onMount(ov, close) {
+              const inp = U.$('#bankJumpInput', ov);
+              const ok = U.$('#bankJumpOk', ov);
+              const hint = U.$('#bankJumpHint', ov);
+              const doJump = () => {
+                const raw = inp.value.trim();
+                const v = parseInt(raw, 10);
+                if (raw === '' || isNaN(v)) {
+                  hint.textContent = '请输入页码数字';
+                  Toast.warn('请输入页码数字');
+                  return;
+                }
+                if (v < 1 || v > totalPages) {
+                  hint.textContent = `页码超出范围，请输入 1 - ${totalPages}`;
+                  Toast.warn(`请输入 1 - ${totalPages} 之间的页码`);
+                  return;
+                }
+                hint.textContent = '';
+                close(); go(v);
+              };
+              ok.addEventListener('click', doJump);
+              inp.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); doJump(); } });
+              setTimeout(() => { inp.focus(); inp.select(); }, 30);
+            }
+          });
+        };
         U.$$('[data-page]', pager).forEach(b => b.addEventListener('click', () => go(+b.dataset.page)));
-        U.$('[data-page-action="first"]', pager).addEventListener('click', () => go(1));
         U.$('[data-page-action="prev"]', pager).addEventListener('click', () => go(this.bankPage - 1));
         U.$('[data-page-action="next"]', pager).addEventListener('click', () => go(this.bankPage + 1));
-        U.$('[data-page-action="last"]', pager).addEventListener('click', () => go(totalPages));
+        U.$$('[data-page-action="jump"]', pager).forEach(b => b.addEventListener('click', openJumpModal));
       });
     },
 
@@ -841,4 +902,240 @@
     });
   }
 
+<<<<<<< Updated upstream
+=======
+/* ================= 手动单题表单（含图结构编辑器 + 同款渲染预览） ================= */
+function openNewQuestionModal(onDone) {
+  const PRESETS = [
+    { v: "single", t: "单选题" },
+  ];
+
+  function chOptions(list) {
+    return list.map(c => `<option value="${U.esc(c.id || "")}">${U.esc(c.name)}</option>`).join("");
+  }
+  function kpOptions(list) {
+    return list.map(k => `<option value="${U.esc(k.id)}">${U.esc(k.name)}（${U.esc(k.chapter)}）</option>`).join("");
+  }
+
+  Modal.open({
+    title: "新建题目", size: "wide",
+    body: `
+      <div class="stack" style="gap:12px">
+        <div style="display:grid;grid-template-columns:1fr 1fr 110px 110px;gap:10px">
+          <label class="stack" style="gap:4px"><span class="fz-12 t-dim">归属章节目录</span>
+            <select class="select" id="nqChapter"><option value="">加载中…</option></select></label>
+          <label class="stack" style="gap:4px"><span class="fz-12 t-dim">难度（1~5）</span>
+            <select class="select" id="nqDiff">${[1,2,3,4,5].map(i => `<option ${i===3?"selected":""}>${i}</option>`).join("")}</select></label>
+          <label class="stack" style="gap:4px"><span class="fz-12 t-dim">分值</span>
+            <input class="input" id="nqScore" type="number" min="1" value="5"></label>
+        </div>
+        <div class="stack" style="gap:4px">
+          <span class="fz-12 t-dim">考查知识点标签（可多选；标签=KP）</span>
+          <div id="nqKpTags" class="chips" style="max-height:100px;overflow:auto"></div>
+        </div>
+        <label class="stack" style="gap:4px"><span class="fz-12 t-dim">题干</span>
+          <textarea class="input" id="nqStem" style="min-height:64px" placeholder="输入题干…"></textarea></label>
+        <div class="stack" style="gap:6px">
+          <span class="fz-12 t-dim">选项（单选；勾选圆点为正确答案）</span>
+          <div class="stack" style="gap:6px" id="nqOpts">
+            ${["A","B","C","D"].map((k, i) => `
+              <div class="row" style="gap:8px">
+                <input type="radio" name="nqAns" value="${k}" ${i===0?"checked":""} title="设为正确答案">
+                <span class="fz-12 fw-6" style="width:18px">${k}</span>
+                <input class="input" data-opt="${k}" placeholder="选项 ${k} 内容" style="flex:1">
+                <button class="btn btn--xs btn--ghost" data-delopt="${k}" ${i<2?"disabled":""}>删除</button>
+              </div>`).join("")}
+          </div>
+          <button class="btn btn--xs btn--ghost" id="nqAddOpt" style="align-self:flex-start">+ 添加选项</button>
+        </div>
+        <label class="stack" style="gap:4px"><span class="fz-12 t-dim">解析</span>
+          <textarea class="input" id="nqAnalysis" style="min-height:48px" placeholder="答案解析…"></textarea></label>
+        <label class="row" style="gap:6px"><input type="checkbox" id="nqHasFig">
+          <span class="fz-12">本题含图像（手动编辑图像结构，实时预览）</span></label>
+        <div id="nqFigBox" style="display:none" class="stack" style="gap:10px">
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+            <label class="stack" style="gap:4px"><span class="fz-12 t-dim">图型</span>
+              <select class="select" id="nqFigType">
+                <option value="tree">二叉树</option>
+                <option value="adjacency_matrix">邻接矩阵</option>
+                <option value="graph">一般图</option>
+              </select></label>
+            <label class="stack" style="gap:4px" id="nqFigTreeRoot"><span class="fz-12 t-dim">根节点</span>
+              <input class="input" id="nqFigRoot" value="A"></label>
+          </div>
+          <label class="stack" style="gap:4px" id="nqFigNodes"><span class="fz-12 t-dim">节点（逗号分隔）</span>
+            <input class="input" id="nqFigNodesInput" value="A,B,C,D"></label>
+          <label class="stack" style="gap:4px" id="nqFigEdgesTree"><span class="fz-12 t-dim">边（每行：父,子,left|right）</span>
+            <textarea class="input" id="nqFigEdgesTreeInput" style="min-height:56px;font-family:monospace" placeholder="A,B,left\nA,C,right">A,B,left\nA,C,right</textarea></label>
+          <label class="stack" style="gap:4px" id="nqFigEdgesGraph" style="display:none"><span class="fz-12 t-dim">边（每行：起点,终点,权重）</span>
+            <textarea class="input" id="nqFigEdgesGraphInput" style="min-height:56px;font-family:monospace" placeholder="A,B,4\nB,C,2"></textarea></label>
+          <div id="nqFigMatrix" style="overflow:auto"></div>
+          <div class="stack" style="gap:6px">
+            <span class="fz-12 t-dim">预览（题库同款渲染）</span>
+            <div style="border:1px solid var(--border);border-radius:8px;padding:8px;background:var(--bg-1)"><div id="nqFigPrev" style="min-height:120px"></div></div>
+          </div>
+        </div>
+      </div>`,
+    footer: `<button class="btn" data-close>取消</button>
+      <button class="btn btn--primary" id="nqSubmit">${icon("check")} 保存进题库</button>`,
+    onMount(ov, close) {
+      const $ = (sel) => ov.querySelector(sel);
+      const selectedKps = new Set();
+      let structureData = null;
+
+      API.teacher.structure().then(d => {
+        structureData = d;
+        const chSel = $("#nqChapter");
+        if (chSel) {
+          chSel.innerHTML = '<option value="">（不选章）</option>' +
+            (d.chapterOptions || (d.chapters || []).filter(c => !c.virtual).map(c => ({ id: c.id, name: c.name })))
+              .map(c => `<option value="${U.esc(c.id)}">${U.esc(c.name)}</option>`).join("");
+        }
+        const tagBox = $("#nqKpTags");
+        if (tagBox) {
+          tagBox.innerHTML = (d.kpOptions || (d.chapters || []).flatMap(c => (c.kps || []).map(k => ({ id: k.id, name: k.name, chapter: c.name }))))
+            .map(k => `<button type="button" class="chip" data-kp="${U.esc(k.id)}" data-ch="${U.esc(k.chapter || '')}">${U.esc(k.name)}</button>`).join("")
+            || '<span class="fz-11 t-dim">暂无知识点，请先在目录页创建</span>';
+        }
+      }).catch(() => {});
+
+      const paintKps = () => {
+        ov.querySelectorAll("#nqKpTags [data-kp]").forEach(b => {
+          const on = selectedKps.has(b.dataset.kp);
+          b.classList.toggle("is-on", on);
+          b.classList.toggle("is-active", on);
+        });
+      };
+      ov.querySelector("#nqKpTags")?.addEventListener("click", e => {
+        const b = e.target.closest("[data-kp]");
+        if (!b) return;
+        if (selectedKps.has(b.dataset.kp)) selectedKps.delete(b.dataset.kp); else selectedKps.add(b.dataset.kp);
+        paintKps();
+      });
+      ov.querySelector("#nqChapter")?.addEventListener("change", () => {
+        const chId = ov.querySelector("#nqChapter").value;
+        const ch = (structureData && structureData.chapterOptions || []).find(c => c.id === chId);
+        if (!ch) return;
+        // 选章时自动勾选该章 KP（可再手动取消）
+        ov.querySelectorAll("#nqKpTags [data-kp]").forEach(b => {
+          if (b.dataset.ch === ch.name) selectedKps.add(b.dataset.kp);
+        });
+        paintKps();
+      });
+
+      // 选项增删
+      ov.querySelector("#nqAddOpt").addEventListener("click", () => {
+        const box = $("#nqOpts");
+        const used = [...box.querySelectorAll("[data-opt]")].map(x => x.dataset.opt);
+        const next = "ABCDEFGH".split('').find(k => !used.includes(k));
+        if (!next) { Toast.warn("最多 8 个选项"); return; }
+        const div = document.createElement("div");
+        div.className = "row"; div.style.cssText = "gap:8px";
+        div.innerHTML = `<input type="radio" name="nqAns" value="${next}"><span class="fz-12 fw-6" style="width:18px">${next}</span>
+          <input class="input" data-opt="${next}" placeholder="选项 ${next} 内容" style="flex:1">
+          <button class="btn btn--xs btn--ghost" data-delopt="${next}">删除</button>`;
+        box.appendChild(div);
+        div.querySelector("[data-delopt]").addEventListener("click", () => div.remove());
+      });
+      ov.addEventListener("click", e => {
+        const d = e.target.closest("[data-delopt]");
+        if (d && !d.disabled) d.closest(".row").remove();
+      });
+
+      // 图编辑器
+      const figBox = $("#nqFigBox");
+      $("#nqHasFig").addEventListener("change", e => {
+        figBox.style.display = e.target.checked ? "" : "none";
+        renderPreview();
+      });
+      const figType = () => $("#nqFigType").value;
+      const nodesList = () => ($("#nqFigNodesInput").value || "").split(/[,，\s]+/).map(s => s.trim()).filter(Boolean);
+      function syncFigUI() {
+        const t = figType();
+        $("#nqFigTreeRoot").style.display = t === "tree" ? "" : "none";
+        $("#nqFigEdgesTree").style.display = t === "tree" ? "" : "none";
+        $("#nqFigEdgesGraph").style.display = t === "graph" ? "" : "none";
+        const mWrap = $("#nqFigMatrix");
+        if (t === "adjacency_matrix") {
+          const nodes = nodesList();
+          mWrap.innerHTML = `<table class="ds-matrix"><thead><tr><th></th>${nodes.map(n => `<th>${U.esc(n)}</th>`).join("")}</tr></thead><tbody>${
+            nodes.map((rn, i) => `<tr><th>${U.esc(rn)}</th>${nodes.map((cn, j) =>
+              `<td><input class="input" data-mr="${i}" data-mc="${j}" style="width:52px;padding:2px 4px" value="0"></td>`).join("")}</tr>`).join("")}</tbody></table>`;
+          mWrap.style.display = "";
+        } else {
+          mWrap.style.display = "none";
+        }
+        renderPreview();
+      }
+      function buildSpec() {
+        const t = figType();
+        const nodes = nodesList();
+        if (!nodes.length) return null;
+        if (t === "tree") {
+          const root = ($("#nqFigRoot").value || nodes[0]).trim();
+          const edges = ($("#nqFigEdgesTreeInput").value || "").split("\n").map(s => s.trim()).filter(Boolean).map(line => {
+            const [from, to, position] = line.split(/[,，]/).map(x => x.trim());
+            return { from, to, position: position === "right" ? "right" : "left" };
+          }).filter(e => e.from && e.to);
+          const all = [...new Set([root, ...nodes, ...edges.flatMap(e => [e.from, e.to])])];
+          return { type: "tree", root, nodes: all, edges };
+        }
+        if (t === "adjacency_matrix") {
+          const m = nodes.map((_, i) => nodes.map((__, j) => {
+            const inp = ov.querySelector(`[data-mr="${i}"][data-mc="${j}"]`);
+            return inp ? (parseFloat(inp.value) || 0) : 0;
+          }));
+          return { type: "adjacency_matrix", nodes, matrix: m };
+        }
+        const edges = ($("#nqFigEdgesGraphInput").value || "").split("\n").map(s => s.trim()).filter(Boolean).map(line => {
+          const [from, to, w] = line.split(/[,，]/).map(x => x.trim());
+          return { from, to, w: w || "" };
+        }).filter(e => e.from && e.to);
+        return { type: "graph", nodes, edges, directed: true };
+      }
+      function renderPreview() {
+        if (figBox.style.display === "none" || !window.DsFigure) return;
+        const spec = buildSpec();
+        const prev = $("#nqFigPrev");
+        if (spec) DsFigure.mount(prev, spec); else prev.innerHTML = "";
+      }
+      ["#nqFigType", "#nqFigNodesInput", "#nqFigEdgesTreeInput", "#nqFigEdgesGraphInput"].forEach(sel =>
+        ov.addEventListener("input", e => { if (e.target.matches(sel)) syncFigUI(); }));
+      syncFigUI();
+
+      // 提交
+      ov.querySelector("#nqSubmit").addEventListener("click", () => {
+        const stem = $("#nqStem").value.trim();
+        if (!stem) { Toast.warn("请输入题干"); return; }
+        const opts = [...ov.querySelectorAll("[data-opt]")].map(x => ({ key: x.dataset.opt, text: x.value.trim() }));
+        if (opts.some(o => !o.text)) { Toast.warn("选项内容不能为空"); return; }
+        const answer = (ov.querySelector("input[name=nqAns]:checked") || {}).value || "";
+        const chapterId = $("#nqChapter") ? $("#nqChapter").value : "";
+        const kpIds = [...selectedKps];
+        if (!kpIds.length) { Toast.warn("请至少选择一个考查知识点标签"); return; }
+        const q = {
+          type: "single", difficulty: parseInt($("#nqDiff").value, 10) || 3,
+          score: parseInt($("#nqScore").value, 10) || 5, status: "published",
+          stem, options: opts, answer,
+          analysis: $("#nqAnalysis").value.trim(),
+          chapterId,
+          kp_id: kpIds[0],
+          kp_ids: kpIds,
+        };
+        if ($("#nqHasFig").checked) {
+          const spec = buildSpec();
+          if (!spec) { Toast.warn("图像结构不完整：请填写节点"); return; }
+          q.figure_json = { graph: spec, has_image: true };
+        }
+        API.teacher.importQuestions({ questions: [q] }).then(() => {
+          close();
+          Toast.ok("题目已保存进题库", "可在题库列表查看");
+          if (onDone) onDone();
+        }).catch(err => Toast.error("保存失败", err && err.message || ""));
+      });
+    }
+  });
+}
+
+>>>>>>> Stashed changes
 Router.register('question', { title: 'AI 出题与题库管理', mount: () => Question.render() });

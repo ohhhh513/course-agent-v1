@@ -30,11 +30,19 @@
     currentChapter: '',
     _pendingKp: '',
     _allPaths: [],
+    // 本次真实拉取到的资源列表与「知识点 → 资源数」映射（用于准确显示章节/知识点资源数）
+    _resList: [],
+    _resCountByKp: {},
+    _resCountTrusted: false,
     // 当前展开知识点的章节名（null 表示未展开）
     _activeChapter: null,
 
     render() {
       const el = U.$('#view-resource');
+      // 同步取走「待定位知识点」：由待办「继续学习」或学情矩阵下钻写入，用后即清，
+      // 保证重复点击同一条待办也能重新定位（不能等异步回调里再读，否则会被覆盖）。
+      const pendingKp = this._pendingKp;
+      this._pendingKp = '';
       el.innerHTML = `
       <div class="grid g-12" style="margin-bottom:16px">
         <div class="card">
@@ -64,22 +72,41 @@
         </div>
       </div>`;
 
+<<<<<<< Updated upstream
       API.graph.learningPath().then(list => {
         this._allPaths = list;
+=======
+      Promise.all([
+        API.graph.learningPath(),
+        API.student.resources({ size: 500 }).catch(() => ({ list: [] })),
+      ]).then(([list, resPayload]) => {
+        this._allPaths = list || [];
+        const resList = (resPayload && resPayload.list) || [];
+        // 知识点 → 已挂载资源数：与右侧资源列表同源实时统计（主 kpId + kpIds 多标签都计入）。
+        // 服务端 learning_paths.res_count 只是派生缓存，可能滞后于实际上传/删除，这里以真实资源为准。
+        this._resList = resList;
+        this._resCountTrusted = resList.length > 0;
+        this._resCountByKp = {};
+        resList.forEach(r => {
+          new Set([r.kpId, ...(r.kpIds || [])].filter(Boolean)).forEach(id => {
+            this._resCountByKp[id] = (this._resCountByKp[id] || 0) + 1;
+          });
+        });
+        this._mergeResourceChapters(resList);
+>>>>>>> Stashed changes
 
-        // 来自学情矩阵的跳转定位
-        if (this._pendingKp) {
-          const match = list.find(p => p.name === this._pendingKp);
+        // 来自学情矩阵 / 待办「继续学习」的跳转定位
+        if (pendingKp) {
+          const match = list.find(p => p.name === pendingKp);
           if (match) {
             this.currentMode = 'kp';
             this.currentKpId = match.kpId;
             this.currentKpName = match.name;
           } else {
-            this.keyword = this._pendingKp;
+            this.keyword = pendingKp;
             const input = U.$('#resSearch');
             if (input) input.value = this.keyword;
           }
-          this._pendingKp = '';
         }
 
         // --- 左侧：学习路径列表 ---
@@ -93,8 +120,13 @@
             <div class="path__main">
               <div class="row"><b>${U.esc(p.name)}</b><span class="spacer"></span><span class="badge ${bd}">${txt}</span></div>
               <div class="path__meta">
+<<<<<<< Updated upstream
                 <span>${p.hours} 学时</span><span>·</span><span>${p.resCount} 个资源</span>
                 ${p.mastery ? `<span>·</span><span class="${U.level(p.mastery) === 'weak' ? 't-danger' : ''}">学习完成 ${p.mastery}%</span>` : ''}
+=======
+                <span>${p.hours} 学时</span><span> </span><span>${p.resCount} 个资源</span>
+                  ${p.mastery ? `<span> </span><span class="${U.level(p.mastery) === 'weak' ? 't-danger' : ''}">完成率 ${p.mastery}%</span>` : ''}
+>>>>>>> Stashed changes
                 ${p.locked ? `<span class="badge badge--outline">🔒 未解锁</span>` : ''}
               </div>
               ${p.progress ? `<div style="margin-top:7px;max-width:260px">${U.bar(p.progress, { done: 'excellent', doing: 'fair', warn: 'weak', todo: 'none' }[p.status], 'sm')}</div>` : ''}
@@ -115,7 +147,7 @@
           const done = items.filter(x => x.status === 'done').length;
           const avgM = items.length ? Math.round(items.reduce((s, x) => s + (x.mastery || 0), 0) / items.length) : 0;
           const totalHours = items.reduce((s, x) => s + (x.hours || 0), 0);
-          const totalRes = items.reduce((s, x) => s + (x.resCount || 0), 0);
+          const totalRes = this.chapterResCount(g.name);
           const pct = items.length ? Math.round((done / items.length) * 100) : 0;
           const pctLevel = pct === 100 ? 'is-good' : pct === 0 ? 'is-low' : 'is-fair';
           const summary = `${done}/${items.length} 已完成 · 平均学习完成 ${avgM}%`;
@@ -216,6 +248,67 @@
       });
     },
 
+<<<<<<< Updated upstream
+=======
+    /** 把资源上的章/标签并入学习路径分组，保证教师新建章并上传资源后学生端可见 */
+    _mergeResourceChapters(resList) {
+      const paths = this._allPaths || [];
+      const byChapter = new Map();
+      paths.forEach(p => {
+        const ch = p.chapter || '其他章节';
+        if (!byChapter.has(ch)) byChapter.set(ch, []);
+        byChapter.get(ch).push(p);
+      });
+      (resList || []).forEach(r => {
+        const ch = r.chapter || '';
+        if (!ch) return;
+        if (!byChapter.has(ch)) byChapter.set(ch, []);
+        const kids = r.tags || r.kps || [];
+        kids.forEach(t => {
+          const kpId = t.kpId || t.tagId;
+          const name = t.name || kpId;
+          if (!kpId) return;
+          const arr = byChapter.get(ch);
+          if (!arr.some(x => x.kpId === kpId)) {
+            arr.push({ kpId, name, chapter: ch, step: arr.length + 1, status: 'todo', hours: 0, resCount: (this._resCountByKp || {})[kpId] || 0, mastery: 0, progress: 0 });
+          }
+        });
+      });
+      // 章顺序：按第N章编号
+      const orderKey = (name) => {
+        const m = String(name).match(/第\s*(\d+)\s*章/);
+        return m ? parseInt(m[1], 10) : 10000;
+      };
+      const merged = [];
+      [...byChapter.entries()]
+        .sort((a, b) => orderKey(a[0]) - orderKey(b[0]) || String(a[0]).localeCompare(String(b[0])))
+        .forEach(([, items]) => {
+          items.forEach(it => merged.push(it));
+        });
+      this._allPaths = merged;
+    },
+
+    /** 某知识点已挂载的资源数：优先用本次真实拉取的资源列表，拉取失败才回落到服务端值 */
+    resCountOf(p) {
+      const n = p && p.kpId ? (this._resCountByKp || {})[p.kpId] : undefined;
+      if (this._resCountTrusted && n !== undefined) return n;
+      return (p && p.resCount) || 0;
+    },
+
+    /** 某章节的资源数：按「去重后的资源条数」统计（同一资源挂多个知识点只算一次） */
+    chapterResCount(chapterName) {
+      const items = (this._allPaths || []).filter(p => (p.chapter || '其他章节') === chapterName);
+      if (!this._resCountTrusted) {
+        return items.reduce((s, p) => s + (p.resCount || 0), 0);
+      }
+      const kpIds = new Set(items.map(p => p.kpId).filter(Boolean));
+      return (this._resList || []).filter(r => {
+        if (r.chapter && r.chapter === chapterName) return true;
+        return [r.kpId, ...(r.kpIds || [])].filter(Boolean).some(id => kpIds.has(id));
+      }).length;
+    },
+
+>>>>>>> Stashed changes
     /* --- 右侧 chips：章节标签 + 点击弹出知识点 --- */
     renderKpChips() {
       const box = U.$('#resChips');
@@ -261,7 +354,7 @@
         const g = groups.find(x => x.name === this._activeChapter);
         if (g) {
           row2 = `<div class="chips-popup" data-chapter="${U.esc(g.name)}">
-            <div class="chips-popup__hint">${U.esc(CHAPTER_NAMES[g.name] || g.name)} · ${g.items.length} 个知识点 <button class="chips-popup__close" type="button" title="收起">✕</button></div>
+            <div class="chips-popup__hint">${U.esc(CHAPTER_NAMES[g.name] || g.name)} · ${g.items.length} 个知识点 · ${this.chapterResCount(g.name)} 个资源 <button class="chips-popup__close" type="button" title="收起">✕</button></div>
             <div class="chips-popup__row">${g.items.map(p =>
               `<button class="chip chip--kp ${chipIsActive(p.kpId) ? 'is-active' : ''}" data-mode="kp" data-kp-id="${U.esc(p.kpId)}">${U.esc(p.name)}</button>`
             ).join('')}</div>
@@ -454,24 +547,75 @@
       }
     },
 
+<<<<<<< Updated upstream
     /* --- 视频：恢复上次播放位置 + 实时保存进度 --- */
+=======
+    /* --- 视频：整体加载完成后再播放 + 进度记录点续播 ---
+       1) 播放前先把整段视频缓冲完（preload=auto，等「整段缓冲」或 canplaythrough），
+          避免「边下边播」时 duration / currentTime 尚未确定就把缓冲、拖动记成学习进度；
+       2) 进入时读取数据库里的记录点（resource_progress.position），
+          未看完的视频自动定位到记录点续播，进度条上同时标出记录点位置（可点击跳转）；
+       3) 上报带 watchedDelta（本轮真实播放秒数），今日学习时长只统计真正看的时间。 */
+>>>>>>> Stashed changes
     _showVideoModal(res, pr) {
       const self = this;
-      const startAt = (pr && pr.position && pr.position > 0) ? pr.position : 0;
+      const bookmark = (pr && pr.position > 0) ? Math.floor(pr.position) : 0;   // 记录点（秒）
+      const wasCompleted = !!(pr && pr.progress >= 100);
+      const fmt = s => self._fmt(s);
+
       const body = `
-        <video id="rv" src="${U.esc(res.url)}" controls ${startAt ? '' : 'autoplay'} style="width:100%;border-radius:var(--r-md);background:#000;max-height:60vh"></video>
-        <div class="kv" style="margin-top:14px">
+        <div class="rv-wrap" id="rvWrap">
+          <video id="rv" class="rv-video" src="${U.esc(res.url)}" controls preload="auto" playsinline></video>
+          <div class="rv-load" id="rvLoad">
+            <span class="rv-load__spin" aria-hidden="true"></span>
+            <b class="rv-load__title" id="rvLoadTitle">正在加载视频…</b>
+            <div class="rv-load__bar"><i id="rvLoadBar" style="width:0%"></i></div>
+            <p class="rv-load__hint" id="rvLoadHint">整段加载完成后再播放，确保学习进度记录准确</p>
+            <button class="btn btn--sm btn--outline" id="rvForce" type="button" hidden>网络较慢，直接播放</button>
+          </div>
+        </div>
+        <div class="rv-track" id="rvTrack" title="点击跳转">
+          <i class="rv-track__buffer" id="rvBuf"></i>
+          <i class="rv-track__played" id="rvPlayed"></i>
+          <span class="rv-track__mark" id="rvMark" hidden title="上次观看记录点"></span>
+        </div>
+        <div class="rv-meta">
+          <span id="rvPos" class="mono">0:00</span>
+          <span class="spacer"></span>
+          <span id="rvBuffered">已缓冲 0%</span>
+          <span class="spacer"></span>
+          <span id="rvMarkTxt">${bookmark ? '记录点 ' + fmt(bookmark) : '暂无记录点'}</span>
+        </div>
+        <div class="kv" style="margin-top:12px">
           <div class="kv__row"><span>资源类型</span><span>教学视频</span></div>
           <div class="kv__row"><span>时长</span><span>${U.esc(res.duration || '—')}</span></div>
           <div class="kv__row"><span>关联知识点</span><span>${U.esc(res.kp) || '—'}</span></div>
+<<<<<<< Updated upstream
           <div class="kv__row"><span>续看进度</span><span id="rvProg" class="mono">${startAt ? '定位到 ' + this._fmt(startAt) : '从头播放'}</span></div>
         </div>`;
       const footer = `<a class="btn btn--primary" href="${U.esc(res.url)}" download>下载视频</a><button class="btn" data-close>关闭</button>`;
 
+=======
+          <div class="kv__row"><span>学习进度</span><span id="rvProg" class="mono">${bookmark ? '续看自 ' + fmt(bookmark) : '从头播放'}</span></div>
+        </div>`;
+      const footer = `<a class="btn btn--primary" href="${U.esc(res.url)}" download>下载视频</a><button class="btn" data-close>关闭</button>`;
+
+      let ready = false;     // 是否已完成整体加载：加载期间一律不写进度
+      let watched = 0;       // 本轮上报周期内真实播放的秒数
+      let lastPos = null;    // 上一帧播放位置，用于累加 watched（拖动会被过滤）
+      let totalSec = 0;      // 浏览器解析出的总时长（秒）
+      let rvEl = null;       // 当前弹窗里的 video 元素（onMount 时按弹窗容器定位，避免多弹窗时串元素）
+      let saving = false;    // 是否有上报在路上（同时只允许一个）
+      let queued = false;    // 上报期间又被请求保存 → 结束后补一次
+
+>>>>>>> Stashed changes
       const save = (force) => {
-        const v = U.$('#rv');
-        if (!v) return;
+        const v = rvEl;
+        if (!v || !ready) return;
+        // 串行上报：并发请求会同时命中后端「先查后插」，把同一资源写成两行
+        if (saving) { queued = true; return; }
         const pos = Math.floor(v.currentTime || 0);
+<<<<<<< Updated upstream
         // 避免初始化/seek 时把进度回写成比上次更低的位置
         if (!force && pos <= startAt && !v.ended) return;
         const dur = v.duration ? Math.floor(v.duration) : 0;
@@ -479,18 +623,33 @@
         if (v.ended) progress = 100;
         // 已完成资源（进度已达 100%）重复观看/回拖/中途暂停时始终标记完成，不回退
         if (completed && !v.ended) progress = 100;
+=======
+        if (!force && pos <= bookmark && !v.ended) return;
+        const dur = (v.duration && isFinite(v.duration)) ? Math.floor(v.duration) : totalSec;
+        let progress = dur ? Math.min(100, Math.round(pos / dur * 100)) : 0;
+        if (v.ended || wasCompleted) progress = 100;   // 已完成的视频重复观看不降级
+>>>>>>> Stashed changes
         const pEl = U.$('#rvProg');
-        if (pEl) pEl.textContent = (progress >= 100 ? '已完成 ✓' : '已观看 ' + progress + '%') + (pos ? ' · ' + this._fmt(pos) : '');
-        API.student.saveResourceProgress(res.resId, { progress, position: pos }).catch(() => {});
+        if (pEl) pEl.textContent = (progress >= 100 ? '已完成 ✓' : '已观看 ' + progress + '%') + (pos ? ' · ' + fmt(pos) : '');
+        const delta = Math.floor(watched);
+        saving = true;
+        API.student.saveResourceProgress(res.resId, {
+          progress, position: pos, watchedDelta: delta,
+        }).then(() => {
+          watched -= delta; if (watched < 0) watched = 0;
+        }).catch(() => {}).then(() => {
+          saving = false;
+          if (queued) { queued = false; save(true); }   // 期间被要求保存过 → 补一次
+        });
       };
-
-      const completed = pr && pr.progress >= 100;
 
       Modal.open({
         title: res.title, body, footer,
         onMount(ov) {
-          const v = U.$('#rv');
+          const v = ov.querySelector('#rv');
+          rvEl = v;
           if (!v) return;
+<<<<<<< Updated upstream
           v.addEventListener('loadedmetadata', () => {
             if (startAt && v.duration && startAt < v.duration - 0.5) {
               try { v.currentTime = startAt; } catch (e) {}
@@ -498,21 +657,157 @@
             // 已看完的视频不再自动播放，避免重新从头播放
             if (!completed) {
               v.play().catch(() => {});
+=======
+          // 一律在弹窗容器内查询：多弹窗/残留节点下 ID 查询会串到旧元素
+          const q = id => ov.querySelector('#' + id);
+          const wrap = q('rvWrap'), loadBar = q('rvLoadBar'), loadTitle = q('rvLoadTitle');
+          const loadHint = q('rvLoadHint'), forceBtn = q('rvForce'), durEl = q('rvDur');
+          const bufEl = q('rvBuffered'), bufBar = q('rvBuf'), playedBar = q('rvPlayed');
+          const markEl = q('rvMark'), posEl = q('rvPos'), track = q('rvTrack');
+
+          const ratio = (a, b) => (b > 0 ? Math.min(100, Math.max(0, (a / b) * 100)) : 0);
+
+          // 缓冲进度：进度条 + 文案（加载遮罩里的百分比同步）
+          const paintBuffer = () => {
+            const dur = (v.duration && isFinite(v.duration)) ? v.duration : 0;
+            let buffered = 0;
+            try {
+              if (v.buffered && v.buffered.length) buffered = v.buffered.end(v.buffered.length - 1);
+            } catch (e) {}
+            const p = Math.round(ratio(buffered, dur));
+            bufBar.style.width = p + '%';
+            if (bufEl) bufEl.textContent = p >= 99 ? '已完全加载' : '已缓冲 ' + p + '%';
+            if (loadBar) loadBar.style.width = p + '%';
+            if (loadTitle && !ready) loadTitle.textContent = p > 0 ? `正在加载视频 ${p}%` : '正在加载视频…';
+            return { dur, buffered };
+          };
+
+          const paintPosition = () => {
+            const dur = (v.duration && isFinite(v.duration)) ? v.duration : 0;
+            if (posEl) posEl.textContent = fmt(v.currentTime || 0);
+            playedBar.style.width = ratio(v.currentTime || 0, dur) + '%';
+          };
+
+          // ---- 加载阶段：整段缓冲完成才允许播放与记录 ----
+          const slowTimer = setTimeout(() => {
+            if (ready) return;
+            if (forceBtn) forceBtn.hidden = false;
+            if (loadHint) loadHint.textContent = '网络较慢：可继续等待完整加载，或直接播放（学习记录可能不准）';
+          }, 10000);
+
+          const beginPlay = () => {
+            clearTimeout(slowTimer);
+            const dur = (v.duration && isFinite(v.duration)) ? v.duration : 0;
+            // 未看完 → 定位到记录点续播；已看完 → 从头重新播放
+            if (!wasCompleted && bookmark > 0 && (!dur || bookmark < dur - 1)) {
+              try { v.currentTime = bookmark; } catch (e) {}
+              Toast.info('已从记录点继续播放', `上次看到 ${fmt(bookmark)}`);
+>>>>>>> Stashed changes
             } else {
-              try { v.currentTime = v.duration || 0; } catch (e) {}
+              try { v.currentTime = 0; } catch (e) {}
+              if (wasCompleted) Toast.info('该视频已完成', '从头重新播放');
             }
+<<<<<<< Updated upstream
+=======
+            lastPos = v.currentTime || 0;
+            paintPosition();
+            save(true);
+            v.play().catch(() => {});
+          };
+
+          const markReady = () => {   // 完成整体加载：收起遮罩 → 定位记录点 → 播放
+            if (ready) return;
+            ready = true;
+            if (wrap) wrap.classList.add('is-ready');
+            paintBuffer();
+            beginPlay();
+          };
+
+          // 整体加载判定：不依赖某一个事件的先后顺序（不同浏览器/不同网络下
+          // progress / loadeddata / canplaythrough 的到达顺序并不一致，只等 progress
+          // 会漏判）。任一事件后只要「已缓冲到片尾」就直接就绪。
+          const checkLoaded = () => {
+            const { dur, buffered } = paintBuffer();
+            if (!ready && dur && buffered >= dur - 0.5) markReady();
+            return { dur, buffered };
+          };
+
+          v.addEventListener('loadedmetadata', () => {
+            totalSec = (v.duration && isFinite(v.duration)) ? Math.floor(v.duration) : 0;
+            if (durEl && totalSec) durEl.textContent = fmt(totalSec);
+            if (markEl && totalSec && bookmark > 0 && bookmark < totalSec - 1) {
+              markEl.hidden = false;
+              markEl.style.left = ratio(bookmark, totalSec) + '%';
+              const mt = q('rvMarkTxt');
+              if (mt) mt.textContent = `记录点 ${fmt(bookmark)} / ${fmt(totalSec)}`;
+            }
+            paintPosition();
+            checkLoaded();
+          });
+          v.addEventListener('progress', checkLoaded);
+          v.addEventListener('loadeddata', checkLoaded);
+          v.addEventListener('canplay', checkLoaded);
+          v.addEventListener('canplaythrough', () => {
+            // 浏览器判定「可以顺畅播完」：再给 5s 把余量补满，仍不满则直接开始
+            checkLoaded();
+            setTimeout(() => { if (!ready) markReady(); }, 5000);
+          });
+          v.addEventListener('durationchange', () => {
+            totalSec = (v.duration && isFinite(v.duration)) ? Math.floor(v.duration) : 0;
+            if (durEl && totalSec) durEl.textContent = fmt(totalSec);
+            checkLoaded();
+>>>>>>> Stashed changes
           });
           v.addEventListener('timeupdate', () => {
+            const t = v.currentTime || 0;
+            // 只累计「正常推进」的播放时间：暂停、拖动、跳转都不计
+            if (ready && lastPos !== null && !v.paused && !v.seeking) {
+              const d = t - lastPos;
+              if (d > 0 && d < 5) watched += d;
+            }
+            lastPos = t;
+            paintPosition();
             const now = Date.now();
             if (!v._lastSave || now - v._lastSave > 2000) { v._lastSave = now; save(); }
           });
+          v.addEventListener('seeking', () => { lastPos = null; });
+          v.addEventListener('seeked', () => { lastPos = v.currentTime || 0; paintPosition(); save(true); });
+          v.addEventListener('pause', () => { setTimeout(() => save(true), 200); });
           v.addEventListener('ended', () => {
             // 播放结束停在最后一帧，不循环不自动重播
             try { v.currentTime = v.duration || 0; } catch (e) {}
+            paintPosition();
             save(true);
           });
+<<<<<<< Updated upstream
           v.addEventListener('pause', () => { setTimeout(() => save(true), 300); });
           // 弹窗关闭时再保存一次（捕获阶段，先于 close 执行）
+=======
+          v.addEventListener('error', () => {
+            if (loadTitle) loadTitle.textContent = '视频加载失败';
+            if (loadHint) loadHint.textContent = '文件可能已被删除或暂不可访问，请稍后重试或联系教师。';
+          });
+
+          // 「网络较慢」逃生入口：跳过完整加载
+          if (forceBtn) forceBtn.addEventListener('click', () => {
+            if (forceBtn) forceBtn.hidden = true;
+            markReady();
+          });
+
+          // 点击进度条跳转（顺带把 watched 清零，避免跳转被算成学习时长）
+          if (track) track.addEventListener('click', e => {
+            const dur = v.duration;
+            if (!dur || !isFinite(dur)) { Toast.warn('视频尚未加载完成', '请等加载完成后再跳转'); return; }
+            const rect = track.getBoundingClientRect();
+            const target = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width)) * dur;
+            watched = 0;
+            try { v.currentTime = target; } catch (err) {}
+            lastPos = target;
+            paintPosition();
+            if (ready) save(true);
+          });
+
+>>>>>>> Stashed changes
           ov.addEventListener('click', e => {
             if (e.target === ov || e.target.closest('[data-close]')) { save(true); self.load(); }
           }, true);
@@ -619,4 +914,9 @@
   // 暴露到全局：课程图谱的「挂载资源」点击会通过 window.ResourceView.openResource 打开资源
   window.ResourceView = ResourceView;
 
-  Router.register('resource', { title: '学习资源中心', mount: () => ResourceView.render() });
+  Router.register('resource', {
+    title: '学习资源中心',
+    mount: () => ResourceView.render(),
+    // 已 mount 过时再次进入：仅当带着「待定位知识点」才重绘（避免无谓刷新覆盖用户当前筛选）
+    update: () => { if (ResourceView._pendingKp) ResourceView.render(); },
+  });

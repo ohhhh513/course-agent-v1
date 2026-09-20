@@ -5,6 +5,9 @@
 const Charts = (function () {
 
   const store = new Map();   // el -> { instance, builder }
+  // 图谱「松手」兜底监听的当前处理器：图表重建时先摘掉旧的，避免重复绑定
+  // （zrender 的鼠标释放多数情况已能收到，这里只兜底画布外释放）
+  let graphWinUp = null;
 
   function cssVar(n) {
     return getComputedStyle(document.documentElement).getPropertyValue(n).trim();
@@ -25,7 +28,27 @@ const Charts = (function () {
       ok: cssVar('--ok') || '#22c55e',
       warn: cssVar('--warn') || '#f59e0b',
       danger: cssVar('--danger') || '#ef4444',
-      info: cssVar('--info') || '#38bdf8'
+      info: cssVar('--info') || '#38bdf8',
+      // 图谱关系配色：统一取自 refresh.css 的 --rel-*，
+      // 与教师端图谱编排共用同一套变量，杜绝两端颜色漂移
+      relPre: cssVar('--rel-pre') || '#0d9488',
+      relAdvance: cssVar('--rel-advance') || '#a21caf',
+      relParallel: cssVar('--rel-parallel') || '#718793',
+      relSplit: cssVar('--rel-split') || '#a21caf',
+      relMap: cssVar('--rel-map') || '#2f7fc1',
+      relError: cssVar('--rel-error') || '#dc4f58',
+      relSupport: cssVar('--rel-support') || '#2f7fc1'
+    };
+  }
+
+  /** 关系类型 → 颜色 / 名称（集中一处，图表与图例复用） */
+  function relPalette(t) {
+    return {
+      color: {
+        pre: t.relPre, advance: t.relAdvance, parallel: t.relParallel,
+        split: t.relSplit, map: t.relMap, error: t.relError, support: t.relSupport
+      },
+      name: { pre: '前置', advance: '进阶', parallel: '并列', split: '拆解', map: '映射', error: '错题', support: '支撑' }
     };
   }
 
@@ -57,8 +80,10 @@ const Charts = (function () {
     };
   }
 
-  /** 渲染并登记（主题切换后自动重绘） */
-  function render(sel, builder) {
+  /** 渲染并登记（主题切换后自动重绘）
+   *  onClick / onReady 会随实例一起登记：redrawAll() 重建实例时会自动重新绑定，
+   *  否则任何一次主题重绘（页面加载时的 themechange 也算）都会让图表点击/悬停失效。 */
+  function render(sel, builder, onClick, onReady) {
     const el = typeof sel === 'string' ? document.querySelector(sel) : sel;
     if (!el || !window.echarts) return null;
     let rec = store.get(el);
@@ -66,8 +91,10 @@ const Charts = (function () {
     if (rec && rec.instance) rec.instance.dispose();
     const inst = echarts.init(el, null, { renderer: 'canvas' });
     inst.setOption(builder(tokens()), true);
-    const next = { instance: inst, builder, observer: null };
+    if (onClick) inst.on('click', onClick);
+    const next = { instance: inst, builder, onClick: onClick || null, onReady: onReady || null, observer: null };
     store.set(el, next);
+    if (onReady) onReady(inst);
     next.observer = watchSize(el, inst);
     return inst;
   }
@@ -85,27 +112,221 @@ const Charts = (function () {
       r.instance.dispose();
       const inst = echarts.init(el, null, { renderer: 'canvas' });
       inst.setOption(r.builder(tokens()), true);
-      const next = { instance: inst, builder: r.builder, observer: null };
+      if (r.onClick) inst.on('click', r.onClick);   // 重建后必须重绑，否则点击处理器随旧实例一起消失
+      const next = { instance: inst, builder: r.builder, onClick: r.onClick || null, onReady: r.onReady || null, observer: null };
       store.set(el, next);
+      if (r.onReady) r.onReady(inst);               // 悬停等非 click 事件同样要重绑并恢复当前状态
       next.observer = watchSize(el, inst);
     });
   }
   window.addEventListener('resize', resizeAll);
   window.addEventListener('themechange', () => setTimeout(redrawAll, 60));
 
+  /* ============ 视图冻结：几何变了，用户看到的视图不许跟着变 ============
+     背景（实测 echarts 5.5.1，无头 Chrome 量 convertToPixel）：
+     graph 系列在**每一次 setOption** 都会按「节点包围盒 → 视图矩形」重建一次 View
+     坐标系，适配倍率 = min(视口/包围盒)。所以只要节点坐标变了（拖拽落点回写 option、
+     撤回/重做、增删节点），整图的缩放比例就会跟着变：
+       · 学生端把某节点外移 (+120,-200)：像素/数据单位 1.003 → 0.782（整图缩小 22%）
+       · 教师端同一操作：0.883 → 0.914；再移一个节点：0.883 → 0.719
+     用户看到的就是「移动后界面的比例异常缩小/放大」。
+
+     所以凡「改节点坐标」的 setOption 都必须配一对 keep/restore：
+       const keep = Charts.viewMetrics(chart);   // ① 改几何前量
+       chart.setOption({ series: [{ data: ... }] });  // ② 改几何（视图会被重新适配）
+       Charts.restoreView(chart, keep);          // ③ 把比例/平移补偿回去
+
+     补偿原理：视图 = 适配倍率 × zoom，且实测「center 每 +1 数据单位 → 原点像素 -S」
+     （S = 当前每数据单位像素）。故 ①按比例反算 zoom，②残余平移 Δcenter = -ΔO/S。
+     通常一次 setOption 即精确到 0px；为防 ECharts 内部 setCenter/setZoom 的先后
+     副作用，这里最多再迭代一次做兜底。
+     注意：本流程是「保住用户当前视图」，**有意**改视图的操作（fitView/聚焦节点）
+     必须先改视图、再走本流程，顺序反了会被一起冻掉。 */
+
+  /** 量当前视图：S = 每数据单位像素；O = 数据原点 [0,0] 的像素；zoom = 当前缩放 */
+  function viewMetrics(chart) {
+    if (!chart || (chart.isDisposed && chart.isDisposed())) return null;
+    try {
+      const o = chart.convertToPixel({ seriesIndex: 0 }, [0, 0]);
+      const ax = chart.convertToPixel({ seriesIndex: 0 }, [100, 0]);
+      const ay = chart.convertToPixel({ seriesIndex: 0 }, [0, 100]);
+      if (!o || !ax || !ay) return null;
+      const s = (ax[0] - o[0]) / 100;
+      if (!isFinite(s) || s <= 0 || !isFinite(o[0]) || !isFinite(o[1])) return null;
+      const cs = chart.getModel().getSeriesByIndex(0).coordinateSystem;
+      let z = cs && cs.getZoom ? cs.getZoom() : chart.getOption().series[0].zoom;
+      z = Number(z);
+      return { s, ox: o[0], oy: o[1], zoom: (isFinite(z) && z) ? z : 1 };
+    } catch (e) { return null; }
+  }
+
+  /** 把视图还原到 keep 时的样子（几何已变），见上方「视图冻结」说明 */
+  function restoreView(chart, keep, seriesRef) {
+    if (!chart || !keep) return;
+    const ref = seriesRef || {};
+    for (let i = 0; i < 2; i++) {
+      const now = viewMetrics(chart);
+      if (!now) return;
+      const k = now.s > 0 ? keep.s / now.s : 1;
+      const dx = keep.ox - now.ox, dy = keep.oy - now.oy;
+      const needZoom = Math.abs(k - 1) > 0.0005;
+      const needShift = Math.hypot(dx, dy) > 1;
+      if (!needZoom && !needShift) return;              // 已冻结，无需再动
+      const patch = {};
+      let zoom = now.zoom;
+      if (needZoom) { zoom = now.zoom * k; patch.zoom = zoom; }
+      if (needShift) {
+        const c = currentViewCenter(chart) || [0, 0];
+        // 补偿后每数据单位像素（center→像素 系数即 -S）
+        const sAfter = now.s * (zoom / now.zoom);
+        patch.center = [c[0] - dx / sAfter, c[1] - dy / sAfter];
+      }
+      chart.setOption({ series: [Object.assign({}, ref, patch)] });
+    }
+  }
+
+  /** 当前视图中心（钉在视口中心的数据坐标）；未显式设置时返回包围盒中心 */
+  function currentViewCenter(chart) {
+    try {
+      const cs = chart.getModel().getSeriesByIndex(0).coordinateSystem;
+      if (cs && typeof cs.getCenter === 'function') {
+        const c = cs.getCenter();
+        if (c && isFinite(c[0]) && isFinite(c[1])) return c;
+      }
+    } catch (e) {}
+    return null;
+  }
+
   /* ================= 1. 三大图谱（力导向关系图） ================= */
   function graph(sel, data, onClick) {
-    const inst = render(sel, (t) => {
+    // 关系标签默认隐藏：只有「悬停」或「选中」某个节点时，才显示与该节点相连的那些边
+    // 的关系标签（前置/进阶/并列…），避免标签压在节点上、多条关系挤在一起看不清。
+    //
+    // 为什么不用 ECharts 的 emphasis/select 状态：实测本仓库的 echarts 5.5.1
+    // 对 graph 的边标签状态解析不生效 —— series.emphasis.edgeLabel /
+    // select.edgeLabel 在「高亮节点 / 高亮边 / 真实 mousemove」三种触发下
+    // 都不改变边标签（links[].label.show=false 时标签元素根本不创建）。
+    // 因此改为「增量 setOption(只传 links)」切换：
+    // 实测两种布局（none / force）下节点坐标逐次完全一致、roam 视图与 zoom 不被重置，
+    // 因为 setOption 不传 center/zoom，且节点数组原样未动。
+    // ⚠ 但这个「不被重置」的前提是**节点坐标没变**：一旦 setOption 里带了新的
+    //   data[].x/y，视图就会被按新包围盒重新适配 → 见下方「视图冻结」。
+    const rel = relPalette(tokens());
+    const REL_REL = rel.name, REL_COLOR = rel.color;
+
+    let hoverIdx = -1;      // 鼠标悬停的节点下标
+    let hoverEdgeIdx = -1;  // 鼠标悬停的边下标（-1 = 无）
+    let pinnedIdx = -1;     // 点击选中的节点下标（移开鼠标后仍保持）
+    let applied = null;     // 已写入的可见边签名，避免重复 setOption
+    let chart = null;
+    let pressing = false;   // 画布按压/拖拽中：期间一律不做悬停驱动的增量刷新（见 sync）
+
+    /** 关系边选项；showSet = 需要显示标签的边下标集合 */
+    const buildLinks = (t, showSet) => data.links.map((l, i) => {
+      const lc = REL_COLOR[l.relation] || t.dim;
+      return {
+        source: l.source, target: l.target, relation: l.relation,
+        // 并列 = 双向并列关系 → 两端都画箭头（与教师端图谱编排一致）
+        symbol: l.relation === 'parallel' ? ['arrow', 'arrow'] : ['none', 'arrow'],
+        // 连线关系文字 chip（前置/进阶/并列/拆解…），按关系着色；opacity:1 抵消继承的半透明
+        label: {
+          show: showSet.has(i), formatter: () => REL_REL[l.relation] || '',
+          fontSize: 11, opacity: 1,
+          color: lc, backgroundColor: t.surface,
+          borderColor: lc, borderWidth: 1, borderRadius: 6, padding: [2, 6]
+        },
+        lineStyle: {
+          color: lc,
+          width: l.relation === 'pre' ? 1.8 : 1.2,
+          curveness: 0.14,
+          opacity: 0.62,
+          type: l.relation === 'parallel' ? 'dashed' : 'solid'
+        }
+      };
+    });
+
+    /** 与第 i 个节点相连的边下标集合（节点 id 优先，缺 id 时退回 name） */
+    const adjacentEdges = (i) => {
+      const set = new Set();
+      const n = data.nodes[i];
+      if (!n) return set;
+      const key = n.id != null ? n.id : n.name;
+      data.links.forEach((l, k) => { if (l.source === key || l.target === key) set.add(k); });
+      return set;
+    };
+
+    /** 当前该显示标签的边集合：悬停节点 > 悬停边 > 选中节点 */
+    const activeEdges = () => {
+      if (hoverIdx >= 0) return adjacentEdges(hoverIdx);
+      if (hoverEdgeIdx >= 0) return new Set([hoverEdgeIdx]);
+      if (pinnedIdx >= 0) return adjacentEdges(pinnedIdx);
+      return new Set();
+    };
+
+    const sync = () => {
+      if (!chart) return;
+      // 拖拽/平移中不刷新关系标签 —— 这是「节点滑动不丝滑」的根因（实测）：
+      // 拖拽期间 zrender 仍会派发 mouseout/mouseover（光标掠过别的节点、连线），
+      // 每次都走到这里 → setOption(links)。而 ECharts 的每一次 setOption 都要
+      // 重跑静态布局 + 整套 update 动画（animationDurationUpdate: 420）+ 标签防重叠重排，
+      // 一次 20 步的拖拽实测被打断 5~7 次 → 掉帧、节点跟手发飘。
+      // 松手后再按落点补一次（见 onReady 的 finishDrag），标签状态不会丢。
+      if (pressing) return;
+      const set = activeEdges();
+      const sig = [...set].sort((a, b) => a - b).join(',');
+      if (sig === applied) return;
+      applied = sig;
+      chart.setOption({ series: [{ links: buildLinks(tokens(), set) }] });
+    };
+
+    const isKnowledge = data.graphType === 'knowledge';
+    // 教师已布点 → 静态坐标（layout:'none'）。此时节点坐标是「教师编排结果」，
+    // 只读展示；学生可临时拖动看清局部，再用「重置视图」还原。
+    const staticLayout = isKnowledge && data.nodes.some(n => n.x != null && n.y != null);
+
+    /**
+     * 节点选项数组 —— **唯一**的节点构造入口。
+     * 首次渲染（builder）与「拖拽后回写坐标」都必须走它：两者若各写一份，
+     * option 里的 x/y 就会与 data.nodes 漂移，见 onReady 里 zr 'mouseup' 的注释。
+     */
+    const buildNodes = (t) => data.nodes.map(n => {
+      // 颜色随节点状态（category 下标）取；越界时退回「未开始」的灰，避免白屏
+      const cat = data.categories[n.category] || data.categories[3] || { color: t.dim };
+      const color = cat.color;
+      const val = n.mastery !== undefined ? n.mastery : (n.achieve !== undefined ? n.achieve : 60);
+      const item = Object.assign({}, n, {
+        value: val,
+        symbolSize: n.category === 0 && !isKnowledge ? 46 : (n.isKey ? 34 : 26),
+        label: { show: !isKnowledge || n.isKey || n.category === 0 || n.category === 4 },
+        // 节点标签防重叠放在「节点」上（而不是 series.labelLayout）：
+        // series 级会把连线关系标签也卷进 LabelManager，导致「前置/进阶…」丢失
+        // graph 视图组平移而错位到画布原点。逐节点配置即可只作用于节点标签。
+        labelLayout: { hideOverlap: true, moveOverlap: 'shiftY' },
+        category: n.category,
+        itemStyle: {
+          color,
+          borderColor: n.isKey ? t.warn : 'transparent',
+          borderWidth: n.isKey ? 2 : 0,
+          shadowBlur: 12, shadowColor: color + '55'
+        }
+      });
+      // 有教师坐标时写入 ECharts 坐标（layout:none）
+      if (n.x != null && n.y != null) {
+        item.x = n.x;
+        item.y = n.y;
+        item.fixed = true;
+      }
+      return item;
+    });
+
+    return render(sel, (t) => {
       const catColors = data.categories.map(c => c.color);
-      const isKnowledge = data.graphType === 'knowledge';
-      const relColor = { pre: t.brand, advance: t.accent, parallel: t.dim, split: t.accent, map: t.info, error: t.danger, support: t.info };
-      const relName = { pre: '前置', advance: '进阶', parallel: '并列', split: '拆解', map: '映射', error: '错题', support: '支撑' };
 
       return {
         tooltip: Object.assign(baseTooltip(t), {
           formatter(p) {
             if (p.dataType === 'edge') {
-              return `<b>${relName[p.data.relation] || '关联'}关系</b><br/>${p.data.source} → ${p.data.target}`;
+              return `<b>${REL_REL[p.data.relation] || '关联'}关系</b><br/>${p.data.source} → ${p.data.target}`;
             }
             const d = p.data;
             let html = `<b style="font-size:13px">${d.name}</b>`;
@@ -127,12 +348,25 @@ const Charts = (function () {
           top: 10, left: 14, itemWidth: 11, itemHeight: 11, itemGap: 12,
           icon: 'circle'
         }],
+<<<<<<< Updated upstream
         animationDuration: 900,
         animationEasingUpdate: 'quinticInOut',
         series: [{
           type: 'graph',
           layout: 'force',
+=======
+        animation: true,
+        animationDuration: 680,
+        animationEasing: 'cubicOut',
+        animationDurationUpdate: 420,
+        series: [{
+          type: 'graph',
+          // 教师已布点则用静态坐标（无弹力）；否则退回力导向但关闭布局动画
+          layout: staticLayout ? 'none' : 'force',
+>>>>>>> Stashed changes
           roam: true,
+          // 允许拖动微调（配合「重置视图」）。拖拽结果必须回写 data.nodes，
+          // 否则下一次增量 setOption 会把节点弹回原位 —— 见 onReady 里的说明。
           draggable: true,
           zoom: isKnowledge ? 0.92 : 1,
           categories: data.categories.map(c => ({ name: c.name, itemStyle: { color: c.color } })),
@@ -143,17 +377,27 @@ const Charts = (function () {
             friction: 0.14
           },
           label: {
-            show: true, position: 'right', color: t.text, fontSize: 11.5,
-            formatter: (p) => p.data.name.length > 9 ? p.data.name.slice(0, 9) + '…' : p.data.name
+            show: !isKnowledge, position: 'bottom', distance: 8, color: t.text, fontSize: 11.5,
+            backgroundColor: t.surface, borderColor: t.border, borderWidth: 1, borderRadius: 4, padding: [2, 5],
+            formatter: (p) => p.data.name.length > 10 ? p.data.name.slice(0, 10) + '…' : p.data.name
           },
+          // 注意：series.labelLayout 会把连线（edge）标签也纳入 LabelManager 接管，
+          // 导致关系标签丢失 graph 视图组的平移而错位到画布原点，故改为逐节点配置（见下方 data.labelLayout）
+
           emphasis: {
             focus: 'adjacency',
+<<<<<<< Updated upstream
             scale: 1.12,
             label: { fontSize: 12.5, fontWeight: 'bold' },
+=======
+            scale: 1.08,
+            label: { show: true, fontSize: 12.5, fontWeight: 'bold' },
+>>>>>>> Stashed changes
             lineStyle: { width: 3 }
           },
           edgeSymbol: ['none', 'arrow'],
           edgeSymbolSize: 7,
+<<<<<<< Updated upstream
           data: data.nodes.map(n => {
             const color = data.categories[n.category].color;
             const val = n.mastery !== undefined ? n.mastery : (n.achieve !== undefined ? n.achieve : 60);
@@ -179,13 +423,80 @@ const Charts = (function () {
               type: l.relation === 'parallel' ? 'dashed' : 'solid'
             }
           }))
+=======
+          data: buildNodes(t),
+          links: buildLinks(t, activeEdges())
+>>>>>>> Stashed changes
         }]
       };
+    }, (p) => {
+      // 点击节点 = 选中：常亮该节点的相连关系标签；再点一次取消
+      if (p.dataType !== 'node') return;
+      pinnedIdx = pinnedIdx === p.dataIndex ? -1 : p.dataIndex;
+      hoverIdx = -1;
+      sync();
+      if (onClick) onClick(p.data);
+    }, (inst) => {
+      chart = inst;
+      applied = null;   // 新实例：builder 已按当前状态渲染，这里补一次以保证签名同步
+      const edgeOffset = data.nodes.length;   // graph 的 dataIndex：节点在前，边在后
+      inst.on('mouseover', (p) => {
+        if (p.dataType === 'node') { hoverIdx = p.dataIndex; hoverEdgeIdx = -1; sync(); }
+        else if (p.dataType === 'edge') { hoverEdgeIdx = p.dataIndex - edgeOffset; sync(); }
+      });
+      inst.on('mouseout', (p) => {
+        if (p.dataType === 'node' && hoverIdx === p.dataIndex) { hoverIdx = -1; sync(); }
+        else if (p.dataType === 'edge' && hoverEdgeIdx === p.dataIndex - edgeOffset) { hoverEdgeIdx = -1; sync(); }
+      });
+      inst.on('globalout', () => { hoverIdx = -1; hoverEdgeIdx = -1; sync(); });
+      // 拖拽收尾：ECharts 原生拖拽只把新坐标写进**内部 itemLayout**，option 里的
+      // data[].x/y 与 data.nodes 都还是旧值。而 graph(layout:'none') 在**每一次
+      // setOption** 都会按 option 里的 x/y 重跑静态布局 —— 于是松手后任何一次
+      // 增量刷新（悬停/点击刷关系标签）都会把节点弹回原位，表现为「能拖但固定不住」。
+      // 所以拖完立刻把当前坐标回写 data.nodes + option，让三者恒等。
+      const zr = inst.getZr();
+      zr.on('mousedown', () => { pressing = true; });   // 拖拽/平移开始：冻结标签刷新
+      const finishDrag = () => {
+        if (!pressing) return;
+        pressing = false;
+        // 拖拽期间被压制的标签刷新，在落点重算一次（否则标签停在拖动前的节点上）
+        applied = null;
+        if (staticLayout) {
+          let sData = null;
+          try { sData = inst.getModel().getSeriesByIndex(0).getData(); } catch (e) { sData = null; }
+          if (sData) {
+            const keep = viewMetrics(inst);   // 必须在改几何之前量（见文件内「视图冻结」说明）
+            let moved = false;
+            data.nodes.forEach((n, i) => {
+              let l = null;
+              try { l = sData.getItemLayout(i); } catch (e) {}
+              if (!l || !isFinite(l[0]) || !isFinite(l[1])) return;
+              if (n.x == null || n.y == null || Math.abs(n.x - l[0]) > 0.01 || Math.abs(n.y - l[1]) > 0.01) {
+                n.x = l[0]; n.y = l[1]; n.fixed = true; moved = true;
+              }
+            });
+            if (moved) {
+              // 坐标 + 标签合成同一次 setOption：松手时少跑一整轮更新管线，手感更利落
+              const t = tokens();
+              const set = activeEdges();
+              applied = [...set].sort((a, b) => a - b).join(',');
+              inst.setOption({ series: [{ data: buildNodes(t), links: buildLinks(t, set) }] });
+              // 回写新坐标会被 ECharts 按新包围盒重新适配 → 整图比例变化，必须补偿回来
+              restoreView(inst, keep);
+              return;
+            }
+          }
+        }
+        sync();
+      };
+      zr.on('mouseup', finishDrag);
+      // 画布外释放兜底：万一 zrender 的指针捕获没覆盖到（如拖到画布外的 UI 上释放），
+      // 也要把 pressing 复位，否则之后悬停再也不刷新关系标签。
+      if (graphWinUp) window.removeEventListener('mouseup', graphWinUp);
+      graphWinUp = () => { if (pressing) finishDrag(); };
+      window.addEventListener('mouseup', graphWinUp);
+      sync();
     });
-    if (inst && onClick) {
-      inst.on('click', (p) => { if (p.dataType === 'node') onClick(p.data); });
-    }
-    return inst;
   }
 
   /* ================= 2. 能力雷达图 ================= */
@@ -238,6 +549,8 @@ const Charts = (function () {
       series: data.series.map(s => ({
         name: s.name, type: 'line', data: s.data, smooth: true,
         symbol: 'circle', symbolSize: 6,
+        // 可选的数值展示格式化（如时长 series 用 分'秒''）
+        tooltip: s.valueFormatter ? { valueFormatter: s.valueFormatter } : undefined,
         lineStyle: { width: 2.4, color: s.color, type: s.dashed ? 'dashed' : 'solid' },
         itemStyle: { color: s.color, borderWidth: 2, borderColor: t.surface },
         areaStyle: o.area ? {
@@ -361,8 +674,40 @@ const Charts = (function () {
         emphasis: { itemStyle: { shadowBlur: 10, shadowColor: 'rgba(0,0,0,.4)', borderColor: t.brand, borderWidth: 2 } },
         progressive: 400
       }]
+<<<<<<< Updated upstream
     }));
     if (inst && onClick) inst.on('click', p => onClick(p.value, data));
+=======
+    }), onClick ? (p => onClick(p.value, data)) : null);
+    const chartEl = inst && inst.getDom ? inst.getDom() : null;
+    if (chartEl && chartEl._heatmapWheelHandler) {
+      chartEl.removeEventListener('wheel', chartEl._heatmapWheelHandler);
+      chartEl._heatmapWheelHandler = null;
+    }
+    if (chartEl && needsStudentScroll) {
+      const wheelHandler = (event) => {
+        const chart = window.echarts && echarts.getInstanceByDom(chartEl);
+        if (!chart || !chart.containPixel({ gridIndex: 0 }, [event.offsetX, event.offsetY])) return;
+
+        const zoom = (chart.getOption().dataZoom || [])[0] || {};
+        const step = 100 / Math.max(studentNames.length - 1, 1);
+        const windowSize = step * (visibleStudentCount - 1);
+        const maxStart = Math.max(0, 100 - windowSize);
+        const currentStart = Number.isFinite(Number(zoom.start)) ? Number(zoom.start) : 0;
+        const direction = event.deltaY > 0 ? -1 : 1;
+        const nextStart = Math.max(0, Math.min(maxStart, currentStart + direction * step));
+
+        event.preventDefault();
+        if (Math.abs(nextStart - currentStart) < 0.001) return;
+        chart.dispatchAction({
+          type: 'dataZoom', dataZoomIndex: 0,
+          start: nextStart, end: Math.min(100, nextStart + windowSize)
+        });
+      };
+      chartEl._heatmapWheelHandler = wheelHandler;
+      chartEl.addEventListener('wheel', wheelHandler, { passive: false });
+    }
+>>>>>>> Stashed changes
     return inst;
   }
 
@@ -442,5 +787,8 @@ const Charts = (function () {
     }));
   }
 
-  return { render, graph, radar, line, bar, heatmap, donut, gauge, groupBar, resizeAll, redrawAll, tokens };
+  return { render, graph, radar, line, bar, heatmap, donut, gauge, groupBar, resizeAll, redrawAll, tokens, relPalette,
+    // 视图冻结：给教师端（graph-edit.js）复用同一实现，避免两处各写一份补偿算法而漂移
+    viewMetrics, restoreView };
 })();
+
