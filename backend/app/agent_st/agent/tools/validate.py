@@ -4,7 +4,6 @@ import json
 
 from app.agent_st.agent.context import ToolContext
 from app.agent_st.agent.registry import tool
-from app.agent_st.agent.store import existing_draft_and_bank_ids
 from app.agent_st.rag.validate import validate_question as validate_impl
 
 
@@ -29,7 +28,7 @@ def _parse_question(question) -> dict | list | None:
 
 @tool(
     name="validate_question",
-    description="用确定性规则校验出题 JSON：必填字段、章节前缀、graph 闭集与结点/边一致性。失败必须按 errors 修改后再保存。",
+    description="用确定性规则校验出题 JSON：必填字段、章/知识点是否属于本课程、graph 闭集与结点/边一致性。失败必须按 errors 修改后再保存。",
     parameters={
         "type": "object",
         "properties": {
@@ -46,9 +45,10 @@ def validate_question(ctx: ToolContext, question):
     parsed = _parse_question(question)
     if parsed is None:
         return {"ok": False, "errors": ["无法解析 question"]}
+    course_id = (ctx.extra or {}).get("courseId") or ""
     items = parsed if isinstance(parsed, list) else [parsed]
-    used = existing_draft_and_bank_ids(ctx.store)
-    results = [validate_impl(item, used_ids=used) for item in items]
+    used = ctx.store.reserved_q_ids()
+    results = [validate_impl(item, course_id=course_id, used_q_ids=used) for item in items]
     payload = {"ok": all(r["ok"] for r in results), "results": results}
     ctx.turn["last_validate"] = payload
     ctx.turn["pending_questions"] = items

@@ -243,20 +243,25 @@ def guess_type(filename: str) -> Tuple[str, str]:
     return "", ext
 
 
-def parse_chapter(name: str) -> str:
-    """从文件名推测章节名"""
-    m = re.search(r"Ch(\d{2})", name)
+def chapter_number_of(name: str) -> int | None:
+    """从文件名提取章序号：`PPT_Ch06_二叉树遍历.pptx` → 6。
+
+    旧的 `parse_chapter()` 直接返回硬编码的章名字符串（且只覆盖前 5 章，
+    第 4/5 章的名字还是旧体系），与主库 `graph_nodes` 的章名对不上。
+    这里只负责取序号，章 id/章名一律由调用方查主库得到（见
+    `agent_st/rag/structure.py`），媒体工具不依赖数据库。
+    """
+    m = re.search(r"Ch(\d{1,2})", str(name or ""), re.I)
     if not m:
-        return "其他"
-    n = int(m.group(1))
-    chapter_map = {
-        1: "第1章 绪论",
-        2: "第2章 线性表",
-        3: "第3章 栈与队列",
-        4: "第4章 树与二叉树",
-        5: "第5章 图",
-    }
-    return chapter_map.get(n, f"第{n}章")
+        return None
+    num = int(m.group(1))
+    return num if 1 <= num <= 99 else None
+
+
+def chapter_id_of(name: str) -> str:
+    """文件名 → 章 id，如 `DOC_Ch06_...pdf` → `CH06`；取不到返回空串。"""
+    num = chapter_number_of(name)
+    return f"CH{num:02d}" if num else ""
 
 
 def parse_title(filename: str) -> str:

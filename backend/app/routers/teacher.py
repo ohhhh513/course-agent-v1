@@ -32,7 +32,7 @@ from ..utils import (
 )
 from ..media_utils import (
     BASE_DIR, COVERS_DIR, mp4_duration, pdf_pages, pptx_pages,
-    guess_type, parse_chapter, parse_title, save_upload_file, generate_cover,
+    guess_type, chapter_id_of, parse_title, save_upload_file, generate_cover,
     resource_url, res_url, url_to_path, safe_filename, cleanup_empty_dirs,
     DEFAULT_COURSE_ID,
 )
@@ -1350,46 +1350,38 @@ def ai_generate_questions(
     """
     from sse_starlette.sse import EventSourceResponse
     from ..agent_st.agent.runtime import run_turn
+    from ..agent_st.rag import structure
     from ..agent_st.rag.bank import get_question as load_st_question
-    from ..agent_st.rag.kp_map import parse_example_question_ids, sections_for_kp_ids
 
     kp_ids = [str(x) for x in (req.kpIds or []) if str(x).strip()]
-    example_ids = parse_example_question_ids(req.exampleQuestionIds)
+    example_ids = [str(x).strip() for x in (req.exampleQuestionIds or []) if str(x).strip()]
     if len(example_ids) > 3:
         return fail("例题最多选择 3 道", 400)
     if not kp_ids and not example_ids:
         return fail("请至少指定一个知识点或一道例题", 400)
 
     count = max(1, min(req.count or 3, 10))
-    kp_rows = []
-    if kp_ids:
-        kp_rows = db.query(GraphNode).filter(
-            GraphNode.id.in_(kp_ids),
-            GraphNode.graph_type == "knowledge",
-            GraphNode.course_id == course_id,      # 课程隔离：只认本课知识点
-        ).all()
-    kp_names = [row.name for row in kp_rows]
+    # 知识点 → (名称, 所属章 id)；一律以本课程图谱为准，传错 id 直接忽略
+    kp_infos = [info for info in (structure.kp_info(course_id, k) for k in kp_ids) if info]
+    kp_names = [info["kp_name"] for info in kp_infos]
+    kp_chapter_ids: list[str] = []
+    for info in kp_infos:
+        if info["chapter_id"] and info["chapter_id"] not in kp_chapter_ids:
+            kp_chapter_ids.append(info["chapter_id"])
     if not kp_names:
         kp_names = list(kp_ids)
-    kp_sections = sections_for_kp_ids(kp_ids)
-    chapter_nums: list[int] = []
-    for row in kp_rows:
-        m = re.search(r"第\s*([1-9])\s*章", row.chapter or "")
-        if m and int(m.group(1)) not in chapter_nums:
-            chapter_nums.append(int(m.group(1)))
-    example_section = ""
+
+    example_chapter_id = ""
     if example_ids:
-        first = load_st_question(example_ids[0], include_answer=False)
+        first = load_st_question(course_id, example_ids[0], include_answer=False)
         if first:
-            example_section = str(first.get("section") or "")
+            example_chapter_id = str(first.get("chapter_id") or "")
 
     def _chapter_hint(seq: int) -> str:
-        if kp_sections:
-            return kp_sections[seq % len(kp_sections)]
-        if example_section:
-            return example_section
-        if chapter_nums:
-            return f"第{chapter_nums[seq % len(chapter_nums)]}章"
+        if kp_chapter_ids:
+            return kp_chapter_ids[seq % len(kp_chapter_ids)]
+        if example_chapter_id:
+            return example_chapter_id
         return ""
 
     def _message(seq: int) -> str:
@@ -1399,7 +1391,7 @@ def ai_generate_questions(
         else:
             parts.append("未指定知识点，请按例题所属章节出题。")
         if example_ids:
-            parts.append("参考例题（仅作启发，必须较大变动）：" + "、".join(f"题{x}" for x in example_ids) + "。")
+            parts.append("参考例题（仅作启发，必须较大变动）：" + "、".join(example_ids) + "。")
         else:
             parts.append("未指定例题，请根据知识点与课程资料从零出题；检索到的题库题只作防抄对照。")
         parts.append(f"难度 {req.difficulty}/5。")
@@ -1416,19 +1408,19 @@ def ai_generate_questions(
         demo = False
         yield {"event": "meta", "data": json.dumps({"batchId": batch_id, "count": count}, ensure_ascii=False)}
         for i in range(count):
-            chapter = _chapter_hint(i)
+            chapter_id = _chapter_hint(i)
             context = {
                 "courseId": course_id,          # 课程隔离边界：RAG 检索据此过滤
                 "batch_id": batch_id,
                 "difficulty": req.difficulty,
                 "seq": i + 1,
+                # 教师选定的知识点 → resolve_topic 的结构定位入口（首个为主）
+                "kpId": kp_ids[0] if kp_ids else "",
+                "chapterId": chapter_id,
                 "kp_ids": kp_ids,
                 "kp_names": kp_names,
-                "kp_sections": kp_sections,
                 "example_question_ids": example_ids,
             }
-            if chapter:
-                context["chapter"] = chapter
             try:
                 for ev in run_turn(
                     message=_message(i + 1),
@@ -1509,19 +1501,30 @@ def draft_list(
     if status and status != "all":
         q = q.filter(STQuestionDraft.status == status)
     rows = q.order_by(STQuestionDraft.created_at.desc()).all()
+    from ..agent_st.rag import structure
+    kp_names = {kp["id"]: kp["name"] for kp in structure.list_kps(course_id)}
     items = []
     for r in rows:
         try:
             payload = json.loads(r.payload_json or "{}")
         except json.JSONDecodeError:
             payload = {}
+        kp_id = str(payload.get("kp_id") or "")
+        kp_ids = [str(x) for x in (payload.get("kp_ids") or []) if str(x).strip()] \
+            if isinstance(payload.get("kp_ids"), list) else []
+        if kp_id and kp_id not in kp_ids:
+            kp_ids.insert(0, kp_id)
         items.append({
             "draftId": r.draft_id,
             "status": r.status,
             "createdAt": fmt_dt(r.created_at, "%m-%d %H:%M"),
             "errors": json.loads(r.errors_json or "[]"),
-            "id": payload.get("id"),
-            "chapter": payload.get("chapter"),
+            "qId": payload.get("q_id"),
+            "chapterId": payload.get("chapter_id"),
+            "kpId": kp_id,
+            "kpIds": kp_ids,
+            "kpName": kp_names.get(kp_id, ""),
+            "kpNames": [kp_names.get(k, "") for k in kp_ids],
             "stem": payload.get("question"),
             "answer": payload.get("answer"),
             "publishedQId": payload.get("_published_q_id"),
@@ -1580,20 +1583,20 @@ def draft_publish(
 ):
     """草稿发布 → questions 正式题库（status=published，与正常出题流程一致）"""
     from ..models.question import Question
+    from ..agent_st.rag import structure
+    from ..agent_st.rag.bank import existing_q_ids
     from ..agent_st.rag.validate import validate_question
-    from ..agent_st.rag.kp_map import kps_for_section
-    from ..agent_st.rag.chapter_map import map_section
 
     row, payload, err = _owned_draft(draft_id, user, db, course_id)
     if err:
         return err
     if row.status == "published":
         return fail("该草稿已发布过")
-    check = validate_question(payload)
+    check = validate_question(payload, course_id=course_id)
     if not check["ok"]:
         return fail("草稿校验未通过：" + "；".join(check["errors"]))
 
-    # 选项：原型 {A..D} map → Question 的 [{key,text,right}]
+    # 选项：草稿 {A..D} map → Question 的 [{key,text,right}]
     options_map = payload.get("options") or {}
     options = [
         {"key": k, "text": options_map.get(k, ""), "right": payload.get("answer") == k}
@@ -1611,49 +1614,41 @@ def draft_publish(
         figure["has_image"] = has_image
         figure_json = json.dumps(figure, ensure_ascii=False)
 
-    # 知识点：小节前缀 → 映射 KP（首项为主）；无映射回退该章第一个知识点
-    prefix = str(payload.get("chapter") or "").split(" ")[0]
-    kps = kps_for_section(prefix)
-    chapter = map_section(prefix)
-    if not kps:
-        # 课程隔离：回退也必须限定在本课程，否则会取到别的课程同名章的知识点
-        first_node = (
-            db.query(GraphNode)
-            .filter(
-                GraphNode.graph_type == "knowledge",
-                GraphNode.course_id == course_id,
-                GraphNode.chapter.like(f"第{chapter['id']}章%"),
-            )
-            .first()
-        )
-        kps = [first_node.id] if first_node else []
-    kp_names = {
-        r[0]: r[1]
-        for r in db.query(GraphNode.id, GraphNode.name)
-        .filter(
-            GraphNode.graph_type == "knowledge",
-            GraphNode.course_id == course_id,
-            GraphNode.id.in_(kps),
-        ).all()
-    } if kps else {}
-    kp_id = kps[0] if kps else None
-    kp_path = [chapter["title"]] + [kp_names.get(k, k) for k in kps]
-
-    # q_id 分配：AI + 自增三位（与 KHD 序列隔离）。
-    # 这里**有意跨课程**扫描：questions.q_id 是主键，全局唯一才不会撞号。
-    existing = [
-        int(re.sub(r"\D", "", r[0]))
-        for r in db.query(Question.q_id).filter(Question.q_id.like("AI%")).all()
-        if re.sub(r"\D", "", r[0]).isdigit()
+    # 结构归属直接取草稿自己的 chapter_id / kp_id（出题时已按本课程图谱写入），
+    # 不再从小节前缀反推 —— 那套映射已废除（docs/主库数据规范.md）
+    # 多 KP 与主库口径一致：kp_id 是主 KP（kp_ids 首个），kp_ids 是完整列表
+    kp_id = str(payload.get("kp_id") or "")
+    chapter_id = str(payload.get("chapter_id") or "")
+    kp_ids = [str(x) for x in (payload.get("kp_ids") or []) if str(x).strip()] \
+        if isinstance(payload.get("kp_ids"), list) else []
+    if kp_id and kp_id not in kp_ids:
+        kp_ids.insert(0, kp_id)
+    if not kp_id and kp_ids:
+        kp_id = kp_ids[0]
+    kp_info = structure.kp_info(course_id, kp_id)
+    chapter_name = structure.chapter_name_by_id(course_id, chapter_id)
+    kp_path = [chapter_name or ""] + [
+        (structure.kp_name(course_id, k) or k) for k in kp_ids
     ]
-    q_id = f"AI{(max(existing) + 1) if existing else 1:03d}"
+
+    # q_id：草稿在生成时已预留（save_question_draft 分配），这里复用；
+    # 万一草稿没有（历史数据），用与 bank.next_ai_q_id 同一实现补一个未占用的 AI 号 ——
+    # 双份逻辑容易跑偏，一律复用（含随机 hex + 唯一性重试）。
+    q_id = str(payload.get("q_id") or "").strip()
+    if not q_id or q_id in existing_q_ids(course_id):
+        from ..agent_st.rag.bank import next_ai_q_id
+
+        q_id = next_ai_q_id(course_id, reserved=existing_q_ids(course_id))
 
     db.add(Question(
         q_id=q_id,
         course_id=course_id,
+        chapter_id=chapter_id,
+        chapter=chapter_name,
         kp_id=kp_id,
+        kp_ids=json.dumps(kp_ids, ensure_ascii=False),
         type="single",
-        difficulty=3,  # 草稿未携带难度，默认 3；可在题库管理再调
+        difficulty=payload.get("difficulty") or 3,
         score=5,
         status="published",
         stem=payload.get("question") or "",
@@ -1673,7 +1668,15 @@ def draft_publish(
     payload["_published_q_id"] = q_id
     row.payload_json = json.dumps(payload, ensure_ascii=False)
     db.commit()
-    return ok({"draftId": draft_id, "qId": q_id, "kpId": kp_id})
+
+    # 新题立刻进 RAG 题库切片，保证后续「防抄对照」能覆盖到（原来是盲区）
+    try:
+        from ..agent_st.rag.ingest import ingest_question_bank
+        ingest_question_bank(course_id)
+    except Exception:  # noqa: BLE001  切片失败不影响发布结果
+        pass
+
+    return ok({"draftId": draft_id, "qId": q_id, "kpId": kp_id, "kpIds": kp_ids})
 
 
 @question_router.get("/bank")
@@ -2320,13 +2323,23 @@ def _rag_source_key(res_id: str, path) -> str:
     return f"{res_id}/{_P(path).name}"
 
 
-def _run_rag_ingest(res_id: str, path, course_id: str | None = None) -> None:
-    """后台任务：把上传的文件切片写入 rag.db（幂等，同 source 先删后写，限定课程）。"""
+def _run_rag_ingest(
+    res_id: str, path, course_id: str | None = None,
+    chapter_id: str = "", kp_ids: list[str] | None = None,
+) -> None:
+    """后台任务：把上传的文件切片写入 rag.db（幂等，同 source 先删后写，限定课程）。
+
+    结构归属直接继承 `resources` 表的值（章 id + 多知识点），不做文本推断。
+    """
     from ..agent_st.rag.ingest import ingest_path
     _RAG_STATUS[res_id] = {"status": "running", "chunks": 0, "message": "正在切片并向量化…"}
     try:
         result = ingest_path(
-            path, course_id=course_id, source_key=_rag_source_key(res_id, path)
+            path,
+            course_id=course_id,
+            source_key=_rag_source_key(res_id, path),
+            chapter_id=chapter_id or "",
+            kp_ids=kp_ids or [],
         )
         if result.get("ok"):
             _RAG_STATUS[res_id] = {
@@ -2427,9 +2440,9 @@ async def upload_resource(
     if kp_id and kp_id not in kp_list:
         kp_list.insert(0, kp_id)
     primary_kp_id = kp_list[0] if kp_list else (kp_id or "")
-    primary_kp = (kp or "").strip() or name_map.get(primary_kp_id, "") or parse_chapter(filename)
-    chapter = (chapter or "").strip()
+    primary_kp = (kp or "").strip() or name_map.get(primary_kp_id, "")
     chapter_id = (chapterId or "").strip()
+    chapter = (chapter or "").strip()
     if chapter_id:
         ch = db.query(GraphNode).filter(
             GraphNode.id == chapter_id, GraphNode.graph_type == "chapter",
@@ -2439,7 +2452,14 @@ async def upload_resource(
             return fail("指定章节不存在", 400)
         chapter = ch.name
     elif not chapter:
-        chapter = parse_chapter(filename) or ""
+        # 前端没传章时按文件名里的 ChNN 反查主库章名（不再用硬编码映射猜章名）
+        guess_id = chapter_id_of(filename)
+        ch = db.query(GraphNode).filter(
+            GraphNode.id == guess_id, GraphNode.graph_type == "chapter",
+            GraphNode.course_id == course_id,
+        ).first() if guess_id else None
+        if ch:
+            chapter_id, chapter = ch.id, ch.name
 
     url = res_url(course_id, res_id, filename)
     r = Resource(
@@ -2473,11 +2493,11 @@ async def upload_resource(
     cover_url = generate_cover(res_id, title, rtype)
 
     if ext in _RAG_SUPPORTED_EXT:
-        background.add_task(_run_rag_ingest, res_id, dest, course_id)
+        background.add_task(_run_rag_ingest, res_id, dest, course_id, chapter_id, kp_list)
         rag = {"supported": True, "status": "pending", "message": "已加入切片队列"}
     else:
         rag = {"supported": False, "status": "skipped",
-               "message": f"{ext} 暂不支持入库（当前仅支持 PDF / PPT / JSON / TXT）"}
+               "message": f"{ext} 暂不支持入库（当前仅支持 PDF / PPT / TXT / MD）"}
 
     return ok({
         "resId": res_id, "title": title, "type": rtype,

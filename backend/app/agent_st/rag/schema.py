@@ -14,16 +14,16 @@ SOURCE_TYPES = (
 
 @dataclass
 class ParsedUnit:
+    """解析器的原始产出。结构归属（章/知识点）不在此处推断 ——
+
+    资源类切片由调用方从 `resources` 表继承，题库类切片由 `questions` 表带出。
+    """
     text: str
-    section_hint: str = ""
     page: int | None = None
     extra: dict[str, Any] = field(default_factory=dict)
     pre_chunked: bool = False
     source_type: str = "textbook"
     source_id: str = ""
-    question_id: int | None = None
-    course_chapter: int | None = None
-    section: str = ""
 
 
 @dataclass
@@ -32,12 +32,16 @@ class ChunkRecord:
     text: str
     source_type: str
     source_id: str
-    course_chapter: int
-    section: str
-    # 课程维度必填：切片必须显式归属某门课，禁止默认值兜底（历史默认值
-    # 'C2026DS001' 会让漏传课程的写入静默落到演示课，造成跨课程串数据）
+    # 课程隔离：切片必须显式归属某门课，禁止默认值兜底
     course_id: str = ""
-    question_id: int | None = None
+    # 课程结构归属（主库规范）：章 CH01-09 / 知识点 KP001-026，来自 graph_nodes
+    # kp_id 为主知识点（单值），kp_ids 为全部知识点（JSON 数组）——与
+    # resources / questions 两表的字段语义保持一致
+    chapter_id: str = ""
+    kp_id: str = ""
+    kp_ids: list[str] = field(default_factory=list)
+    # 题库切片的来源题号（主库 questions.q_id），资源类切片为空
+    q_id: str = ""
     page_or_slide: int | None = None
     extra: dict[str, Any] = field(default_factory=dict)
     embedding: list[float] | None = None
@@ -51,9 +55,10 @@ class ChunkRecord:
             "source_type": self.source_type,
             "source_id": self.source_id,
             "course_id": self.course_id,
-            "course_chapter": self.course_chapter,
-            "section": self.section,
-            "question_id": self.question_id,
+            "chapter_id": self.chapter_id,
+            "kp_id": self.kp_id,
+            "kp_ids": list(self.kp_ids or []),
+            "q_id": self.q_id,
             "page_or_slide": self.page_or_slide,
             "score": round(score, 4),
             "extra": self.extra,

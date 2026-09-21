@@ -11,13 +11,23 @@ DEFAULT_GENERATE = ["question_stem", "question_analysis", "textbook"]
 
 @tool(
     name="retrieve_chunks",
-    description="按当前课的切片检索原文。必须先 resolve_topic。返回带 score 的片段，禁止编造未出现的内容。",
+    description=(
+        "按当前课程的切片检索原文。结构与范围用主库规范 id："
+        "chapter_id 形如 CH06、kp_id 形如 KP014。必须先 resolve_topic。"
+        "涉及多个知识点时可传 kp_ids 数组（命中任一即算，并集）。"
+        "返回带 score 的片段，禁止编造未出现的内容。"
+    ),
     parameters={
         "type": "object",
         "properties": {
             "query": {"type": "string"},
-            "course_chapter": {"type": "integer"},
-            "section_prefix": {"type": "string"},
+            "chapter_id": {"type": "string", "description": "章 id，如 CH06"},
+            "kp_id": {"type": "string", "description": "知识点 id，如 KP014"},
+            "kp_ids": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "多个知识点 id（并集检索），如 [\"KP014\",\"KP013\"]",
+            },
             "source_types": {
                 "type": "array",
                 "items": {"type": "string"},
@@ -32,15 +42,23 @@ DEFAULT_GENERATE = ["question_stem", "question_analysis", "textbook"]
 def retrieve_chunks(
     ctx: ToolContext,
     query: str,
-    course_chapter: int | None = None,
-    section_prefix: str | None = None,
+    chapter_id: str | None = None,
+    kp_id: str | None = None,
+    kp_ids: list[str] | None = None,
     source_types: list[str] | None = None,
     top_k: int | None = None,
 ):
     settings = get_settings()
     topic = ctx.turn.get("topic") or {}
-    chapter = course_chapter or topic.get("course_chapter")
-    prefix = section_prefix or topic.get("section_prefix")
+    chapter = chapter_id or topic.get("chapter_id")
+    # 知识点：显式传入优先，其次用 resolve_topic 的多 KP 结果
+    kps = [str(x).strip() for x in (kp_ids or []) if str(x).strip()]
+    if kp_id and str(kp_id).strip() and str(kp_id).strip() not in kps:
+        kps.insert(0, str(kp_id).strip())
+    if not kps:
+        kps = [str(x) for x in (topic.get("kp_ids") or []) if str(x).strip()]
+        if not kps and topic.get("kp_id"):
+            kps = [str(topic["kp_id"])]
     if ctx.flow_id == "generate_items":
         types = source_types or DEFAULT_GENERATE
     else:
@@ -51,8 +69,8 @@ def retrieve_chunks(
     hits = retrieve_impl(
         query=query,
         course_id=course_id or None,
-        course_chapter=chapter,
-        section_prefix=prefix,
+        chapter_id=chapter,
+        kp_ids=kps or None,
         source_types=types,
         top_k=top_k or settings.retrieve_top_k,
     )
@@ -60,8 +78,8 @@ def retrieve_chunks(
 
     # 同一轮里模型常会换关键词或换来源再检一次（例如先查解析再查教材）。
     # 如果第二次没命中就把上一次的原文丢掉，会误判成“未检索到原文”，
-    # 因此同一章节范围内把历次命中按最高分合并保留。
-    scope = (course_id, chapter, prefix)
+    # 因此同一结构范围内把历次命中按最高分合并保留。
+    scope = (course_id, chapter, tuple(kps))
     prev_hits = ctx.turn.get("retrieval_hits") or []
     if ctx.turn.get("retrieval_scope") != scope:
         prev_hits = []
@@ -93,8 +111,9 @@ def retrieve_chunks(
         "empty": empty,
         "max_score": max_score,
         "course_id": course_id,
-        "course_chapter": chapter,
-        "section_prefix": prefix,
+        "chapter_id": chapter,
+        "kp_id": kps[0] if kps else None,
+        "kp_ids": kps,
         "source_types": types,
         "empty_this_call": this_call_empty,
         "refuse_hint": refuse_hint,

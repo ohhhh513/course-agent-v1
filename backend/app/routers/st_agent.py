@@ -9,7 +9,7 @@
 """
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, UploadFile, File
+from fastapi import APIRouter, Depends, UploadFile, File, Form
 from sqlalchemy.orm import Session
 
 from ..database import get_db
@@ -74,13 +74,13 @@ def ingest_bank_route(
     user=Depends(get_current_user),
     course_id: str = Depends(get_current_course_id),
 ):
-    """把课后题库 JSON 重建进**当前课程**的 RAG 库（幂等）"""
+    """按**当前课程**的 questions 表重建题库切片（幂等）"""
     if not _require_teacher(user):
         return fail("仅教师可触发知识入库", code=403)
-    from ..agent_st.rag.ingest import ingest_bank
+    from ..agent_st.rag.ingest import ingest_question_bank
 
     try:
-        result = ingest_bank(course_id)
+        result = ingest_question_bank(course_id)
         return ok(result) if result.get("ok") else fail(result.get("error") or "入库失败")
     except Exception as exc:  # noqa: BLE001
         return fail(f"入库失败：{exc}")
@@ -89,19 +89,35 @@ def ingest_bank_route(
 @router.post("/ingest/file")
 def ingest_file_route(
     file: UploadFile = File(...),
+    chapterId: str = Form(""),
+    kpIds: str = Form(""),
     db: Session = Depends(get_db),
     user=Depends(get_current_user),
     course_id: str = Depends(get_current_course_id),
 ):
-    """上传补充资料（json/pdf/pptx/txt/md）入**当前课程**的 RAG 库 —— teacher 运维入口"""
+    """上传补充资料（pdf/pptx/txt/md）入**当前课程**的 RAG 库 —— teacher 运维入口
+
+    chapterId / kpIds 可选：给了就按主库规范的结构 id 归属切片，
+    由 `retrieve_chunks` 的 chapter_id / kp_id 过滤命中。
+    """
     if not _require_teacher(user):
         return fail("仅教师可触发知识入库", code=403)
+    from ..agent_st.rag import structure
     from ..agent_st.rag.ingest import ingest_path
 
-    allowed = {".json", ".pdf", ".pptx", ".ppt", ".txt", ".md"}
+    allowed = {".pdf", ".pptx", ".ppt", ".txt", ".md"}
     suffix = Path(file.filename or "").suffix.lower()
     if suffix not in allowed:
         return fail(f"不支持的文件类型：{suffix or '(无后缀)'}")
+    chapter = chapterId.strip()
+    if chapter and not structure.chapter_name_by_id(course_id, chapter):
+        return fail(f"章节 {chapter} 不属于本课程", 400)
+    kps = [k.strip() for k in (kpIds or "").split(",") if k.strip()]
+    valid = structure.valid_kp_ids(course_id)
+    bad = [k for k in kps if k not in valid]
+    if bad:
+        return fail(f"知识点不属于本课程：{bad}", 400)
+
     filename = Path(file.filename or "upload.bin").name
     dest_dir = settings.AGENT_DATA_DIR / "uploads" / course_id
     dest_dir.mkdir(parents=True, exist_ok=True)
@@ -109,7 +125,10 @@ def ingest_file_route(
     try:
         with open(dest, "wb") as f:
             f.write(file.file.read())
-        result = ingest_path(dest, course_id=course_id, source_key=f"manual/{filename}")
+        result = ingest_path(
+            dest, course_id=course_id, source_key=f"manual/{filename}",
+            chapter_id=chapter, kp_ids=kps,
+        )
         return ok(result) if result.get("ok") else fail(result.get("error") or "入库失败")
     except Exception as exc:  # noqa: BLE001
         return fail(f"入库失败：{exc}")

@@ -1,21 +1,12 @@
 from __future__ import annotations
 
 import json
-import re
 import time
 import uuid
-from pathlib import Path
 
-from app.agent_st.agent.config import get_settings
-from app.agent_st.rag.validate import next_question_id, validate_question
+from app.agent_st.rag.bank import existing_q_ids
+from app.agent_st.rag.validate import validate_question
 from app.utils import fmt_dt
-
-_SAFE_SEG = re.compile(r"[^0-9A-Za-z_.\-]")
-
-
-def _safe_seg(value: str) -> str:
-    """把课程/用户 id 变成安全的目录名（sidecar 落盘用）"""
-    return _SAFE_SEG.sub("_", str(value or "")) or "_"
 
 
 class AgentStore:
@@ -25,6 +16,9 @@ class AgentStore:
     前端历史会话 UI 零改动）；出题草稿写入 st_question_drafts（按 user_id
     归属个人 + 按 course_id 归属课程，绝不写入 questions 正式题库）。
     不再使用独立 agent.db。
+
+    草稿**只落库**，不再写本地 JSON 副本（原 sidecar 的落盘路径与库解耦，
+    测试时会把临时库的草稿泄漏到真实工作区、留下孤儿文件，已整体移除）。
 
     course_id 是本 store 的隔离边界：会话与草稿都要带上它，
     否则多课程下会串数据、且按课程过滤的列表查询看不到自己刚写的数据。
@@ -36,8 +30,6 @@ class AgentStore:
         self.persistence = persistence
         self.user_id = user_id or ""
         self.course_id = course_id or ""
-        settings = get_settings()
-        self.drafts_dir: Path = settings.drafts_dir
 
     # ------------------------------------------------------------------
     # 会话（chat_sessions / chat_messages）
@@ -115,7 +107,9 @@ class AgentStore:
     # 出题草稿（st_question_drafts，按 user_id + course_id 隔离）
     # ------------------------------------------------------------------
     def save_draft(self, payload: dict, batch_id: str = "") -> dict:
-        check = validate_question(payload, used_ids=existing_draft_and_bank_ids(self))
+        check = validate_question(
+            payload, course_id=self.course_id, used_q_ids=self.reserved_q_ids()
+        )
         draft_id = f"QD{uuid.uuid4().hex[:10].upper()}"
         status = "draft" if check["ok"] else "invalid"
         db = self.persistence.SessionLocal()
@@ -133,8 +127,8 @@ class AgentStore:
             db.commit()
         finally:
             db.close()
-        self._write_sidecar(draft_id, payload)
-        return {"draft_id": draft_id, "status": status, "errors": check["errors"], "id": payload.get("id")}
+        return {"draft_id": draft_id, "status": status, "errors": check["errors"],
+                "q_id": payload.get("q_id")}
 
     def list_drafts(
         self, limit: int = 50, user_id: str | None = None, course_id: str | None = None
@@ -156,8 +150,9 @@ class AgentStore:
                     "status": row.status,
                     "created_at": fmt_dt(row.created_at, "%Y-%m-%d %H:%M:%S"),
                     "errors": json.loads(row.errors_json or "[]"),
-                    "id": payload.get("id"),
-                    "chapter": payload.get("chapter"),
+                    "q_id": payload.get("q_id"),
+                    "chapter_id": payload.get("chapter_id"),
+                    "kp_id": payload.get("kp_id"),
                     "question": payload.get("question"),
                     "payload": payload,
                 })
@@ -165,25 +160,35 @@ class AgentStore:
         finally:
             db.close()
 
-    def draft_ids(self, course_id: str | None = None) -> set[int]:
-        """已有草稿题号集合。传 course_id 时只统计该课程的草稿。"""
+    def draft_q_ids(self) -> set[str]:
+        """本课程已有草稿占用的题号集合（防止同一课程内重复分配 AI 号）"""
+        if not self.course_id:
+            return set()
         db = self.persistence.SessionLocal()
         try:
             STQuestionDraft = self.persistence.STQuestionDraft
-            q = db.query(STQuestionDraft.payload_json)
-            if course_id:
-                q = q.filter(STQuestionDraft.course_id == course_id)
-            rows = q.all()
+            rows = (
+                db.query(STQuestionDraft.payload_json)
+                .filter(STQuestionDraft.course_id == self.course_id)
+                .all()
+            )
         finally:
             db.close()
-        ids: set[int] = set()
+        ids: set[str] = set()
         for (payload_json,) in rows:
             try:
-                pid = int(json.loads(payload_json or "{}").get("id"))
-                ids.add(pid)
-            except (TypeError, ValueError, json.JSONDecodeError):
+                qid = str(json.loads(payload_json or "{}").get("q_id") or "").strip()
+            except json.JSONDecodeError:
                 continue
+            if qid:
+                ids.add(qid)
         return ids
+
+    def reserved_q_ids(self) -> set[str]:
+        """本课程已被占用的题号 = 正式题库已发布题号 ∪ 本课程草稿题号。"""
+        if not self.course_id:
+            return set()
+        return existing_q_ids(self.course_id) | self.draft_q_ids()
 
     def set_last_tool_log(self, session_id: str, tool_log: list, draft_id: str = "") -> None:
         """把本轮工具调用日志回填到最后一条 AI 消息（供历史会话展示溯源过程）"""
@@ -203,28 +208,3 @@ class AgentStore:
                 db.commit()
         finally:
             db.close()
-
-    def _write_sidecar(self, draft_id: str, payload: dict) -> None:
-        """调试用 sidecar JSON（与库内记录同 id，按课程分目录，可随时清空）"""
-        try:
-            target_dir = self.drafts_dir / _safe_seg(self.course_id or "_unassigned")
-            target_dir.mkdir(parents=True, exist_ok=True)
-            path = target_dir / f"{draft_id}.json"
-            path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-        except Exception:  # noqa: BLE001  sidecar 失败不影响主流程
-            pass
-
-    @property
-    def drafts_course_dir(self) -> Path:
-        return self.drafts_dir / _safe_seg(self.course_id or "_unassigned")
-
-
-def existing_draft_and_bank_ids(store: AgentStore | None = None) -> set[int]:
-    from app.agent_st.rag.bank import existing_ids
-
-    store = store or AgentStore()
-    return existing_ids() | store.draft_ids(course_id=store.course_id or None)
-
-
-def allocate_question_id(store: AgentStore | None = None) -> int:
-    return next_question_id(existing_draft_and_bank_ids(store))

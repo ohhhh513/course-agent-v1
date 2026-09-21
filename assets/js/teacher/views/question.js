@@ -345,9 +345,9 @@
         <div class="gen-q__head">
           <span class="badge badge--brand">${i + 1}</span>
           <b>单选题</b>
-          <span class="badge badge--outline">${U.esc(d.chapter || '')}</span>
+          <span class="badge badge--outline">${U.esc(d.kpName || d.kpId || '')}</span>
           ${statusBadge}
-          <span class="badge badge--outline mono">#${p.id || ''}</span>
+          <span class="badge badge--outline mono">#${U.esc(d.qId || p.q_id || '')}</span>
           <span class="spacer"></span>
           <span class="fz-11 t-dim">${U.esc(d.createdAt || '')}</span>
         </div>
@@ -384,12 +384,14 @@
               <span class="badge badge--brand">草稿</span>
               <div><b>修改后保存会重新校验</b><span>校验未通过仍可保存，但发布前必须通过</span></div>
             </div>
-            <span class="question-edit__summary-id">原始题号 <b class="mono">#${U.esc(p.id || '')}</b></span>
+            <span class="question-edit__summary-id">题号 <b class="mono">#${U.esc(p.q_id || '')}</b></span>
           </div>
           <section class="question-edit__section">
             <div class="edit-grid">
-              <div class="edit-field"><label>章节（王道小节）</label>
-                <input class="input" id="dqChapter" value="${U.esc(p.chapter || '')}" placeholder="如 6.4 图的应用"></div>
+              <div class="edit-field"><label>章节</label>
+                <input class="input" value="${U.esc(p.chapter_id || '')}" disabled placeholder="由出题时定位"></div>
+              <div class="edit-field"><label>知识点</label>
+                <input class="input" value="${U.esc(p.kp_id || '')}" disabled placeholder="由出题时定位"></div>
               <div class="edit-field"><label>答案</label>
                 <input class="input" id="dqAns" value="${U.esc(p.answer || '')}" placeholder="如 B"></div>
             </div>
@@ -436,7 +438,6 @@
               options: newOpts,
               answer: answer || p.answer,
               analysis: U.$('#dqAnalysis', ov).value,
-              chapter: U.$('#dqChapter', ov).value.trim() || p.chapter,
             });
             API.question.draftUpdate({ draftId: d.draftId, payload }).then(res => {
               Toast.ok('草稿已保存', res.status === 'draft' ? '校验通过' : '校验未通过：' + (res.errors || []).join('；'));

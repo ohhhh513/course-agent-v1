@@ -9,18 +9,21 @@ from app.agent_st.agent.config import get_settings
 from app.agent_st.rag.schema import ChunkRecord
 
 # 建表列定义 ----------
-# course_id 为 NOT NULL 且**不给默认值**：历史实现带 DEFAULT 'C2026DS001'，
-# 任何忘记传课程 ID 的写入都会被静默挂到演示课下，正是「题库切片落在孤儿
-# 课程 ID」的根因。隔离正确的系统必须在写入侧强制显式提供课程 ID。
+# 两条硬约束（都来自踩过的坑）：
+#   1) course_id NOT NULL 且**不给默认值** —— 历史 DEFAULT 'C2026DS001' 会把
+#      漏传课程的写入静默挂到演示课下，是跨课程串数据的根因。
+#   2) chapter_id / kp_id 用主库规范的结构 id（CH01-09 / KP001-026），
+#      不再用「章序号 + 王道小节」——那套已整体废除（docs/主库数据规范.md）。
 _COLUMNS = """
     chunk_id TEXT PRIMARY KEY,
     text TEXT NOT NULL,
     source_type TEXT NOT NULL,
     source_id TEXT NOT NULL,
-    course_chapter INTEGER NOT NULL,
-    section TEXT NOT NULL,
     course_id TEXT NOT NULL,
-    question_id INTEGER,
+    chapter_id TEXT NOT NULL DEFAULT '',
+    kp_id TEXT NOT NULL DEFAULT '',
+    kp_ids TEXT NOT NULL DEFAULT '[]',
+    q_id TEXT NOT NULL DEFAULT '',
     page_or_slide INTEGER,
     extra_json TEXT,
     embedding BLOB,
@@ -31,15 +34,15 @@ _TABLE_SQL = f"CREATE TABLE IF NOT EXISTS chunks ({_COLUMNS})"
 
 _INDEX_SQL = """
 CREATE INDEX IF NOT EXISTS idx_chunks_course ON chunks(course_id);
-CREATE INDEX IF NOT EXISTS idx_chunks_chapter ON chunks(course_chapter);
-CREATE INDEX IF NOT EXISTS idx_chunks_section ON chunks(section);
+CREATE INDEX IF NOT EXISTS idx_chunks_chapter ON chunks(chapter_id);
+CREATE INDEX IF NOT EXISTS idx_chunks_kp ON chunks(kp_id);
 CREATE INDEX IF NOT EXISTS idx_chunks_source ON chunks(source_type);
-CREATE INDEX IF NOT EXISTS idx_chunks_qid ON chunks(question_id);
+CREATE INDEX IF NOT EXISTS idx_chunks_qid ON chunks(q_id);
 """
 
 _COLUMN_ORDER = (
-    "chunk_id", "text", "source_type", "source_id", "course_chapter",
-    "section", "course_id", "question_id", "page_or_slide",
+    "chunk_id", "text", "source_type", "source_id", "course_id",
+    "chapter_id", "kp_id", "kp_ids", "q_id", "page_or_slide",
     "extra_json", "embedding", "embedding_model",
 )
 
@@ -76,47 +79,22 @@ class ChunkStore:
         return conn
 
     def _ensure_schema(self, conn: sqlite3.Connection) -> None:
-        """建表 / 幂等迁移。
+        """建表 / 结构变更自动重建。
 
-        - 新库：直接按当前列定义建表（course_id NOT NULL 无默认值）。
-        - 旧库：补 course_id 列，并**去掉**历史 DEFAULT 'C2026DS001'
-          （SQLite 不支持 ALTER COLUMN，走标准重建：新建表 → 复制 → 换名）。
+        切片是**可再生的派生数据**（由 resources / questions 重新切出来即可），
+        因此列定义不匹配时直接重建空表，而不是写迁移兼容代码。
         """
         row = conn.execute(
             "SELECT name FROM sqlite_master WHERE type='table' AND name='chunks'"
         ).fetchone()
-        if row is None:
-            conn.execute(_TABLE_SQL)
-            conn.executescript(_INDEX_SQL)
-            conn.commit()
-            return
-
-        cols = {r[1]: r for r in conn.execute("PRAGMA table_info(chunks)").fetchall()}
-        has_course = "course_id" in cols
-        # dflt_value 为 None 表示该列没有默认值
-        needs_rebuild = (not has_course) or (cols["course_id"][4] is not None)
-        if needs_rebuild:
-            self._rebuild_without_default(conn, has_course)
+        if row is not None:
+            existing = {r[1] for r in conn.execute("PRAGMA table_info(chunks)").fetchall()}
+            if existing != set(_COLUMN_ORDER):
+                conn.execute("DROP TABLE chunks")
+                conn.commit()
+        conn.execute(_TABLE_SQL)
         conn.executescript(_INDEX_SQL)
         conn.commit()
-
-    def _rebuild_without_default(self, conn: sqlite3.Connection, has_course: bool) -> None:
-        old_cols = {r[1] for r in conn.execute("PRAGMA table_info(chunks)").fetchall()}
-        conn.execute("DROP TABLE IF EXISTS chunks_migrated")
-        conn.execute(f"CREATE TABLE chunks_migrated ({_COLUMNS})")
-        copy = [c for c in _COLUMN_ORDER if c in old_cols]
-        target = list(copy)
-        select = list(copy)
-        if not has_course:
-            # 旧库无课程维度：置空串占位，交由运维显式归属或清理，不猜测课程
-            target.append("course_id")
-            select.append("'' AS course_id")
-        conn.execute(
-            f"INSERT INTO chunks_migrated ({', '.join(target)}) "
-            f"SELECT {', '.join(select)} FROM chunks"
-        )
-        conn.execute("DROP TABLE chunks")
-        conn.execute("ALTER TABLE chunks_migrated RENAME TO chunks")
 
     # ------------------------------------------------------------------
     # 读
@@ -149,27 +127,46 @@ class ChunkStore:
             ).fetchall()
         return {row["source_id"]: int(row["n"]) for row in rows}
 
+    def kp_coverage(self, course_id: str) -> dict[str, int]:
+        """某课程各知识点的切片数（对齐主库规范的结构视图）"""
+        with self._conn() as conn:
+            rows = conn.execute(
+                "SELECT kp_id, COUNT(*) AS n FROM chunks "
+                "WHERE course_id = ? AND kp_id <> '' GROUP BY kp_id ORDER BY kp_id",
+                (course_id,),
+            ).fetchall()
+        return {row["kp_id"]: int(row["n"]) for row in rows}
+
     def load_filtered(
         self,
         course_id: str,
-        course_chapter: int | None = None,
-        section_prefix: str | None = None,
+        chapter_id: str | None = None,
+        kp_ids: list[str] | None = None,
         source_types: list[str] | None = None,
     ) -> list[ChunkRecord]:
         """按课程取切片。course_id 必填 —— 缺失时返回空集（fail-closed），
 
         不做「不过滤全库混搜」的兜底：那正是跨课程串数据的根源。
+
+        `kp_ids` 支持**多个知识点**，语义为「命中任一」（并集）。每条候选 KP
+        都按当前主 KP（`kp_id`）或挂载列表（`kp_ids` JSON 元素）匹配，
+        所以挂了多 KP 的课件（如 `["KP024","KP023"]`）在任一 KP 下都能被查到。
+        列表内的具体值全部走参数绑定，不做字符串拼接。
         """
         if not course_id:
             return []
         clauses = ["course_id = ?"]
         args: list = [course_id]
-        if course_chapter:
-            clauses.append("course_chapter = ?")
-            args.append(course_chapter)
-        if section_prefix:
-            clauses.append("section LIKE ?")
-            args.append(f"{section_prefix}%")
+        if chapter_id:
+            clauses.append("chapter_id = ?")
+            args.append(chapter_id)
+        want = [str(k).strip() for k in (kp_ids or []) if str(k).strip()]
+        if want:
+            parts = []
+            for kp in want:
+                parts.append("(kp_id = ? OR kp_ids LIKE ?)")
+                args.extend([kp, f'%"{kp}"%'])
+            clauses.append("(" + " OR ".join(parts) + ")")
         if source_types:
             placeholders = ",".join("?" * len(source_types))
             clauses.append(f"source_type IN ({placeholders})")
@@ -180,7 +177,7 @@ class ChunkStore:
         return [self._to_record(row) for row in rows]
 
     def embedding_model_counts(self, course_id: str | None = None) -> dict[str, int]:
-        sql = ("SELECT COALESCE(embedding_model, '') AS model, COUNT(*) AS n FROM chunks")
+        sql = "SELECT COALESCE(embedding_model, '') AS model, COUNT(*) AS n FROM chunks"
         args: list = []
         if course_id:
             sql += " WHERE course_id = ?"
@@ -222,14 +219,15 @@ class ChunkStore:
                 r.text,
                 r.source_type,
                 r.source_id,
-                r.course_chapter,
-                r.section,
-                r.question_id,
+                r.course_id,
+                r.chapter_id or "",
+                r.kp_id or "",
+                json.dumps(list(r.kp_ids or []), ensure_ascii=False),
+                r.q_id or "",
                 r.page_or_slide,
                 json.dumps(r.extra or {}, ensure_ascii=False),
                 _pack(r.embedding),
                 r.embedding_model,
-                r.course_id,
             )
             for r in records
         ]
@@ -237,9 +235,10 @@ class ChunkStore:
             conn.executemany(
                 """
                 INSERT OR REPLACE INTO chunks (
-                    chunk_id, text, source_type, source_id, course_chapter, section,
-                    question_id, page_or_slide, extra_json, embedding, embedding_model, course_id
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    chunk_id, text, source_type, source_id, course_id,
+                    chapter_id, kp_id, kp_ids, q_id, page_or_slide,
+                    extra_json, embedding, embedding_model
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 rows,
             )
@@ -320,15 +319,20 @@ class ChunkStore:
     # ------------------------------------------------------------------
     def _to_record(self, row: sqlite3.Row) -> ChunkRecord:
         extra = json.loads(row["extra_json"] or "{}")
+        try:
+            kp_ids = json.loads(row["kp_ids"] or "[]")
+        except json.JSONDecodeError:
+            kp_ids = []
         return ChunkRecord(
             chunk_id=row["chunk_id"],
             text=row["text"],
             source_type=row["source_type"],
             source_id=row["source_id"],
-            course_chapter=row["course_chapter"],
-            section=row["section"],
             course_id=row["course_id"],
-            question_id=row["question_id"],
+            chapter_id=row["chapter_id"] or "",
+            kp_id=row["kp_id"] or "",
+            kp_ids=kp_ids if isinstance(kp_ids, list) else [],
+            q_id=row["q_id"] or "",
             page_or_slide=row["page_or_slide"],
             extra=extra,
             embedding=_unpack(row["embedding"]),

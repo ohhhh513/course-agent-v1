@@ -7,5 +7,18 @@ from sqlalchemy.orm import sessionmaker
 from ..database import SessionLocal, engine  # noqa: F401
 from ..models.ai import ChatSession, ChatMessage
 from ..models.agent_st import STQuestionDraft
+from ..models.graph import GraphNode, GraphLink
+from ..models.question import Question
+from ..models.course import Course
 
-__all__ = ["SessionLocal", "engine", "ChatSession", "ChatMessage", "STQuestionDraft"]
+__all__ = [
+    "SessionLocal",
+    "engine",
+    "ChatSession",
+    "ChatMessage",
+    "STQuestionDraft",
+    "GraphNode",
+    "GraphLink",
+    "Question",
+    "Course",
+]

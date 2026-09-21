@@ -110,6 +110,23 @@ def _ai_samples_path() -> Path:
 
 
 def import_questions(verbose: bool = True) -> int:
+    """[已退役] 从 after_class.json 导入演示题库。
+
+    原实现依赖「王道小节前缀 → KP」映射（`kp_section_mapping.json`）与旧课程
+    `C2026DS001`、旧 KP 编号（KP01/KP11/…），与现行主库规范
+    （章 CH01-09 + 知识点 KP001-026，见 docs/主库数据规范.md）不兼容。
+    正式题库一律由平台产生：教师建课 → 图谱编排 → 前端录题 / AI 出题发布。
+
+    本函数保留占位以免历史调用点报错，实际不做任何写入。
+    """
+    if verbose:
+        print("[bootstrap] import_questions 已退役：题库请由教师端产生，"
+              "不再从 after_class.json 导入（详见 docs/主库数据规范.md）")
+    return 0
+
+
+def _legacy_import_questions(verbose: bool = True) -> int:
+    """退役前的旧实现，仅作历史参考保留，不参与任何调用链。"""
     bank = _bank_path()
     if not bank.exists():
         if verbose:
@@ -126,15 +143,7 @@ def import_questions(verbose: bool = True) -> int:
     created = updated = skipped = 0
     try:
         section_kp: dict = {}
-        mapping = settings.BASE_DIR.parent / "kp_section_mapping.json"
-        if mapping.exists():
-            try:
-                m = json.loads(mapping.read_text(encoding="utf-8"))
-                section_kp = {str(k): v for k, v in m.items()
-                              if not k.startswith("_") and isinstance(v, list) and v}
-            except Exception:
-                section_kp = {}
-        need = {k for kps in section_kp.values() for k in kps} | {c[3] for c in _CHAPTERS}
+        need = {c[3] for c in _CHAPTERS}
         kp_names = dict(db.query(GraphNode.id, GraphNode.name).filter(
             GraphNode.graph_type == "knowledge", GraphNode.id.in_(need)).all())
 

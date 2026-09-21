@@ -1,9 +1,10 @@
-from app.agent_st.rag.parsers.json_bank import JsonBankParser
 from app.agent_st.rag.parsers.pdf import PdfParser
 from app.agent_st.rag.parsers.ppt import PptParser
 from app.agent_st.rag.parsers.txt import TxtParser
 
-PARSERS = (JsonBankParser(), PdfParser(), PptParser(), TxtParser())
+# 题库不再从 JSON 文件入库（改为主库 questions 表，见 ingest.ingest_question_bank），
+# 因此这里不再注册 JsonBankParser。
+PARSERS = (PdfParser(), PptParser(), TxtParser())
 
 
 def get_parser(path):

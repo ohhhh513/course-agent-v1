@@ -1,39 +1,17 @@
 from __future__ import annotations
 
-import re
+import json
 from pathlib import Path
 
-from app.agent_st.rag.chapter_map import map_section, section_prefix
+from app.agent_st.rag import bank as banks
 from app.agent_st.rag.embed import active_model_name, embed_texts
 from app.agent_st.rag.parsers import get_parser
 from app.agent_st.rag.parsers.base import split_text
 from app.agent_st.rag.schema import ChunkRecord, ParsedUnit
 from app.agent_st.rag.store import ChunkStore
 
-CHAPTER_HINT_RE = re.compile(r"第\s*([1-9])\s*章")
-SECTION_HINT_RE = re.compile(r"([1-8]\.[1-5])")
-
-# 题库 JSON 入库时按来源类型整体替换（同一课程内的题库是「全量快照」语义）
 BANK_SOURCE_TYPES = ["question_stem", "question_analysis"]
-
-
-def _infer_section(unit: ParsedUnit, fallback_name: str) -> tuple[int, str]:
-    if unit.course_chapter and unit.section:
-        return unit.course_chapter, unit.section
-    hint = " ".join(filter(None, [unit.section_hint, unit.text[:200], fallback_name]))
-    mapped = map_section(hint)
-    if mapped["id"]:
-        prefix = section_prefix(hint) or hint
-        return mapped["id"], unit.section_hint or prefix
-    m = SECTION_HINT_RE.search(hint)
-    if m:
-        mapped = map_section(m.group(1))
-        if mapped["id"]:
-            return mapped["id"], m.group(1)
-    m = CHAPTER_HINT_RE.search(hint)
-    if m:
-        return int(m.group(1)), f"第{m.group(1)}章"
-    return 0, unit.section_hint or fallback_name
+QUESTION_BANK_SOURCE_KEY = "__questions__"
 
 
 def units_to_records(
@@ -41,28 +19,33 @@ def units_to_records(
     source_name: str,
     course_id: str,
     source_key: str | None = None,
+    chapter_id: str = "",
+    kp_ids: list[str] | None = None,
+    q_id: str = "",
 ) -> list[ChunkRecord]:
     """切片记录化。
 
     - course_id 必填，并写进 chunk_id 前缀 —— chunk_id 是主键，若不带课程维度，
-      两门课导入同一份题库会因 `qstem-1` 撞车而互相 INSERT OR REPLACE 覆盖。
-    - source_key 是切片的来源标识，默认取文件名；资源类上传应传
-      `{res_id}/{文件名}`，避免同名文件互相覆盖（课程内隔离）。
+      两门课导入同一份题库会因主键撞车而互相 INSERT OR REPLACE 覆盖。
+    - source_key 是切片的来源标识：资源类为 `{res_id}/{文件名}`（避免同名文件
+      互相覆盖），题库类为 `__questions__`。
+    - **结构归属由调用方给定**（资源继承 `resources` 表、题库继承 `questions` 表），
+      本函数不做任何文本推断 —— 旧的「王道小节」推断已整体废除。
     """
     if not course_id:
         raise ValueError("units_to_records 必须指定 course_id")
     key = source_key or source_name
+    kps = [str(k) for k in (kp_ids or []) if str(k).strip()]
     records: list[ChunkRecord] = []
     model = active_model_name()
     seq = 0
     for unit in units:
-        chapter, section = _infer_section(unit, source_name)
         pieces = [unit.text] if unit.pre_chunked else split_text(unit.text)
         for piece in pieces:
             seq += 1
-            if unit.pre_chunked and unit.question_id is not None:
+            if unit.pre_chunked and q_id:
                 prefix = "qstem" if unit.source_type == "question_stem" else "qanal"
-                chunk_id = f"{course_id}:{prefix}-{unit.question_id}"
+                chunk_id = f"{course_id}:{prefix}-{q_id}"
             else:
                 chunk_id = f"{course_id}:{unit.source_type}-{key}-{seq}"
             records.append(
@@ -71,10 +54,11 @@ def units_to_records(
                     text=piece,
                     source_type=unit.source_type,
                     source_id=key,
-                    course_chapter=chapter,
-                    section=section,
                     course_id=course_id,
-                    question_id=unit.question_id,
+                    chapter_id=chapter_id or "",
+                    kp_id=kps[0] if kps else "",
+                    kp_ids=kps,
+                    q_id=q_id or "",
                     page_or_slide=unit.page,
                     extra=unit.extra,
                     embedding_model=model,
@@ -89,11 +73,13 @@ def ingest_path(
     store: ChunkStore | None = None,
     replace_source: bool = True,
     source_key: str | None = None,
+    chapter_id: str = "",
+    kp_ids: list[str] | None = None,
 ) -> dict:
-    """把一个文件切片入某门课的库。
+    """把一个**资源文件**切片入某门课的库。
 
-    题库 JSON 走「按来源类型整体替换该课程的题库切片」，
-    其它文件走「按 source_key 替换」。
+    chapter_id / kp_ids 应由调用方从 `resources` 表继承后传入；
+    留空表示该文件尚未归入任何章/知识点（仍可被整课检索到）。
     """
     if not course_id:
         raise ValueError("ingest_path 必须指定 course_id")
@@ -101,7 +87,10 @@ def ingest_path(
     key = source_key or path.name
     parser = get_parser(path)
     units = parser.parse(path)
-    records = units_to_records(units, path.name, course_id=course_id, source_key=key)
+    records = units_to_records(
+        units, path.name, course_id=course_id, source_key=key,
+        chapter_id=chapter_id, kp_ids=kp_ids,
+    )
     if not records:
         return {"ok": False, "error": "未产生切片", "path": str(path), "course_id": course_id}
     vectors = embed_texts([r.text for r in records])
@@ -109,10 +98,7 @@ def ingest_path(
         rec.embedding = vec
     store = store or ChunkStore()
     if replace_source:
-        if path.suffix.lower() == ".json":
-            store.delete_source_types(BANK_SOURCE_TYPES, course_id=course_id)
-        else:
-            store.delete_source(key, course_id=course_id)
+        store.delete_source(key, course_id=course_id)
     n = store.upsert_many(records)
     types = sorted({r.source_type for r in records})
     return {
@@ -120,29 +106,122 @@ def ingest_path(
         "path": str(path),
         "course_id": course_id,
         "source_key": key,
+        "chapter_id": chapter_id,
+        "kp_ids": list(kp_ids or []),
         "chunks": n,
         "source_types": types,
         "embedding_model": active_model_name(),
     }
 
 
-def ingest_bank(
-    course_id: str,
-    bank_path: Path | None = None,
-    store: ChunkStore | None = None,
-) -> dict:
-    """把课后题库 JSON 入到指定课程。course_id 必填。"""
-    from app.agent_st.agent.config import get_settings
+# ----------------------------------------------------------------------
+# 题库切片：唯一来源是主库 questions 表
+# ----------------------------------------------------------------------
+def _options_text(raw: str | None) -> str:
+    """questions.options 是 [{"key":"A","text":..,"right":..}]，转成可检索的 A. xxx"""
+    try:
+        rows = json.loads(raw or "[]")
+    except json.JSONDecodeError:
+        return ""
+    if not isinstance(rows, list):
+        return ""
+    return "\n".join(f"{o.get('key')}. {o.get('text') or ''}" for o in rows if isinstance(o, dict))
+
+
+def _question_units(
+    stem: str, options_text: str, analysis: str, chapter_name: str, kp_name: str
+) -> list[ParsedUnit]:
+    head = ""
+    if chapter_name:
+        head += f"章节：{chapter_name}\n"
+    if kp_name:
+        head += f"知识点：{kp_name}\n"
+    stem_body = f"{head}题干：{stem}"
+    if options_text:
+        stem_body += f"\n选项：\n{options_text}"
+    return [
+        ParsedUnit(text=stem_body, pre_chunked=True, source_type="question_stem",
+                   source_id=QUESTION_BANK_SOURCE_KEY),
+        ParsedUnit(text=f"{head}解析：{analysis or '（本题暂无解析）'}", pre_chunked=True,
+                   source_type="question_analysis", source_id=QUESTION_BANK_SOURCE_KEY),
+    ]
+
+
+def ingest_question_bank(course_id: str, store: ChunkStore | None = None) -> dict:
+    """把**主库 questions 表**里该课程的已发布题目切成检索切片。
+
+    这是题库切片进入 rag.db 的唯一通道（原先读 after_class.json，已废除）。
+    题目的章/知识点直接取 `questions.chapter_id` / `questions.kp_id`，
+    因此切片天然带规范结构，不需要任何文本推断。
+    """
+    from app.agent_st import persistence
+    from app.agent_st.rag import structure
 
     if not course_id:
-        raise ValueError("ingest_bank 必须指定 course_id")
-    settings = get_settings()
-    return ingest_path(
-        Path(bank_path or settings.bank_path),
-        course_id=course_id,
-        store=store,
-        source_key="__st_bank__",
-    )
+        raise ValueError("ingest_question_bank 必须指定 course_id")
+
+    Question = persistence.Question
+    db = persistence.SessionLocal()
+    try:
+        rows = (
+            db.query(Question)
+            .filter(Question.course_id == course_id, Question.status == "published")
+            .order_by(Question.q_id)
+            .all()
+        )
+        questions = [
+            {
+                "q_id": r.q_id,
+                "stem": r.stem or "",
+                "options": r.options,
+                "analysis": r.analysis or "",
+                "chapter_id": r.chapter_id or "",
+                "chapter": r.chapter or "",
+                "kp_id": r.kp_id or "",
+                # 多 KP：kp_id 是主 KP，kp_ids 是完整列表（切片要把两者都带上，
+                # 否则挂多 KP 的题在按非主 KP 检索时会漏）
+                "kp_ids": banks.kp_ids_of_row(r),
+            }
+            for r in rows
+        ]
+    finally:
+        db.close()
+
+    if not questions:
+        return {"ok": True, "course_id": course_id, "questions": 0, "chunks": 0,
+                "note": "该课程 questions 表无已发布题目，未产生切片"}
+
+    kp_names = {kp["id"]: kp["name"] for kp in structure.list_kps(course_id)}
+    records: list[ChunkRecord] = []
+    for q in questions:
+        units = _question_units(
+            q["stem"], _options_text(q["options"]), q["analysis"],
+            q["chapter"], kp_names.get(q["kp_id"], ""),
+        )
+        records.extend(
+            units_to_records(
+                units, QUESTION_BANK_SOURCE_KEY, course_id=course_id,
+                source_key=QUESTION_BANK_SOURCE_KEY,
+                chapter_id=q["chapter_id"],
+                kp_ids=q["kp_ids"] or None,
+                q_id=q["q_id"],
+            )
+        )
+
+    vectors = embed_texts([r.text for r in records])
+    for rec, vec in zip(records, vectors):
+        rec.embedding = vec
+
+    store = store or ChunkStore()
+    store.delete_source_types(BANK_SOURCE_TYPES, course_id=course_id)
+    n = store.upsert_many(records)
+    return {
+        "ok": True,
+        "course_id": course_id,
+        "questions": len(questions),
+        "chunks": n,
+        "embedding_model": active_model_name(),
+    }
 
 
 def reembed_stale_chunks(
@@ -177,17 +256,11 @@ def reembed_stale_chunks(
 def ensure_bank_indexed(course_id: str | None = None) -> dict:
     """每轮对话前的自检。
 
-    两件事分开处理：
-    1) **向量漂移自愈**（全库、幂等、与课程无关）——切换 embedding 模型后把
-       旧维度向量重算，否则检索永远命中不到。
-    2) **按需建库**——只有在配置里显式声明了「题库归属课程」
-       （settings.ST_BANK_COURSE_ID）且与本次请求课程一致时才自动入库。
-       多课程下不能再按「这门课没切片就灌题库」兜底：那会把数据结构题库
-       灌进任何新课程。没有声明归属就交给 `/agent/ingest/bank`（教师）
-       或 `run_st_ingest.py`（运维）显式触发。
+    1) **向量漂移自愈**（全库、幂等、与课程无关）。
+    2) **按需建题库索引** —— 该课程在 rag.db 里一条切片都没有时才建。
+       数据源是主库 questions 表，切片只覆盖本课程自己的题，
+       因此不再需要「题库文件归属哪门课」这类配置。
     """
-    from app.agent_st.agent.config import get_settings
-
     store = ChunkStore()
     info: dict = {"course_id": course_id or ""}
     try:
@@ -207,16 +280,8 @@ def ensure_bank_indexed(course_id: str | None = None) -> dict:
     if store.count(course_id) > 0:
         return {"ok": True, "chunks": store.count(course_id), "skipped": True, **info}
 
-    if get_settings().bank_course_id != course_id:
-        info["skipped_unbound_bank"] = True
-        return {"ok": True, "chunks": 0, "skipped": True, **info}
-
-    bank_path = Path(get_settings().bank_path)
-    if not bank_path.exists():
-        info["bank_missing"] = True
-        return {"ok": False, "error": "题库文件不存在，请先运行 import_st_bank.py", **info}
     try:
-        return ingest_bank(course_id, store=store)
+        return {**ingest_question_bank(course_id, store=store), **info}
     except Exception as exc:  # noqa: BLE001
         info["ingest_error"] = str(exc)
         return {"ok": False, "error": str(exc), **info}

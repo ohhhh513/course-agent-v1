@@ -21,12 +21,9 @@ class AgentSettings:
     embedding_api_key: str
     embedding_model: str
 
-    bank_path: Path
-    bank_course_id: str          # 课后题库 JSON 的归属课程（空 = 不自动入库）
     data_dir: Path
     rag_db_path: Path
     agent_db_path: Path          # 不再使用独立 agent.db，保留字段兼容原型代码
-    drafts_dir: Path
 
     min_retrieve_score: float
     retrieve_top_k: int
@@ -50,12 +47,9 @@ class _Bridge:
             embedding_base_url=app_settings.EMBEDDING_BASE_URL,
             embedding_api_key=app_settings.EMBEDDING_API_KEY,
             embedding_model=app_settings.EMBEDDING_MODEL,
-            bank_path=Path(app_settings.ST_BANK_PATH),
-            bank_course_id=app_settings.ST_BANK_COURSE_ID,
             data_dir=data_dir,
             rag_db_path=Path(app_settings.RAG_DB_PATH),
             agent_db_path=data_dir / "agent.db",
-            drafts_dir=Path(app_settings.ST_DRAFTS_DIR),
             min_retrieve_score=app_settings.MIN_RETRIEVE_SCORE,
             retrieve_top_k=app_settings.RETRIEVE_TOP_K,
             max_steps=app_settings.AGENT_MAX_STEPS,
@@ -65,8 +59,6 @@ class _Bridge:
     def refresh(self) -> AgentSettings:
         self._cache = self._build()
         self._cache.data_dir.mkdir(parents=True, exist_ok=True)
-        self._cache.drafts_dir.mkdir(parents=True, exist_ok=True)
-        self._cache.bank_path.parent.mkdir(parents=True, exist_ok=True)
         return self._cache
 
     def get(self) -> AgentSettings:

@@ -1,5 +1,12 @@
 """
-将 v1.0 after_class.json 转为当前 /question/import 契约，并挂上 KP 名称。
+[已过期] 将 v1.0 after_class.json 转为 /question/import 契约，并挂上 KP 名称。
+
+过期原因：它依赖「王道小节前缀」映射与外部 v1.0 工程路径；课程结构已全量替换为
+「章 CH01-09 + 知识点 KP001-026」（见 docs/主库数据规范.md），且题库已在主库
+questions 表中，不再需要从 JSON 转换导入。
+
+保留仅供历史参照，**不要再用于生产数据导入**。批量录题请走教师端接口，
+并按主库规范提供 chapter_id / kp_id。
 
 用法（项目根）:
   python dev_tools/convert_after_class.py

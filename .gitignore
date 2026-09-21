@@ -54,7 +54,6 @@ desktop.ini
 *.backup
 *.tmp
 backend/app/data/vector/
-backend/app/data/st/drafts/
 backend/app/data/st/uploads/
 backend/.tmp_cid
 

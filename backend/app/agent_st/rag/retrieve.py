@@ -34,13 +34,21 @@ def keyword_score(query: str, text: str) -> float:
 def retrieve_chunks(
     query: str,
     course_id: str | None = None,
-    course_chapter: int | None = None,
-    section_prefix: str | None = None,
+    chapter_id: str | None = None,
+    kp_id: str | None = None,
+    kp_ids: list[str] | None = None,
     source_types: list[str] | None = None,
     top_k: int = 6,
     store: ChunkStore | None = None,
 ) -> list[dict]:
-    """按课程检索切片。
+    """按课程 + 章/知识点检索切片。
+
+    结构过滤用主库规范的 `chapter_id`(CH01-09) / `kp_id`(KP001-026)，
+    不再用「章序号 + 王道小节」。
+
+    知识点可以是**多个**：`kp_ids` 非空时按「命中任一」过滤（并集），
+    与主库多 KP 语义一致（`kp_id` 是主 KP，`kp_ids` 是完整列表）。
+    切片侧用成员匹配，所以挂了多 KP 的课件不会被漏掉。
 
     course_id 缺失时**直接返回空集**（fail-closed）——不再退化为「不过滤 =
     全库混搜」，那是跨课程串数据的根因。调用方（agent 工具）负责从
@@ -48,11 +56,14 @@ def retrieve_chunks(
     """
     if not course_id:
         return []
+    want_kps = [str(x).strip() for x in (kp_ids or []) if str(x).strip()]
+    if kp_id and str(kp_id).strip() and str(kp_id).strip() not in want_kps:
+        want_kps.insert(0, str(kp_id).strip())
     store = store or ChunkStore()
     records = store.load_filtered(
         course_id=course_id,
-        course_chapter=course_chapter,
-        section_prefix=section_prefix,
+        chapter_id=chapter_id,
+        kp_ids=want_kps or None,
         source_types=source_types,
     )
     if not records:
@@ -60,7 +71,7 @@ def retrieve_chunks(
     query_vec = embed_texts([query])[0]
     ranked: list[tuple[float, ChunkRecord]] = []
     for rec in records:
-        k_score = keyword_score(query, rec.text + " " + rec.section)
+        k_score = keyword_score(query, rec.text)
         # 维度不一致时向量分恒为 0，此时退化为纯关键词打分，而不是把总分压低到
         # 0.45 倍、让本该命中的切片落到阈值以下。
         if dims_compatible(query_vec, rec.embedding):
