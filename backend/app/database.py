@@ -37,15 +37,35 @@ def get_db():
 def _add_missing_columns(engine):
     """仅 ADD COLUMN 的幂等补列（不改已有列/不删数据）。
 
-    项目约定旧完整迁移已退役；此处只为「章目录 + 多 KP」等新增列在
-    已有库上可运行。删库重建仍是最干净路径。
+    项目约定旧完整迁移已退役；此处只为「章目录 + 多 KP」「课程隔离」等
+    新增列在已有库上可运行。删库重建仍是最干净路径。
     """
     from sqlalchemy import text
 
+    # 表 → {列名: 列定义}。新增列只在这里登记，勿在别处散落 ALTER。
     want = {
-        "resources": ["chapter_id", "chapter", "kp_ids"],
-        "questions": ["chapter_id", "chapter", "kp_ids"],
-        "graph_nodes": ["pos_x", "pos_y"],
+        "resources": {
+            "chapter_id": "VARCHAR(64) DEFAULT ''",
+            "chapter": "VARCHAR(64) DEFAULT ''",
+            "kp_ids": "TEXT DEFAULT '[]'",
+        },
+        "questions": {
+            "chapter_id": "VARCHAR(64) DEFAULT ''",
+            "chapter": "VARCHAR(64) DEFAULT ''",
+            "kp_ids": "TEXT DEFAULT '[]'",
+        },
+        "graph_nodes": {
+            "pos_x": "FLOAT",
+            "pos_y": "FLOAT",
+        },
+        # 课程隔离：出题草稿补课程维度（存量行保持 NULL，由运维显式归属）
+        "st_question_drafts": {
+            "course_id": "VARCHAR(32)",
+        },
+        # 课程隔离：会话表补课程维度（存量 28 行曾回填默认课程，新行为 NULL）
+        "chat_sessions": {
+            "course_id": "VARCHAR(32)",
+        },
     }
     with engine.connect() as conn:
         for table, cols in want.items():
@@ -53,19 +73,10 @@ def _add_missing_columns(engine):
             existing = {r[1] for r in rows}
             if not existing:
                 continue
-            for col in cols:
+            for col, ddl in cols.items():
                 if col in existing:
                     continue
-                if table == "resources" and col in ("chapter_id", "chapter"):
-                    conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} VARCHAR(64) DEFAULT ''"))
-                elif table == "resources" and col == "kp_ids":
-                    conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} TEXT DEFAULT '[]'"))
-                elif table == "questions" and col in ("chapter_id", "chapter"):
-                    conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} VARCHAR(64) DEFAULT ''"))
-                elif table == "questions" and col == "kp_ids":
-                    conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} TEXT DEFAULT '[]'"))
-                elif table == "graph_nodes" and col in ("pos_x", "pos_y"):
-                    conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} FLOAT"))
+                conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} {ddl}"))
         conn.commit()
 
 

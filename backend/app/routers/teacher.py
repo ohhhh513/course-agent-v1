@@ -1337,12 +1337,16 @@ def ai_generate_questions(
     req: GenQuestionReq,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
+    course_id: str = Depends(get_current_course_id),
 ):
     """AI 智能出题（SSE 流式）—— generate_items 流真实 LLM 生成。
 
     事件序列：meta(batchId) → tool_start/tool_end → draft(每题落库即推) → done(draftIds)。
-    草稿仅写入 st_question_drafts（按 user_id 归属个人），绝不写入 questions 正式题库。
+    草稿仅写入 st_question_drafts（按 user_id + course_id 归属），绝不写入 questions 正式题库。
     入参：kpIds 0～N、exampleQuestionIds 0～3，两者数量之和必须大于 0。
+
+    课程隔离：course_id 来自 X-Course-Id（含成员校验），并注入 context['courseId']，
+    由 retrieve_chunks 工具据此过滤 RAG 切片 —— 缺少它会导致跨课程全库混搜。
     """
     from sse_starlette.sse import EventSourceResponse
     from ..agent_st.agent.runtime import run_turn
@@ -1360,7 +1364,9 @@ def ai_generate_questions(
     kp_rows = []
     if kp_ids:
         kp_rows = db.query(GraphNode).filter(
-            GraphNode.id.in_(kp_ids), GraphNode.graph_type == "knowledge"
+            GraphNode.id.in_(kp_ids),
+            GraphNode.graph_type == "knowledge",
+            GraphNode.course_id == course_id,      # 课程隔离：只认本课知识点
         ).all()
     kp_names = [row.name for row in kp_rows]
     if not kp_names:
@@ -1412,6 +1418,7 @@ def ai_generate_questions(
         for i in range(count):
             chapter = _chapter_hint(i)
             context = {
+                "courseId": course_id,          # 课程隔离边界：RAG 检索据此过滤
                 "batch_id": batch_id,
                 "difficulty": req.difficulty,
                 "seq": i + 1,
@@ -1428,6 +1435,7 @@ def ai_generate_questions(
                     flow_id="generate_items",
                     context=context,
                     user_id=user.user_id,
+                    course_id=course_id,
                 ):
                     etype = ev.get("type")
                     if etype == "draft":
@@ -1456,20 +1464,24 @@ def ai_generate_questions_stream(
     req: GenQuestionReq,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
+    course_id: str = Depends(get_current_course_id),
 ):
     """/gen 的语义化别名，行为完全一致"""
-    return ai_generate_questions(req=req, db=db, user=user)
+    return ai_generate_questions(req=req, db=db, user=user, course_id=course_id)
 
 
 # ========== /question/drafts 草稿箱（教师个人，发布才进正式题库） ==========
 
-def _owned_draft(draft_id: str, user: User, db: Session):
+def _owned_draft(draft_id: str, user: User, db: Session, course_id: str | None = None):
+    """取草稿并做归属校验：必须属于当前用户**且**属于当前课程。"""
     from ..models.agent_st import STQuestionDraft
     row = db.query(STQuestionDraft).filter(STQuestionDraft.draft_id == draft_id).first()
     if not row:
         return None, None, fail("草稿不存在", 404)
     if row.user_id and user.user_id and row.user_id != user.user_id:
         return None, None, fail("无权操作他人的草稿", 403)
+    if course_id and row.course_id and row.course_id != course_id:
+        return None, None, fail("无权操作其它课程的草稿", 403)
     try:
         payload = json.loads(row.payload_json or "{}")
     except json.JSONDecodeError:
@@ -1486,10 +1498,14 @@ def draft_list(
     status: str = Query("all"),
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
+    course_id: str = Depends(get_current_course_id),
 ):
-    """当前教师的出题草稿箱"""
+    """当前教师在本课程的出题草稿箱（课程隔离）"""
     from ..models.agent_st import STQuestionDraft
-    q = db.query(STQuestionDraft).filter(STQuestionDraft.user_id == user.user_id)
+    q = db.query(STQuestionDraft).filter(
+        STQuestionDraft.user_id == user.user_id,
+        STQuestionDraft.course_id == course_id,
+    )
     if status and status != "all":
         q = q.filter(STQuestionDraft.status == status)
     rows = q.order_by(STQuestionDraft.created_at.desc()).all()
@@ -1520,10 +1536,11 @@ def draft_update(
     req: DraftUpdateReq,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
+    course_id: str = Depends(get_current_course_id),
 ):
     """编辑草稿（题干/选项/答案/解析/章节/图规格），保存时重新校验"""
     from ..agent_st.rag.validate import validate_question
-    row, payload, err = _owned_draft(draft_id, user, db)
+    row, payload, err = _owned_draft(draft_id, user, db, course_id)
     if err:
         return err
     new_payload = dict(req.payload or {})
@@ -1544,8 +1561,9 @@ def draft_delete(
     draft_id: str,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
+    course_id: str = Depends(get_current_course_id),
 ):
-    row, _, err = _owned_draft(draft_id, user, db)
+    row, _, err = _owned_draft(draft_id, user, db, course_id)
     if err:
         return err
     db.delete(row)
@@ -1566,7 +1584,7 @@ def draft_publish(
     from ..agent_st.rag.kp_map import kps_for_section
     from ..agent_st.rag.chapter_map import map_section
 
-    row, payload, err = _owned_draft(draft_id, user, db)
+    row, payload, err = _owned_draft(draft_id, user, db, course_id)
     if err:
         return err
     if row.status == "published":
@@ -1598,21 +1616,31 @@ def draft_publish(
     kps = kps_for_section(prefix)
     chapter = map_section(prefix)
     if not kps:
+        # 课程隔离：回退也必须限定在本课程，否则会取到别的课程同名章的知识点
         first_node = (
             db.query(GraphNode)
-            .filter(GraphNode.graph_type == "knowledge", GraphNode.chapter.like(f"第{chapter['id']}章%"))
+            .filter(
+                GraphNode.graph_type == "knowledge",
+                GraphNode.course_id == course_id,
+                GraphNode.chapter.like(f"第{chapter['id']}章%"),
+            )
             .first()
         )
         kps = [first_node.id] if first_node else []
     kp_names = {
         r[0]: r[1]
         for r in db.query(GraphNode.id, GraphNode.name)
-        .filter(GraphNode.graph_type == "knowledge", GraphNode.id.in_(kps)).all()
+        .filter(
+            GraphNode.graph_type == "knowledge",
+            GraphNode.course_id == course_id,
+            GraphNode.id.in_(kps),
+        ).all()
     } if kps else {}
     kp_id = kps[0] if kps else None
     kp_path = [chapter["title"]] + [kp_names.get(k, k) for k in kps]
 
-    # q_id 分配：AI + 自增三位（与 KHD 序列隔离）
+    # q_id 分配：AI + 自增三位（与 KHD 序列隔离）。
+    # 这里**有意跨课程**扫描：questions.q_id 是主键，全局唯一才不会撞号。
     existing = [
         int(re.sub(r"\D", "", r[0]))
         for r in db.query(Question.q_id).filter(Question.q_id.like("AI%")).all()
@@ -2280,12 +2308,26 @@ _RAG_STATUS: dict = {}
 _RAG_SUPPORTED_EXT = {".json", ".pdf", ".ppt", ".pptx", ".txt", ".md"}
 
 
+def _rag_source_key(res_id: str, path) -> str:
+    """RAG 切片的来源标识：{res_id}/{文件名}。
+
+    历史实现直接用文件名当 source_id，导致两门课 / 两个资源上传同名文件时
+    互相覆盖切片、删除时也误删。资源路径本就是 resources/{course_id}/{res_id}/，
+    因此 (course_id, res_id, 文件名) 才是切片的最小唯一标识。
+    """
+    from pathlib import Path as _P
+
+    return f"{res_id}/{_P(path).name}"
+
+
 def _run_rag_ingest(res_id: str, path, course_id: str | None = None) -> None:
     """后台任务：把上传的文件切片写入 rag.db（幂等，同 source 先删后写，限定课程）。"""
     from ..agent_st.rag.ingest import ingest_path
     _RAG_STATUS[res_id] = {"status": "running", "chunks": 0, "message": "正在切片并向量化…"}
     try:
-        result = ingest_path(path, course_id=course_id)
+        result = ingest_path(
+            path, course_id=course_id, source_key=_rag_source_key(res_id, path)
+        )
         if result.get("ok"):
             _RAG_STATUS[res_id] = {
                 "status": "done",
@@ -2592,15 +2634,15 @@ def delete_resource(
     except Exception:
         db.rollback()
 
-    # 清理进度记录，并从 RAG 库移除该文件的切片 —— 保持「磁盘文件 / 业务表 / 向量库」三者一致
+    # 清理进度记录，并从 RAG 库移除该资源的切片 —— 保持「磁盘文件 / 业务表 / 向量库」三者一致
+    # 按 `{res_id}/` 前缀删：不依赖 url 能否反解出路径，也不会误删同名文件的其它资源
     _RAG_STATUS.pop(res_id, None)
-    rag_removed = None            # None = 无源文件可定位，未执行清理
-    if src_path is not None:
-        try:
-            from ..agent_st.rag.store import ChunkStore
-            rag_removed = ChunkStore().delete_source(src_path.name, course_id=course_id)
-        except Exception:
-            rag_removed = -1      # -1 = 清理失败，前端提示需人工核对
+    rag_removed = None
+    try:
+        from ..agent_st.rag.store import ChunkStore
+        rag_removed = ChunkStore().delete_source_prefix(f"{res_id}/", course_id=course_id)
+    except Exception:
+        rag_removed = -1      # -1 = 清理失败，前端提示需人工核对
 
     return ok({"resId": res_id, "ragChunksRemoved": rag_removed})
 

@@ -1,8 +1,11 @@
 """
 智能体状态与知识库维护接口：/agent/*
 - /agent/status            ：运行模式（live/demo）与模型信息
-- /agent/ingest/stats      ：RAG 切片统计（teacher）
-- /agent/ingest/bank|file  ：手动触发知识入库（teacher，可选运维入口）
+- /agent/ingest/stats      ：RAG 切片统计（teacher，按当前课程）
+- /agent/ingest/bank|file  ：手动触发知识入库（teacher，写入当前课程）
+
+课程隔离：所有写库端点都经 get_current_course_id 取值（含成员校验 403），
+入库的切片一律带上该课程 ID —— 缺少它会写进默认演示课，前端永远访问不到。
 """
 from pathlib import Path
 
@@ -11,6 +14,7 @@ from sqlalchemy.orm import Session
 
 from ..database import get_db
 from ..middleware.auth import get_current_user
+from ..dependencies import get_current_course_id
 from ..schemas.common import ok, fail
 from ..config import settings
 
@@ -45,6 +49,7 @@ def agent_status(
 def ingest_stats(
     db: Session = Depends(get_db),
     user=Depends(get_current_user),
+    course_id: str = Depends(get_current_course_id),
 ):
     if not _require_teacher(user):
         return fail("仅教师可查看知识库统计", code=403)
@@ -53,8 +58,12 @@ def ingest_stats(
 
     store = ChunkStore()
     return ok({
-        "chunks": store.count(),
-        "embeddingModels": store.embedding_model_counts(),
+        "courseId": course_id,
+        "chunks": store.count(course_id),
+        "chunksAllCourses": store.count(),
+        "byCourse": store.course_counts(),
+        "sources": store.source_counts(course_id),
+        "embeddingModels": store.embedding_model_counts(course_id),
         "activeEmbeddingModel": active_model_name(),
     })
 
@@ -63,14 +72,15 @@ def ingest_stats(
 def ingest_bank_route(
     db: Session = Depends(get_db),
     user=Depends(get_current_user),
+    course_id: str = Depends(get_current_course_id),
 ):
-    """重建题库索引（幂等）——运维入口，避免依赖离线脚本也可用"""
+    """把课后题库 JSON 重建进**当前课程**的 RAG 库（幂等）"""
     if not _require_teacher(user):
         return fail("仅教师可触发知识入库", code=403)
     from ..agent_st.rag.ingest import ingest_bank
 
     try:
-        result = ingest_bank()
+        result = ingest_bank(course_id)
         return ok(result) if result.get("ok") else fail(result.get("error") or "入库失败")
     except Exception as exc:  # noqa: BLE001
         return fail(f"入库失败：{exc}")
@@ -81,8 +91,9 @@ def ingest_file_route(
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
     user=Depends(get_current_user),
+    course_id: str = Depends(get_current_course_id),
 ):
-    """上传补充资料（json/pdf/pptx/txt/md）入 RAG 库 —— teacher 运维入口"""
+    """上传补充资料（json/pdf/pptx/txt/md）入**当前课程**的 RAG 库 —— teacher 运维入口"""
     if not _require_teacher(user):
         return fail("仅教师可触发知识入库", code=403)
     from ..agent_st.rag.ingest import ingest_path
@@ -91,13 +102,14 @@ def ingest_file_route(
     suffix = Path(file.filename or "").suffix.lower()
     if suffix not in allowed:
         return fail(f"不支持的文件类型：{suffix or '(无后缀)'}")
-    dest_dir = settings.AGENT_DATA_DIR / "uploads"
+    filename = Path(file.filename or "upload.bin").name
+    dest_dir = settings.AGENT_DATA_DIR / "uploads" / course_id
     dest_dir.mkdir(parents=True, exist_ok=True)
-    dest = dest_dir / (file.filename or "upload.bin")
+    dest = dest_dir / filename
     try:
         with open(dest, "wb") as f:
             f.write(file.file.read())
-        result = ingest_path(dest)
+        result = ingest_path(dest, course_id=course_id, source_key=f"manual/{filename}")
         return ok(result) if result.get("ok") else fail(result.get("error") or "入库失败")
     except Exception as exc:  # noqa: BLE001
         return fail(f"入库失败：{exc}")

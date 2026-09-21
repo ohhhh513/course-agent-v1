@@ -50,6 +50,11 @@ class Settings(BaseSettings):
     ST_BANK_PATH: Path = AGENT_DATA_DIR / "st_bank" / "after_class.json"
     RAG_DB_PATH: Path = AGENT_DATA_DIR / "rag.db"
     ST_DRAFTS_DIR: Path = AGENT_DATA_DIR / "drafts"
+    # 课后题库 JSON 的归属课程。多课程下题库切片必须显式归属某门课，
+    # 否则「某门课没有切片就去灌题库」会把数据结构题库灌进任意新课程。
+    # 留空 = 不自动入库，交由 /api/v1/agent/ingest/bank（教师）或
+    # run_st_ingest.py（运维）显式触发。
+    ST_BANK_COURSE_ID: str = os.getenv("ST_BANK_COURSE_ID", "")
 
     # 检索与编排参数
     MIN_RETRIEVE_SCORE: float = 0.12

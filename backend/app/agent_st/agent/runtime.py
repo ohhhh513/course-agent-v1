@@ -201,6 +201,7 @@ def run_turn(
     context: dict | None = None,
     store: AgentStore | None = None,
     user_id: str = "",
+    course_id: str = "",
     stream: bool = True,
 ) -> Iterator[Event]:
     """执行一轮对话，产出事件 dict 流。
@@ -209,8 +210,11 @@ def run_turn(
     live 模式下文本 delta 来自 LLM 的真实 token 流（stream=True，两段式：
     工具编排轮的过渡文本照常转发，最终回答轮逐 token 转发）；
     demo 模式回退为 chunk_text 假流式。
+
+    course_id 是本轮的数据隔离边界：写入侧进 chat_sessions/草稿，
+    读取侧经 context['courseId'] 传给 RAG 检索工具。缺失时检索一律返回空。
     """
-    ensure_bank_indexed()
+    ensure_bank_indexed(course_id=course_id or (context or {}).get("courseId") or None)
     persona = load_persona()
     flow_id = flow_id or persona.get("default_flow", "explain")
     if flow_id in {"qa", "tutoring"}:
@@ -222,14 +226,19 @@ def run_turn(
         yield {"type": "done"}
         return
 
-    store = store or AgentStore(user_id=user_id)
+    store = store or AgentStore(user_id=user_id, course_id=course_id)
     if user_id and not store.user_id:
         store.user_id = user_id
+    if course_id and not store.course_id:
+        store.course_id = course_id
     session_id = store.ensure_session(session_id, flow_id)
     yield {"type": "session", "session_id": session_id, "flow_id": flow_id}
 
     extra = dict(context or {})
     extra["message"] = message
+    # 检索工具统一从 extra['courseId'] 取课程，这里保证它一定被填上
+    if store.course_id:
+        extra.setdefault("courseId", store.course_id)
     store.add_message(session_id, "user", message)
     ctx = ToolContext(store=store, flow_id=flow_id, extra=extra, user_id=user_id or store.user_id)
 

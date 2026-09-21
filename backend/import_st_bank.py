@@ -6,8 +6,10 @@
 - 章节映射：王道小节前缀 → 课程 9 章（与 rag/chapter_map.py 一致），kp 取各章代表知识点
 - 图题（graph/options_graph/has_image）整体打包进 figure_json，渲染由前端 DsFigure 完成
 - 幂等：按 q_id upsert，可重复执行
+- **课程隔离**：题目必须显式归属一门课程，course_id 从命令行 / ST_BANK_COURSE_ID 取，
+  绝不使用历史占位课程 C2026DS001（该值在任何真实库的 courses 表里都不存在）。
 
-执行: cd backend && python3.11 import_st_bank.py
+执行: cd backend && python3.11 import_st_bank.py <course_id>
 """
 import json
 import re
@@ -25,7 +27,30 @@ ST_BANK_DIR = BACKEND_DIR / "app" / "data" / "st" / "st_bank"
 BANK_PATH = ST_BANK_DIR / "after_class.json"
 PROTOTYPE_BANK = BACKEND_DIR.parent / "tmp_ST_problem_model" / "after_class.json"
 
-COURSE_ID = "C2026DS001"
+
+def resolve_course_id(argv: list[str]) -> str:
+    from app.config import settings
+
+    raw = ""
+    for arg in argv:
+        if arg.startswith("--course-id="):
+            raw = arg.split("=", 1)[1].strip()
+        elif not arg.startswith("-"):
+            raw = arg.strip()
+    if raw:
+        return raw
+    if settings.ST_BANK_COURSE_ID:
+        return settings.ST_BANK_COURSE_ID
+    db = SessionLocal()
+    try:
+        from app.models.course import Course
+        codes = [c.course_id for c in db.query(Course).all()]
+    finally:
+        db.close()
+    raise SystemExit(
+        "未指定 course_id。用法：python import_st_bank.py <course_id>\n"
+        f"（或设置 ST_BANK_COURSE_ID；当前库内课程：{codes or '无'}）"
+    )
 
 # 王道小节前缀 → 课程章（与 agent_st/rag/chapter_map.py 严格一致）
 CHAPTERS = [
@@ -85,23 +110,28 @@ def main():
     bank_path = ensure_bank_file()
     raw = json.loads(bank_path.read_text(encoding="utf-8"))
     items = [x for x in raw if isinstance(x, dict) and x.get("id") is not None]
-    print(f"[bank] 共 {len(items)} 道课后题")
+    course_id = resolve_course_id(sys.argv[1:])
+    print(f"[bank] 共 {len(items)} 道课后题 → 课程 {course_id}")
 
     init_db()  # 确保 figure_json/has_image 列已迁移
     db = SessionLocal()
 
-    # 细粒度知识点映射：小节前缀 → KP 列表；KP 名称取自知识图谱（用于 kp_path）
+    # 细粒度知识点映射：小节前缀 → KP 列表；KP 名称取自知识图谱（用于 kp_path）。
+    # 课程隔离：只认本课程的 knowledge 节点，避免撞名取出别的课程的 KP 名。
+    from app.models.graph import GraphNode
+
     section_kp = load_section_kp_mapping()
+    need = {k for kps in section_kp.values() for k in kps} | {c[3] for c in CHAPTERS}
     kp_names = {}
-    if section_kp:
-        from app.models.graph import GraphNode
-        need = {k for kps in section_kp.values() for k in kps} | {c[3] for c in CHAPTERS}
+    if need:
         for kp_id, name in db.query(GraphNode.id, GraphNode.name).filter(
-                GraphNode.graph_type == "knowledge", GraphNode.id.in_(need)).all():
+                GraphNode.graph_type == "knowledge",
+                GraphNode.course_id == course_id,
+                GraphNode.id.in_(need)).all():
             kp_names[kp_id] = name
         missing = need - set(kp_names)
         if missing:
-            print(f"[warn] 映射中的 KP 在图谱中不存在：{sorted(missing)}（相关小节将回退章级代表知识点）")
+            print(f"[warn] 该课程图谱缺少以下 KP：{sorted(missing)}（相关题目将回退章级代表知识点）")
 
     created = updated = skipped = 0
     try:
@@ -142,7 +172,7 @@ def main():
                 figure_json = None
 
             values = dict(
-                course_id=COURSE_ID,
+                course_id=course_id,
                 kp_id=kp,
                 type="single",
                 difficulty=diff,
@@ -152,7 +182,7 @@ def main():
                 options=json.dumps(options, ensure_ascii=False),
                 answer=str(item.get("answer") or ""),
                 analysis=item.get("analysis") or "",
-                kp_path=json.dumps([title] + [kp_names[k] for k in kps], ensure_ascii=False),
+                kp_path=json.dumps([title] + [kp_names.get(k, k) for k in kps], ensure_ascii=False),
                 pre_kp="[]",
                 post_kp="[]",
                 is_key=0,

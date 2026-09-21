@@ -45,20 +45,23 @@ def retrieve_chunks(
         types = source_types or DEFAULT_GENERATE
     else:
         types = source_types or DEFAULT_EXPLAIN
+    # 课程上下文是整个链路的隔离边界：缺失时不做「不过滤」兜底，
+    # 直接返回空证据，让模型按 refuse_hint 诚实声明而不是混搜其它课程。
+    course_id = (ctx.extra or {}).get("courseId") or ""
     hits = retrieve_impl(
         query=query,
+        course_id=course_id or None,
         course_chapter=chapter,
         section_prefix=prefix,
         source_types=types,
         top_k=top_k or settings.retrieve_top_k,
-        course_id=(ctx.extra or {}).get("courseId"),
     )
     this_call_empty = (not hits) or hits[0]["score"] < settings.min_retrieve_score
 
     # 同一轮里模型常会换关键词或换来源再检一次（例如先查解析再查教材）。
     # 如果第二次没命中就把上一次的原文丢掉，会误判成“未检索到原文”，
     # 因此同一章节范围内把历次命中按最高分合并保留。
-    scope = (chapter, prefix)
+    scope = (course_id, chapter, prefix)
     prev_hits = ctx.turn.get("retrieval_hits") or []
     if ctx.turn.get("retrieval_scope") != scope:
         prev_hits = []
@@ -73,20 +76,28 @@ def retrieve_chunks(
     max_score = merged_hits[0]["score"] if merged_hits else 0.0
     empty = (not merged_hits) or max_score < settings.min_retrieve_score
     limit = max(1, top_k or settings.retrieve_top_k)
+    if not course_id:
+        refuse_hint = (
+            "本轮未取得课程上下文（courseId 缺失），因此**没有检索任何切片**。"
+            "请直接说明无法在未确定课程的情况下作答，不得凭记忆或常识补全，禁止伪造引用。"
+        )
+    elif empty:
+        refuse_hint = (
+            "未检索到课程原文。若问题与数据结构课程明显无关（日常生活等），直接简短说明本助手只覆盖数据结构课程内容，"
+            "不得讲解该问题本身；若属课程相关但证据不足，可用【补充】声明非课程原文。不得伪造引用。"
+        )
+    else:
+        refuse_hint = None
     payload = {
         "hits": merged_hits[:limit],
         "empty": empty,
         "max_score": max_score,
+        "course_id": course_id,
         "course_chapter": chapter,
         "section_prefix": prefix,
         "source_types": types,
         "empty_this_call": this_call_empty,
-        "refuse_hint": (
-            "未检索到课程原文。若问题与数据结构课程明显无关（日常生活等），直接简短说明本助手只覆盖数据结构课程内容，"
-            "不得讲解该问题本身；若属课程相关但证据不足，可用【补充】声明非课程原文。不得伪造引用。"
-            if empty
-            else None
-        ),
+        "refuse_hint": refuse_hint,
     }
     ctx.turn["retrieval"] = payload
     ctx.turn["retrieval_scope"] = scope

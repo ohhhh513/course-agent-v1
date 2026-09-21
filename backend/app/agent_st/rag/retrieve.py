@@ -33,15 +33,28 @@ def keyword_score(query: str, text: str) -> float:
 
 def retrieve_chunks(
     query: str,
+    course_id: str | None = None,
     course_chapter: int | None = None,
     section_prefix: str | None = None,
     source_types: list[str] | None = None,
     top_k: int = 6,
     store: ChunkStore | None = None,
-    course_id: str | None = None,
 ) -> list[dict]:
+    """按课程检索切片。
+
+    course_id 缺失时**直接返回空集**（fail-closed）——不再退化为「不过滤 =
+    全库混搜」，那是跨课程串数据的根因。调用方（agent 工具）负责从
+    ctx.extra['courseId'] 取课程；取不到应被视为上层漏传，而非降级检索。
+    """
+    if not course_id:
+        return []
     store = store or ChunkStore()
-    records = store.load_filtered(course_chapter, section_prefix, source_types, course_id=course_id)
+    records = store.load_filtered(
+        course_id=course_id,
+        course_chapter=course_chapter,
+        section_prefix=section_prefix,
+        source_types=source_types,
+    )
     if not records:
         return []
     query_vec = embed_texts([query])[0]

@@ -12,7 +12,10 @@ class ChatSession(Base):
 
     session_id = Column(String(32), primary_key=True)          # CH...
     user_id = Column(String(64), ForeignKey("users.user_id"), index=True)
-    course_id = Column(String(32), ForeignKey("courses.course_id"), default="C2026DS001", index=True)  # 课程隔离（旧库由 _migrate 补列）
+    # 课程隔离：由写入方（AgentStore / 业务路由）显式提供。
+    # 这里**不给默认值** —— 历史默认值 'C2026DS001' 会让漏传课程的写入
+    # 静默落到演示课，而列表查询按真实课程过滤，于是会话「写了但查不到」。
+    course_id = Column(String(32), ForeignKey("courses.course_id"), index=True)
     title = Column(String(256), default="")
     kp_name = Column(String(64), default="")
     flow_id = Column(String(16), default="explain")            # explain / generate_items

@@ -39,6 +39,10 @@ Thumbs.db
 desktop.ini
 
 # ---------- 数据库与备份（禁止入库） ----------
+# 注意：gitignore 只对「未被跟踪」的文件生效。
+# 下列规则早已存在，但 rag.db / course_agent.db.bak.* 等在本规则加入前就已
+# 提交进仓库，必须由仓库负责人手动执行一次 `git rm --cached <path>`
+# （见文末「已跟踪文件脱管清单」），否则它们会继续参与每次提交。
 *.db
 *.db-*
 *.db.*
@@ -51,7 +55,11 @@ desktop.ini
 *.tmp
 backend/app/data/vector/
 backend/app/data/st/drafts/
+backend/app/data/st/uploads/
 backend/.tmp_cid
+
+# 资源清单快照：一次性迁移产物，无任何运行时代码引用（可随时重建）
+backend/app/data/resource_registry_snapshot.json
 
 # 向量库
 *.faiss
@@ -74,6 +82,9 @@ backend/tests/results/
 backend/tests/*.png
 backend/data/
 **/.pytest-tmp-*/
+# pytest 默认临时根（同名时会被反复复用，且含各测试的 rag.db/main.db 副产物）
+**/pytest-of-*/
+**/pytest-*/
 
 # ---------- Node（仅本地测试用） ----------
 node_modules/
@@ -94,3 +105,29 @@ backend/regression_multicourse.py
 backend/e2e_full_flow.py
 backend/e2e_catalog_flow.py
 backend/test_tag_gapfill.py
+
+# ============================================================
+#  已跟踪文件脱管清单（gitignore 管不到「已入库」的文件）
+# ------------------------------------------------------------
+#  下列文件在 .gitignore 规则生效前就已被提交，会继续参与每次提交，
+#  导致团队成员 git pull 时本地 rag.db 被覆盖、切片数据互相冲掉。
+#  请由仓库负责人执行一次（只需一次，之后 gitignore 即生效）：
+#
+#    git rm -r --cached backend/app/data/st/rag.db
+#    git rm -r --cached backend/data
+#    git rm --cached backend/app/data/course_agent.db.bak.baseline
+#    git rm --cached backend/app/data/course_agent.db.bak.final_delivery
+#    git rm --cached backend/app/data/course_agent.db.before_path_unify_20260911
+#    git rm --cached backend/app/data/course_agent.db.before_resource_url_fix_20260906
+#    git rm --cached backend/app/data/course_agent.db.before_restore_20260906
+#    git rm --cached backend/app/data/course_agent.db.before_url_unify_20260911
+#    git rm --cached backend/app/data/resource_registry_snapshot.json
+#
+#  校验：git ls-files | grep -E "\.db|pytest-tmp|_snapshot\.json"  应当无输出。
+#
+#  注意：请保留这两个（它们是种子数据，代码会读取，删了别人跑不起来）：
+#    backend/app/data/st/st_bank/after_class.json
+#    backend/app/data/st/st_bank/ai_samples.json
+#  rag.db 不入库后，团队成员各自用下面命令在本地重建：
+#    cd backend && python run_st_ingest.py <course_id>
+# ============================================================

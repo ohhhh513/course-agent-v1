@@ -30,7 +30,9 @@ class ChatReq(BaseModel):
     question: str
     method: str = "guided"
     kpId: Optional[str] = None
-    courseId: str = "C2026DS001"
+    # 课程上下文以请求头 X-Course-Id 为准（get_current_course_id 依赖）。
+    # 这里的 body 字段仅作无头调用时的兜底，**不再默认演示课 C2026DS001**。
+    courseId: str = ""
 
 
 class FeedbackReq(BaseModel):
@@ -45,9 +47,13 @@ def ai_sessions(
     user=Depends(get_current_user),
     course_id: str = Depends(get_current_course_id),
 ):
+    """答疑历史会话 —— 按**学生个人**检索（跨课程汇总）。
+
+    课程隔离落在写入侧（chat_sessions.course_id 由 AgentStore 按当前课程写入），
+    历史列表则维持「按学生 id」的语义：学生在不同课程里的提问都应看得到。
+    """
     rows = db.query(ChatSession).filter(
         ChatSession.user_id == user.user_id,
-        ChatSession.course_id == course_id,
     ).order_by(ChatSession.updated_at.desc()).all()
     items = [
         {
@@ -116,7 +122,11 @@ def _agent_events(req: ChatReq, user, course_id=None):
     """运行 explain 流 Agent，返回事件 dict 生成器（流式/非流式共用）"""
     raw_sid = (req.sessionId or '').strip()
     session_id = None if (not raw_sid or raw_sid.lower() == 'new') else raw_sid
-    context = {"courseId": course_id or req.courseId}   # 头优先；未传时回退 body 默认值
+    # 请求头（经成员校验）优先；无头调用才回退 body，body 也不再默认演示课
+    resolved = (course_id or req.courseId or "").strip()
+    context = {}
+    if resolved:
+        context["courseId"] = resolved
     if req.kpId:
         context["kpId"] = req.kpId
     return run_turn(
@@ -125,6 +135,7 @@ def _agent_events(req: ChatReq, user, course_id=None):
         session_id=session_id,
         context=context,
         user_id=user.user_id,
+        course_id=resolved,
     )
 
 

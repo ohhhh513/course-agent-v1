@@ -8,6 +8,10 @@ import pytest
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(BACKEND_DIR))
 
+# 测试用课程 ID（真实字符串，满足外键）
+COURSE_A = "C_TEST_A"
+COURSE_B = "C_TEST_B"
+
 
 @pytest.fixture()
 def st_env(tmp_path, monkeypatch):
@@ -23,6 +27,8 @@ def st_env(tmp_path, monkeypatch):
     monkeypatch.setattr(app_config.settings, "AGENT_DATA_DIR", tmp_path)
     monkeypatch.setattr(app_config.settings, "RAG_DB_PATH", tmp_path / "rag.db")
     monkeypatch.setattr(app_config.settings, "ST_DRAFTS_DIR", tmp_path / "drafts")
+    # 题库归属课程 = 课程 A（多课程下题库不再跨课程灌入）
+    monkeypatch.setattr(app_config.settings, "ST_BANK_COURSE_ID", COURSE_A)
 
     # 2) 重建 agent_st 配置桥
     from app.agent_st import settings_bridge
@@ -32,6 +38,7 @@ def st_env(tmp_path, monkeypatch):
     # 3) 正式数据库替换为临时 SQLite（先导入全部模型注册表结构，再建表）
     from app.models import user, course, graph, question, practice, ai, alert, intervention, checkin  # noqa: F401
     from app.models import agent_st  # noqa: F401
+    from app.models.course import Course
     tmp_engine = create_engine(
         f"sqlite:///{tmp_path / 'main.db'}", connect_args={"check_same_thread": False}
     )
@@ -40,6 +47,13 @@ def st_env(tmp_path, monkeypatch):
 
     TestSession = sessionmaker(autocommit=False, autoflush=False, bind=tmp_engine)
     monkeypatch.setattr(persistence, "SessionLocal", TestSession)
+
+    # 3b) 建两门课，满足 chat_sessions / st_question_drafts 的外键
+    db = TestSession()
+    for cid in (COURSE_A, COURSE_B):
+        db.add(Course(course_id=cid, name=f"测试课程 {cid}"))
+    db.commit()
+    db.close()
 
     # 4) 强制 demo 模式（不走真实 LLM）
     from app.agent_st.agent import llm
@@ -155,18 +169,132 @@ def test_local_retrieve_hits_chapter(st_env):
     from app.agent_st.rag.ingest import ensure_bank_indexed
     from app.agent_st.rag.retrieve import retrieve_chunks
 
-    info = ensure_bank_indexed()
+    info = ensure_bank_indexed(course_id=COURSE_A)
     assert info.get("ok") or info.get("chunks", 0) >= 0
-    hits = retrieve_chunks(query="KMP next 数组", course_chapter=4, source_types=["question_stem", "question_analysis"])
+    hits = retrieve_chunks(
+        query="KMP next 数组", course_id=COURSE_A, course_chapter=4,
+        source_types=["question_stem", "question_analysis"],
+    )
     assert hits, "第4章检索应有命中"
     assert all(h["course_chapter"] == 4 for h in hits)
+    assert all(h["course_id"] == COURSE_A for h in hits)
+
+
+# ---------------- 课程隔离（P0/P1 修复后的回归） ----------------
+def test_retrieve_without_course_returns_empty(st_env):
+    """fail-closed：没有课程上下文不得退化成全库混搜"""
+    from app.agent_st.rag.ingest import ensure_bank_indexed
+    from app.agent_st.rag.retrieve import retrieve_chunks
+
+    ensure_bank_indexed(course_id=COURSE_A)          # 库里有数据
+    assert retrieve_chunks(query="KMP next 数组", course_id=None) == []
+    assert retrieve_chunks(query="KMP next 数组", course_id="") == []
+
+
+def test_rag_isolation_between_courses(st_env):
+    """两门课各自入库同一份题库：切片必须互不可见、chunk_id 不得撞车"""
+    from app.agent_st.rag.ingest import ingest_bank
+    from app.agent_st.rag.retrieve import retrieve_chunks
+    from app.agent_st.rag.store import ChunkStore
+
+    r_a = ingest_bank(COURSE_A)
+    r_b = ingest_bank(COURSE_B)
+    assert r_a.get("ok") and r_b.get("ok")
+
+    store = ChunkStore()
+    n_a, n_b = store.count(COURSE_A), store.count(COURSE_B)
+    assert n_a > 0 and n_b > 0
+    # 关键：两门课的切片数应各自完整，不能被对方 INSERT OR REPLACE 吃掉
+    assert n_a == n_b, f"两课程切片数应一致，实际 A={n_a} B={n_b}"
+
+    for cid in (COURSE_A, COURSE_B):
+        hits = retrieve_chunks(query="KMP next 数组", course_id=cid, course_chapter=4)
+        assert hits, f"{cid} 应有命中"
+        assert all(h["course_id"] == cid for h in hits)
+        assert all(str(h["chunk_id"]).startswith(f"{cid}:") for h in hits)
+
+
+def test_delete_source_types_scoped_by_course(st_env):
+    """按来源类型清理题库切片时，绝不能波及其它课程（旧实现跨课程误删）"""
+    from app.agent_st.rag.ingest import ingest_bank
+    from app.agent_st.rag.store import ChunkStore
+
+    ingest_bank(COURSE_A)
+    ingest_bank(COURSE_B)
+    store = ChunkStore()
+    before_b = store.count(COURSE_B)
+    assert store.count(COURSE_A) > 0 and before_b > 0
+
+    removed = store.delete_source_types(["question_stem", "question_analysis"], course_id=COURSE_A)
+    assert removed > 0
+    assert store.count(COURSE_A) == 0
+    assert store.count(COURSE_B) == before_b, "课程 B 的题库切片被误删"
+
+
+def test_store_rejects_chunk_without_course(st_env):
+    """写入侧硬约束：没有 course_id 的切片必须拒绝入库，不能落到默认课程"""
+    import pytest as _pytest
+    from app.agent_st.rag.schema import ChunkRecord
+    from app.agent_st.rag.store import ChunkStore
+
+    bad = ChunkRecord(
+        chunk_id="x-1", text="t", source_type="textbook", source_id="s",
+        course_chapter=1, section="1.1", course_id="",
+    )
+    with _pytest.raises(ValueError):
+        ChunkStore().upsert_many([bad])
+
+
+def test_store_columns_have_no_course_default(st_env):
+    """rag.db 的 course_id 列不得再带默认值（历史 DEFAULT 'C2026DS001' 是串数据根因）"""
+    import sqlite3
+    from app.agent_st.rag.store import ChunkStore
+
+    store = ChunkStore()
+    with sqlite3.connect(store.path) as conn:
+        cols = {r[1]: r for r in conn.execute("PRAGMA table_info(chunks)").fetchall()}
+    assert "course_id" in cols
+    assert cols["course_id"][3] == 1, "course_id 必须是 NOT NULL"
+    assert cols["course_id"][4] is None, f"course_id 不应有默认值，实际={cols['course_id'][4]!r}"
+
+
+def test_session_and_draft_carry_course_id(st_env):
+    """会话与出题草稿都必须落到当前课程（否则列表按课程过滤时查不到）"""
+    from app.agent_st.agent.store import AgentStore
+    from app.agent_st import persistence
+    from app.models.ai import ChatSession
+
+    store = AgentStore(user_id="U_ISO", course_id=COURSE_A)
+    sid = store.ensure_session(None, "explain")
+    saved = store.save_draft(dict(VALID))
+
+    db = persistence.SessionLocal()
+    try:
+        sess = db.query(ChatSession).filter(ChatSession.session_id == sid).first()
+        assert sess is not None and sess.course_id == COURSE_A
+    finally:
+        db.close()
+
+    rows = store.list_drafts(user_id="U_ISO", course_id=COURSE_A)
+    assert any(r["draft_id"] == saved["draft_id"] for r in rows)
+    # 另一门课看不到这份草稿
+    assert store.list_drafts(user_id="U_ISO", course_id=COURSE_B) == []
+
+
+def test_session_cannot_be_reused_across_courses(st_env):
+    """同一 session_id 不能跨课程复用（否则把两门课的对话串在一起）"""
+    from app.agent_st.agent.store import AgentStore
+
+    sid = AgentStore(user_id="U_X", course_id=COURSE_A).ensure_session(None, "explain")
+    sid2 = AgentStore(user_id="U_X", course_id=COURSE_B).ensure_session(sid, "explain")
+    assert sid2 != sid
 
 
 # ---------------- 运行时（demo 模式，不发外网请求、不碰正式库） ----------------
 def test_runtime_demo_explain(st_env):
     from app.agent_st.agent import runtime
 
-    events = list(runtime.run_turn("题63 讲解", user_id="U_TEST"))
+    events = list(runtime.run_turn("题63 讲解", user_id="U_TEST", course_id=COURSE_A))
     types = [e["type"] for e in events]
     assert "session" in types
     assert "text" in types
@@ -184,7 +312,10 @@ def test_runtime_demo_generate_writes_draft(st_env):
     from app.agent_st import persistence
     from app.models.agent_st import STQuestionDraft
 
-    events = list(runtime.run_turn("第4章 出一道相似题", flow_id="generate_items", user_id="U_TEST2"))
+    events = list(runtime.run_turn(
+        "第4章 出一道相似题", flow_id="generate_items",
+        user_id="U_TEST2", course_id=COURSE_A,
+    ))
     types = [e["type"] for e in events]
     draft_events = [e for e in events if e["type"] == "draft"]
     assert draft_events, "demo 出题流应产出 draft 事件"
@@ -193,18 +324,19 @@ def test_runtime_demo_generate_writes_draft(st_env):
     assert d["payload"]["id"] >= 90001
     text = "".join(e.get("delta") or "" for e in events if e["type"] == "text")
     assert "较大变动" in text
-    # 草稿落库且归属生成用户（查询必须走被替换的临时库 session）
+    # 草稿落库且归属生成用户 + 当前课程（查询必须走被替换的临时库 session）
     db = persistence.SessionLocal()
     row = db.query(STQuestionDraft).filter(STQuestionDraft.draft_id == d["draft_id"]).first()
     assert row is not None and row.user_id == "U_TEST2"
+    assert row.course_id == COURSE_A, "草稿未落到当前课程"
     db.close()
 
 
 def test_session_isolation_between_users(st_env):
     from app.agent_st.agent import runtime
 
-    ev1 = list(runtime.run_turn("题63 讲解", user_id="U_A"))
-    ev2 = list(runtime.run_turn("题63 讲解", user_id="U_B"))
+    ev1 = list(runtime.run_turn("题63 讲解", user_id="U_A", course_id=COURSE_A))
+    ev2 = list(runtime.run_turn("题63 讲解", user_id="U_B", course_id=COURSE_A))
     sid1 = next(e["session_id"] for e in ev1 if e["type"] == "session")
     sid2 = next(e["session_id"] for e in ev2 if e["type"] == "session")
     assert sid1 != sid2
