@@ -41,7 +41,8 @@ GOAL_KP_MAP = {
 }
 
 
-# 节点分类配色（与前端 mock 一致）
+# 节点分类配色（顺序即 node.category 的下标，前端按 category 取色）
+# knowledge 的 5 类 = 学生对该知识点的真实学习状态，由 _knowledge_state_category() 计算
 CATEGORY_COLORS = {
     "knowledge": [
         {"name": "已掌握", "color": "#22c55e"},
@@ -86,6 +87,9 @@ def get_graph(
     # ---------- 预计算：每个 knowledge 节点的真实掌握率 ----------
     # 同时融合答题正确率与资源学习进度
     kp_mastery = _mastery_for_user(uid, db) if uid else {}
+    # 仅答题正确率 + 是否有作答记录：用于判定节点状态（categories 下标）
+    kp_quiz = _quiz_mastery_for_user(uid, db) if uid else {}
+    kp_has_quiz = set(kp_quiz.keys())
 
     # ---------- 预计算：每个 knowledge 节点的错误统计（供 problem 图谱用） ----------
     kp_error = {}
@@ -141,6 +145,12 @@ def get_graph(
             d.update({
                 "chapter": n.chapter,
                 "mastery": kp_mastery.get(n.id, 0),
+                # 节点状态配色：按该生真实学习状态落 0~4（已掌握/学习中/待加强/未开始/薄弱预警）
+                "category": (
+                    _knowledge_state_category(
+                        kp_quiz.get(n.id, 0.0), kp_mastery.get(n.id, 0.0), n.id in kp_has_quiz
+                    ) if uid else 3      # 未登录时统一按「未开始」展示，不借用种子里的 category
+                ),
                 "difficulty": n.difficulty,
                 "isKey": bool(n.is_key),
                 "hours": n.hours,
@@ -188,6 +198,7 @@ def kp_detail(
     kp_id: str,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user_optional),
+    course_id: str = Depends(get_current_course_id),
 ):
     """知识点详情 — 动态数值从学习记录/题库/资源表实时计算"""
     uid = user.user_id if user else None
@@ -271,11 +282,9 @@ def kp_detail(
     resources = []
     if node or kp:
         chapter = (kp.chapter if kp else None) or (node.chapter if node else "")
-        prog_map = {
-            p.res_id: p for p in db.query(ResourceProgress).filter(
-                ResourceProgress.user_id == user.user_id
-            ).all()
-        } if user else {}
+        # 同一资源重复行只取最优（否则可能取到 0 那行，资源进度显示为未学）
+        from ..services.resource_progress import progress_map as _progress_map
+        prog_map = _progress_map(db, user.user_id) if user else {}
         if chapter:
             rows = db.query(Resource).filter(
                 (Resource.kp_id == kp_id) |
@@ -294,27 +303,38 @@ def kp_detail(
         ]
 
     # ---------- 组装返回 ----------
+    # 学习时长与课程均值（真实表计算；口径见 services/kp_stats 模块说明）
+    from ..services.kp_stats import kp_course_stats, kp_study_seconds
+    video_res_ids = [r["resId"] for r in resources if r.get("type") == "video"]
+    study_seconds = kp_study_seconds(db, uid, kp_id, video_res_ids) if uid else 0
+    course_stats = kp_course_stats(db, course_id, kp_id, video_res_ids)
+    extra = {
+        "studyMinutes": round(study_seconds / 60, 1),
+        **course_stats,
+    }
+
     if kp:
         return ok({
             "kpId": kp.kp_id, "name": kp.name, "chapter": kp.chapter,
             "difficulty": kp.difficulty, "isKey": bool(kp.is_key), "hours": kp.hours,
-            "summary": kp.summary,
-            "completionRate": completion_rate,
-            "masteryRate": personal_mastery,
-            "classAvgMastery": class_avg,
-            "pre": _parse(kp.pre_kp, []),
+        "summary": (kp.summary or ""),
+        "completionRate": completion_rate,
+        "masteryRate": personal_mastery,
+        "classAvgMastery": class_avg,
+        "pre": _parse(kp.pre_kp, []),
             "post": _parse(kp.post_kp, []),
             "resources": resources or _parse(kp.resources, []),
             "questionCount": question_count,
             "wrongCount": wrong_count,
             "relatedProblems": _parse(kp.related_problems, []),
+            **extra,
         })
 
     # GraphNode 兜底
     return ok({
         "kpId": kp_id, "name": node.name, "chapter": node.chapter,
         "difficulty": node.difficulty, "isKey": bool(node.is_key), "hours": node.hours,
-        "summary": f"关于 {node.name} 的详细说明",
+        "summary": "",
         "completionRate": completion_rate,
         "masteryRate": personal_mastery,
         "classAvgMastery": class_avg,
@@ -323,6 +343,7 @@ def kp_detail(
         "questionCount": question_count,
         "wrongCount": wrong_count,
         "relatedProblems": [],
+        **extra,
     })
 
 
@@ -345,15 +366,14 @@ def _mastery_from_records(user_id: str, db: Session):
 def _resource_mastery(user_id: str, db: Session):
     """按知识点聚合用户所有挂载资源的平均进度。未开始资源按 0 计。"""
     from collections import defaultdict
+    from ..services.resource_progress import progress_map
+
     res_rows = db.query(
         Resource.kp_id,
         Resource.res_id,
     ).filter(Resource.kp_id.isnot(None)).all()
-    prog_rows = db.query(
-        ResourceProgress.res_id,
-        ResourceProgress.progress,
-    ).filter(ResourceProgress.user_id == user_id).all()
-    prog_map = {r.res_id: r.progress or 0 for r in prog_rows}
+    # 同一资源重复行只取最优，避免平均值被 0 那行拉低
+    prog_map = {rid: (row.progress or 0) for rid, row in progress_map(db, user_id).items()}
     kp_res = defaultdict(list)
     for kp_id, res_id in res_rows:
         kp_res[kp_id].append(prog_map.get(res_id, 0))
@@ -368,11 +388,10 @@ def _mastery_for_user(user_id: str, db: Session):
 
     以「答题正确率」为主，资源进度作为兜底（看完的视频/文档也算掌握）。
     两者都无数据 → 该知识点不出现（视作 0）。口径与预警/靶向一致（按题去重）。
+    算法已集中到 services/kp_stats.mastery_by_kp，供学生/教师多入口复用同一口径。
     """
-    from ..services.scoring import quiz_accuracy_by_kp
-    res = _resource_mastery(user_id, db)
-    quiz = {kp: acc for kp, (acc, _n) in quiz_accuracy_by_kp(db, user_id).items()}
-    return {kp: max(res.get(kp, 0), quiz.get(kp, 0)) for kp in set(res) | set(quiz)}
+    from ..services.kp_stats import mastery_by_kp
+    return mastery_by_kp(db, user_id)
 
 
 def _quiz_mastery_for_user(user_id: str, db: Session):
@@ -420,6 +439,22 @@ def _status_from_quiz_mastery(quiz_mastery: float, learning_mastery: float, has_
     return "todo"
 
 
+# knowledge 节点状态（_status_from_quiz_mastery 的返回值）→ CATEGORY_COLORS["knowledge"] 下标
+_KNOWLEDGE_STATE_INDEX = {"done": 0, "doing": 1, "warn": 2, "todo": 3}
+
+
+def _knowledge_state_category(quiz_mastery: float, mastery: float, has_quiz: bool) -> int:
+    """知识图谱节点状态 → 配色下标（0 已掌握 / 1 学习中 / 2 待加强 / 3 未开始 / 4 薄弱预警）。
+
+    口径与学习路径 / 学情矩阵保持一致（`_status_from_quiz_mastery`），并在此基础上把
+    「有作答记录且正确率 < 40%」单独标成「薄弱预警」——阈值与驾驶舱 weakPoints 的
+    danger 线（<40）一致，避免同一份数据在两张图里给出不同结论。
+    """
+    if has_quiz and quiz_mastery < 40:
+        return 4
+    return _KNOWLEDGE_STATE_INDEX[_status_from_quiz_mastery(quiz_mastery, mastery, has_quiz)]
+
+
 def _ensure_learning_path(user_id: str, course_id: str, db: Session):
     """保证学习路径与图谱一致：缺失则生成，图谱扩章后残留的旧路径则整体重建。
 
@@ -458,21 +493,30 @@ def learning_path(
     mastery_map = _mastery_for_user(user.user_id, db)
     quiz_map = _quiz_mastery_for_user(user.user_id, db)
     has_quiz = set(quiz_map.keys())
+    # 资源数：以 resources 表为准实时统计。
+    # learning_paths.res_count 只是派生缓存——历史上仅在教师端上传/删除资源时同步，
+    # 学生端看到的一直是建路径时的旧值（新建行甚至为 0），章节行的资源数因此长期偏低。
+    from ..services.learning_path import resource_count_map
+
+    res_counts = resource_count_map(db, courseId)
     for r in rows:
         m = mastery_map.get(r.kp_id, 0)
         q = quiz_map.get(r.kp_id, 0)
         status = _status_from_quiz_mastery(q, m, r.kp_id in has_quiz)
-        if r.mastery != m or r.progress != m or r.status != status:
+        want_res = res_counts.get(r.kp_id, 0)
+        if (r.mastery != m or r.progress != m or r.status != status
+                or (r.res_count or 0) != want_res):
             r.mastery = m
             r.progress = m
             r.status = status
+            r.res_count = want_res
     db.commit()
 
     return ok([
         {
             "step": r.step, "kpId": r.kp_id, "name": r.name, "chapter": r.chapter,
             "status": r.status, "hours": r.hours, "mastery": r.mastery,
-            "resCount": r.res_count,
+            "resCount": res_counts.get(r.kp_id, 0),
             "progress": r.progress,
             "quizMastery": quiz_map.get(r.kp_id, 0),
             "quizAnswered": r.kp_id in has_quiz,

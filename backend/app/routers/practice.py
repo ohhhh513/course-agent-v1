@@ -1,7 +1,7 @@
 """
 智能练习接口：/practice/*
 """
-import json, uuid
+import json, re, uuid
 from datetime import datetime
 from fastapi import APIRouter, Depends, Query, Body
 from sqlalchemy.orm import Session
@@ -275,6 +275,7 @@ def submit_answer(
     req: SubmitAnswerReq,
     db: Session = Depends(get_db),
     user=Depends(get_current_user),
+    course_id: str = Depends(get_current_course_id),
 ):
     """提交单题作答 —— 即时判分 + 解析"""
     question = db.query(Question).filter(Question.q_id == req.qId).first()
@@ -291,9 +292,12 @@ def submit_answer(
     correct = req.answer == question.answer
 
     # 保存答题记录
+    # ⚠️ course_id 必须显式写入：模型里的默认值是早期演示课 "C2026DS001"，
+    # 而真实库里只有学生实际加入的课程，靠默认值会直接外键约束失败（提交答案整体 500）。
     record = AnswerRecord(
         session_id=req.sessionId,
         user_id=user.user_id,
+        course_id=session.course_id or question.course_id or course_id,
         q_id=req.qId,
         kp_id=question.kp_id,
         my_answer=req.answer,
@@ -377,6 +381,9 @@ def finish_session(
 
     # 真实用时：所有 answer_records.duration_seconds 求和
     duration_seconds = sum((r.duration_seconds or 0) for r in records)
+    # 写回会话字段：此前该字段从未写入、恒为 0，导致学生端「学习时长」漏计练习用时、
+    # 练习动态卡片显示墙钟时长。这里用真实练习用时回填，供学生端统计复用（非伪造）。
+    session.duration_seconds = duration_seconds
     total_answered = len(records) or 1
     avg_seconds = round(duration_seconds / total_answered, 1)
 
@@ -457,21 +464,25 @@ def finish_session(
 @router.get("/wrong-book")
 def wrong_book(
     kpId: str = Query(None),
+    chapter: str = Query(None),
     mastered: str = Query(None),   # 'true' / 'false'
     page: int = Query(1),
     size: int = Query(20),
     db: Session = Depends(get_db),
     user=Depends(get_current_user),
+    course_id: str = Depends(get_current_course_id),
 ):
-    """错题本"""
+    """错题本（按题目聚合 + 按「章节 → 知识点」归纳统计）
+
+    返回 `groups`：当前分类（待攻克/已掌握/全部）下每个章节的错题数与章节内各知识点错题数，
+    供前端做「按章节知识点归纳」筛选；`kpId` / `chapter` 只影响列表本身，
+    不影响 groups（这样选中某个知识点时章节导航不会跳变）。
+    """
     # 从答题记录中取错题
-    q = db.query(AnswerRecord).filter(
+    records = db.query(AnswerRecord).filter(
         AnswerRecord.user_id == user.user_id,
         AnswerRecord.is_correct == 0,
-    )
-    if kpId:
-        q = q.filter(AnswerRecord.kp_id == kpId)
-    records = q.order_by(AnswerRecord.created_at.desc()).all()
+    ).order_by(AnswerRecord.created_at.desc()).all()
 
     # 按题目聚合；records 已按时间倒序，首条即最近一次作答
     wrong_map = {}
@@ -492,29 +503,64 @@ def wrong_book(
     if mastered in ("true", "false"):
         filter_flag = mastered == "true"
 
+    # 知识点元信息：名称 + 章节（图谱为准，题库 chapter 兜底，最后兜到 kp_id）
+    kp_meta = {
+        n.id: {"name": n.name, "chapter": n.chapter or "未分章"}
+        for n in db.query(GraphNode).filter(
+            GraphNode.graph_type == "knowledge", GraphNode.course_id == course_id,
+        ).all()
+    }
+
+    items = []
     if wrong_map:
-        q_ids = list(wrong_map.keys())
-        questions = db.query(Question).filter(Question.q_id.in_(q_ids)).all()
-        items = []
+        questions = db.query(Question).filter(Question.q_id.in_(list(wrong_map.keys()))).all()
         for q in questions:
             w = wrong_map[q.q_id]
             if filter_flag is not None and w["mastered"] != filter_flag:
                 continue
+            meta = kp_meta.get(q.kp_id) or {}
             items.append({
                 "qId": q.q_id, "stem": q.stem, "myAnswer": w["myAnswer"],
                 "answer": q.answer,
                 "wrongCount": w["wrongCount"],
-                "kp": q.kp_id, "kpId": q.kp_id,
+                "kp": meta.get("name") or q.kp_id or "未标注",
+                "kpId": q.kp_id,
+                "kpName": meta.get("name") or q.kp_id or "未标注",
+                "chapter": meta.get("chapter") or q.chapter or "未分章",
                 "difficulty": q.difficulty,
                 "lastTime": fmt_dt(w["lastTime"], "%m-%d %H:%M"),
                 "mastered": w["mastered"],
             })
-    else:
-        items = []
+
+    # ---- 按章节 → 知识点归纳（章按「第N章」排序，知识点按错题数倒序）----
+    def _ch_order(ch: str):
+        m = re.search(r"第\s*(\d+)\s*[章讲]", ch or "")
+        return (0, int(m.group(1)), ch or "") if m else (1, 10**9, ch or "")
+
+    agg = {}
+    for it in items:
+        g = agg.setdefault(it["chapter"], {"chapter": it["chapter"], "total": 0, "kps": {}})
+        g["total"] += 1
+        k = g["kps"].setdefault(it["kpId"], {"kpId": it["kpId"], "name": it["kpName"], "count": 0})
+        k["count"] += 1
+    groups = []
+    for ch in sorted(agg.keys(), key=_ch_order):
+        g = agg[ch]
+        kps = sorted(g["kps"].values(), key=lambda x: (-x["count"], x["name"] or ""))
+        groups.append({"chapter": ch, "total": g["total"], "kpCount": len(kps), "kps": kps})
+
+    # 列表筛选：先按知识点，再按章节
+    if kpId:
+        items = [it for it in items if it["kpId"] == kpId]
+    if chapter:
+        items = [it for it in items if it["chapter"] == chapter]
 
     total = len(items)
     start = (page - 1) * size
-    return ok(list_response(items[start:start + size], total))
+    payload = list_response(items[start:start + size], total)
+    payload["groups"] = groups
+    payload["totalWrong"] = len(items)
+    return ok(payload)
 
 
 @router.get("/wrong-book/{q_id}/detail")

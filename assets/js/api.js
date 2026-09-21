@@ -250,6 +250,8 @@ window.API = (function () {
     listUsers: (p) => request('GET', '/admin/users', p),
     /** POST /admin/users  创建教师/学生账号 */
     createUser: (p) => request('POST', '/admin/users', p),
+    /** PUT /admin/users/{userId}  编辑账号（name/username/密码/班级/部门等，角色不可改） */
+    updateUser: (userId, p) => request('PUT', `/admin/users/${userId}`, p),
     /** DELETE /admin/users/{userId}  删除账号（级联清理个人数据） */
     deleteUser: (userId, p) => request('DELETE', `/admin/users/${userId}`, p || {}),
   };
@@ -309,9 +311,8 @@ window.API = (function () {
       return map[q.type || 'knowledge'];
     }),
 
-    /** GET /graph/kp/{kpId}  知识点详情（含前后置、资源、习题统计） */
-    kpDetail: (p) => request('GET', '/graph/kp/' + p.kpId, p, (q) =>
-      M().kpDetail[q.kpId] || M().kpDetail.KP52),
+    /** GET /graph/kp/{kpId}  知识点详情（含前后置、资源、习题统计、真实学情与课程均值） */
+    kpDetail: (p) => request('GET', '/graph/kp/' + p.kpId, p),
 
     /** GET /graph/path  基于知识图谱前后置关系生成的推荐学习路径 */
     learningPath: (p) => request('GET', '/graph/path', p, () => M().learningPath)
@@ -323,6 +324,13 @@ window.API = (function () {
   const stu = {
     /** GET /student/dashboard  学习驾驶舱聚合数据 */
     dashboard: (p) => request('GET', '/student/dashboard', p, () => M().studentDashboard),
+
+    /**
+     * GET /student/study-duration  当天累计学习时长
+     * 返回 { todaySeconds, todayMinutes, practiceSeconds, resourceSeconds }
+     * 供驾驶舱「今日累计学习时长」轻量轮询刷新（不触发预警重算）
+     */
+    studyDuration: () => request('GET', '/student/study-duration'),
 
     /** GET /student/resources  资源中心列表  params: { type, kpId, keyword, page, size } */
     resources: (p) => request('GET', '/student/resources', p, (q) => {
@@ -636,6 +644,8 @@ window.API = (function () {
     updateChapter: (id, p) => request('PUT', `/teacher/structure/chapters/${id}`, p),
     /** DELETE /teacher/structure/chapters/{id}  删空章节 */
     deleteChapter: (id) => request('DELETE', `/teacher/structure/chapters/${id}`),
+    /** GET /teacher/graph/kp-detail  知识点详情（结构 + 图谱关系 + 课程学情，全部真实表计算） */
+    kpDetail: (p) => request('GET', '/teacher/graph/kp-detail', p),
     /** GET /teacher/graph/kp-topology  知识图谱拓扑（节点=课程KP，边=关系） */
     kpTopology: () => request('GET', '/teacher/graph/kp-topology'),
     /** PUT /teacher/graph/kp-topology  保存坐标与边 */

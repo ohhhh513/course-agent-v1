@@ -193,10 +193,20 @@
       </div>`;
     },
 
+    /** 当前登录用户头像（与顶栏 user-chip 同一数据源：Auth.currentUser） */
+    _meAvatar() {
+      const u = (window.Auth && Auth.currentUser) ? Auth.currentUser() : null;
+      return {
+        ch: (u && (u.avatarChar || (u.name ? u.name.charAt(0) : null))) || '我',
+        color: (u && u.avatarColor) || ''
+      };
+    },
+
     tpl(m) {
       const now = m.time || new Date().toTimeString().slice(0, 5);
       if (m.role === 'me') {
-        return `<div class="msg msg--me"><div class="msg__av">陈</div>
+        const me = this._meAvatar();
+        return `<div class="msg msg--me"><div class="msg__av"${me.color ? ` style="background:${me.color}"` : ''}>${U.esc(me.ch)}</div>
           <div class="msg__wrap"><div class="bubble">${U.esc(m.content)}</div>
           <div class="msg__meta"><span>${now}</span></div></div></div>`;
       }

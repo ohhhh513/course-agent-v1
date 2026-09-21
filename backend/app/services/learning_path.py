@@ -47,23 +47,19 @@ def graph_nodes(db: Session, course_id: str = DEFAULT_COURSE_ID) -> List[GraphNo
 
 
 def resource_count_map(db: Session, course_id: str = DEFAULT_COURSE_ID) -> Dict[str, int]:
-    """每个知识点实际挂载的资源数（主 kp_id + kp_ids JSON 多标签都计）。"""
-    import json
+    """每个知识点实际挂载的资源数（主 kp_id + kp_ids 多标签都计）。
+
+    注意：同一资源对同一知识点**只计一次** —— kp_id 往往也出现在 kp_ids 里，
+    直接拼接会把它重复计数（历史上章节资源数偏大就是这个原因）。
+    """
+    from .catalog_helpers import resource_kp_ids
+
     rows = db.query(Resource).filter(
         and_(Resource.course_id == course_id)
     ).all()
     counts: Dict[str, int] = {}
     for r in rows:
-        kids = []
-        if r.kp_id:
-            kids.append(r.kp_id)
-        try:
-            extra = json.loads(r.kp_ids or "[]")
-            if isinstance(extra, list):
-                kids.extend(str(x) for x in extra if x)
-        except Exception:
-            pass
-        for kid in kids:
+        for kid in set(resource_kp_ids(r)):
             if kid:
                 counts[kid] = counts.get(kid, 0) + 1
     return counts

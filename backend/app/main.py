@@ -109,12 +109,92 @@ def health():
     return {"status": "ok", "service": "course-agent-backend", "version": "v1"}
 
 
+# ========== 资源文件服务（支持 HTTP Range） ==========
+def _mount_resource_files(application, directory: str) -> None:
+    """把 /resources 挂成「支持 Range 请求」的文件服务。
+
+    背景：当前依赖的 starlette 0.38 里 StaticFiles/FileResponse 不处理 Range
+    （Range 支持到 0.45+ 才有），响应里既没有 Accept-Ranges 也不会返回 206。
+    浏览器因此把视频当「不可定位流」：无法 seek 到尚未下载的位置（记录点续播失效），
+    每次观看都要从第 0 字节重新下载，表现就是「边下边播、进度记录不准」。
+    这里只替换 /resources 这一个目录，其余静态目录仍走 StaticFiles。
+    """
+    import mimetypes
+    from email.utils import formatdate
+    from pathlib import Path as _Path
+    from fastapi import Request
+    from fastapi.responses import Response, StreamingResponse
+
+    root = _Path(directory).resolve()
+    CHUNK = 512 * 1024
+
+    def _resolve(rel: str):
+        p = (root / rel).resolve()
+        if not p.is_relative_to(root):
+            return None
+        return p if p.is_file() else None
+
+    def _iter_file(path, start: int, length: int):
+        with open(path, "rb") as fh:
+            fh.seek(start)
+            remaining = length
+            while remaining > 0:
+                chunk = fh.read(min(CHUNK, remaining))
+                if not chunk:
+                    break
+                remaining -= len(chunk)
+                yield chunk
+
+    @application.api_route("/resources/{file_path:path}", methods=["GET", "HEAD"],
+                           include_in_schema=False)
+    def resource_file(file_path: str, request: Request):
+        path = _resolve(file_path)
+        if path is None:
+            return Response(status_code=404)
+        st = path.stat()
+        size = st.st_size
+        headers = {
+            "accept-ranges": "bytes",
+            "content-type": mimetypes.guess_type(str(path))[0] or "application/octet-stream",
+            "last-modified": formatdate(st.st_mtime, usegmt=True),
+            "cache-control": "public, max-age=3600",
+        }
+        if request.method == "HEAD":
+            headers["content-length"] = str(size)
+            return Response(status_code=200, headers=headers)
+
+        rng = request.headers.get("range")
+        if rng and rng.lower().startswith("bytes="):
+            spec = rng.split("=", 1)[1].split(",")[0].strip()
+            try:
+                if spec.startswith("-"):                       # 后缀范围：最后 N 字节
+                    n = int(spec[1:])
+                    start, end = max(0, size - n), size - 1
+                else:
+                    a, _, b = spec.partition("-")
+                    start = int(a) if a else 0
+                    end = int(b) if b else size - 1
+            except ValueError:
+                start, end = 0, size - 1
+            if start >= size or end < start:
+                return Response(status_code=416,
+                                headers={**headers, "content-range": f"bytes */{size}"})
+            end = min(end, size - 1)
+            headers["content-range"] = f"bytes {start}-{end}/{size}"
+            headers["content-length"] = str(end - start + 1)
+            return StreamingResponse(_iter_file(path, start, end - start + 1),
+                                     status_code=206, headers=headers)
+
+        headers["content-length"] = str(size)
+        return StreamingResponse(_iter_file(path, 0, size), status_code=200, headers=headers)
+
+
 # ========== 挂载前端静态文件 ==========
 frontend_dir = str(settings.FRONTEND_DIR.resolve())
 if os.path.exists(os.path.join(frontend_dir, "index.html")):
     resources_dir = os.path.join(frontend_dir, "resources")
     if os.path.isdir(resources_dir):
-        app.mount("/resources", StaticFiles(directory=resources_dir), name="resources")
+        _mount_resource_files(app, resources_dir)
     app.mount("/assets", StaticFiles(directory=os.path.join(frontend_dir, "assets")), name="assets")
     app.mount("/", StaticFiles(directory=frontend_dir, html=True), name="frontend")
 

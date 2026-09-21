@@ -63,14 +63,6 @@ python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 
 ## 4. 批量上传（交互 · 推荐）
 
-### 方式一
-
-```bat
-dev_tools\upload.bat
-```
-
-### 方式二
-
 ```bat
 python dev_tools\init_course.py
 ```
@@ -124,9 +116,6 @@ python dev_tools\init_course.py
 ```bat
 :: 交互：选教师 → 选课 → 可先 dry-run
 python dev_tools\import_questions.py
-
-:: 或指定课号
-python dev_tools\import_questions.py --course CE9V84WP --teacher teacher999 --password 123456
 ```
 
 依赖：该课已建章与 KP（题库里的 `kpNames` 按名称匹配）。

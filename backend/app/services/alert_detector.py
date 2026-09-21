@@ -26,7 +26,9 @@ from ..models.course import Course, Resource  # noqa: F401  确保 courses 表�
 from ..models.graph import GraphNode
 from ..models.practice import AnswerRecord
 
-COURSE_ID = "C2026DS001"
+# 课程归属不再写死：早期这里固定用演示课 "C2026DS001"，真实库里没有该课程，
+# 建预警时外键约束直接失败（异常被调用方吞掉，表现为预警表永远为空）。
+# 现在按被预警知识点自己的 GraphNode.course_id 写入。
 ALERT_TYPE = "mastery_low"
 RED_BELOW = 50       # 掌握率 < 50 → 预警
 YELLOW_BELOW = 60    # 50~60 → 需关注
@@ -90,9 +92,11 @@ def detect_alerts(db: Session, users=None) -> dict:
         if not acc_map:
             continue
 
-        kp_names = dict(db.query(GraphNode.id, GraphNode.name).filter(
+        kp_rows = db.query(GraphNode.id, GraphNode.name, GraphNode.course_id).filter(
             GraphNode.graph_type == "knowledge", GraphNode.id.in_(list(acc_map.keys())),
-        ).all())
+        ).all()
+        kp_names = {i: n for i, n, _c in kp_rows}
+        kp_course = {i: c for i, _n, c in kp_rows}
         existing = {a.kp_id: a for a in db.query(Alert).filter(
             Alert.user_id == u.user_id, Alert.type == ALERT_TYPE,
         ).all()}
@@ -110,9 +114,15 @@ def detect_alerts(db: Session, users=None) -> dict:
                     ensure_ascii=False,
                 )
                 sugs = _suggestions(db, kp, name)
+                # 课程归属取自知识点本身（GraphNode.course_id）。
+                # ⚠️ 历史上这里写死演示课 "C2026DS001"，而真实库里没有这门课，
+                # 建预警会直接外键失败（异常被上层吞掉 → 学生端/教师端预警永远是空的）。
+                kp_course_id = kp_course.get(kp)
+                if not kp_course_id:
+                    continue
                 if row is None:
                     db.add(Alert(
-                        alert_id="AL" + uuid.uuid4().hex[:10], course_id=COURSE_ID,
+                        alert_id="AL" + uuid.uuid4().hex[:10], course_id=kp_course_id,
                         user_id=u.user_id, class_id=cmap.get(u.class_name) or None,
                         level=level, type=ALERT_TYPE, title=title, desc=desc,
                         trigger=TRIGGER, kp_id=kp, kp_name=name,

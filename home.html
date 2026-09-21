@@ -6,6 +6,8 @@
 <title>课程智能体系统 · 产品介绍</title>
 <link rel="stylesheet" href="assets/css/base.css">
 <link rel="stylesheet" href="assets/css/app.css">
+<link rel="stylesheet" href="assets/css/refresh.css">
+<script src="assets/js/ui-enhancements.js" defer></script>
 </head>
 <body>
 
@@ -45,8 +47,8 @@
         </div>
         <div class="divider"></div>
         <div class="row fz-12 t-dim">
-          <span class="avatar avatar--sm">陈</span>
-          <span>陈思远 · 计算机 2301 班</span>
+          <span class="avatar avatar--sm">学</span>
+          <span>学生角色 · 学情数据来自个人真实学习记录</span>
           <span class="spacer"></span>
           <span class="row t-brand fw-6">进入 <span id="arr1"></span></span>
         </div>
@@ -66,8 +68,8 @@
         </div>
         <div class="divider"></div>
         <div class="row fz-12 t-dim">
-          <span class="avatar avatar--sm" style="background:linear-gradient(135deg,#06b6d4,#0284c7)">李</span>
-          <span>李文博 副教授 · 计算机学院</span>
+          <span class="avatar avatar--sm" style="background:linear-gradient(135deg,#06b6d4,#0284c7)">师</span>
+          <span>教师角色 · 学情统计来自班级真实作答与资源记录</span>
           <span class="spacer"></span>
           <span class="row t-brand fw-6">进入 <span id="arr2"></span></span>
         </div>
@@ -76,12 +78,12 @@
 
     <div class="login-ft">
       <div class="row">
-        <span>前端原型 v1.0</span>
+        <span>课程智能体系统</span>
         <span>·</span>
         <span>接口契约见 <code class="mono">docs/接口文档.md</code></span>
         <span>·</span>
       </div>
-      <p style="margin-top:8px">数据均为演示用 Mock 数据，接口层已按 RESTful 契约封装，后端就绪后将 <code class="mono">API.config.mode</code> 改为 <code class="mono">'http'</code> 即可直连。</p>
+      <p style="margin-top:8px">页面已直连后端真实接口（<code class="mono">API.config.mode = 'http'</code>），页面上的学情、资源、题库等数据均来自数据库；演示用 Mock 数据与本地账号表已下线。</p>
     </div>
 
   </div>
@@ -103,3 +105,4 @@
 </script>
 </body>
 </html>
+

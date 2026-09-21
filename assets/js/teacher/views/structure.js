@@ -39,7 +39,13 @@ const TeacherStructure = {
           <button class="btn btn--outline btn--sm" id="stUpload" type="button">${icon('upload')} 上传到目录</button>
         </div>
         <div class="card__body" id="stTree" style="overflow:auto;min-height:0;flex:1">${tree}</div>
-      </div>`;
+      </div>
+      <style>
+        #view-structure .st-link{cursor:pointer;border-bottom:1px dashed transparent}
+        #view-structure .st-link:hover{color:var(--brand);border-bottom-color:var(--brand)}
+        #view-structure .chip{cursor:pointer}
+        #view-structure .chip:hover{border-color:var(--brand);color:var(--brand)}
+      </style>`;
 
     U.$('#stNewCh').addEventListener('click', () => this._chapterModal(null));
     U.$('#stUpload').addEventListener('click', () => this.openUploadModal(this.selectedChapterId));
@@ -48,6 +54,9 @@ const TeacherStructure = {
       e.stopPropagation();
       const act = b.dataset.act;
       const id = b.dataset.id;
+      // 清单 5-1/5-2：章节与知识点都进详情页，按钮集中到详情页里
+      if (act === 'chdetail') this._chapterDetailModal(id);
+      if (act === 'kpdetail') this._kpDetailModal(id);
       if (act === 'editch') this._chapterModal(id);
       if (act === 'delch') this._deleteChapter(id);
       if (act === 'upload') this.openUploadModal(id);
@@ -94,6 +103,12 @@ const TeacherStructure = {
     const tagChips = tags.length
       ? tags.map(t => `<span class="badge badge--outline">${U.esc(t.name)}</span>`).join('')
       : '<span class="fz-11 t-dim">本章资源尚未打标签</span>';
+    const kps = ch.kps || [];
+    // 清单 5-1：知识点标签可点开详情页（编辑/删除都在详情页里）
+    const kpChips = kps.length
+      ? kps.map(k => `<button type="button" class="chip" data-act="kpdetail" data-id="${U.esc(k.id)}"
+          title="点击查看详情、编辑或删除">${U.esc(k.name)}${k.isKey ? ' ★' : ''}</button>`).join('')
+      : tagChips;
 
     const res = (ch.resources || []).map(r => {
       const rtags = (r.tags || r.kps || []).map(t =>
@@ -119,34 +134,20 @@ const TeacherStructure = {
            style="border:1px solid var(--border);border-radius:10px;padding:10px 12px;margin-bottom:12px">
         <div class="list__item" style="padding-left:0">
           <div class="list__main">
-            <b>${U.esc(ch.name)}</b>${ch.virtual ? ' <span class="badge badge--outline">未分章</span>' : ''}
-            <p class="fz-11 t-dim">资源 ${(ch.resources || []).length} · 标签 ${tags.length}</p>
+            <b class="st-link" data-act="chdetail" data-id="${U.esc(ch.id || '')}"
+               title="点击查看详情与编辑">${U.esc(ch.name)}</b>${ch.virtual ? ' <span class="badge badge--outline">未分章</span>' : ''}
+            <p class="fz-11 t-dim">资源 ${(ch.resources || []).length} · 知识点 ${kps.length}</p>
           </div>
           <div class="row" style="gap:4px;flex-shrink:0">
             ${ch.virtual ? '' : `
-              <button class="btn btn--xs btn--outline" data-act="upload" data-id="${U.esc(ch.id)}">上传</button>
-              <button class="btn btn--xs btn--ghost" data-act="newkp" data-id="${U.esc(ch.id)}">+KP</button>
-              <button class="btn btn--xs btn--ghost" data-act="editch" data-id="${U.esc(ch.id)}">改名</button>
-              <button class="btn btn--xs btn--ghost" data-act="delch" data-id="${U.esc(ch.id)}">删</button>`}
+              <button class="btn btn--xs btn--outline" data-act="chdetail" data-id="${U.esc(ch.id)}">详情 / 管理</button>`}
           </div>
         </div>
         ${res}
         <div style="padding:8px 0 0 20px;border-top:1px dashed var(--border);margin-top:6px">
-          <div class="fz-11 t-dim" style="margin-bottom:6px;font-weight:600">
-            本章知识点（标签）
-            ${ch.virtual ? '' : `<button class="btn btn--xs btn--ghost" style="margin-left:6px" data-act="newkp" data-id="${U.esc(ch.id)}">+ 添加</button>`}
-          </div>
-          <div class="chips" style="align-items:center">
-            ${(ch.kps || []).length
-              ? (ch.kps || []).map(k => `
-                <span class="chip" style="display:inline-flex;align-items:center;gap:4px;padding-right:4px">
-                  ${U.esc(k.name)}${k.isKey ? ' ★' : ''}
-                  ${ch.virtual ? '' : `<button type="button" class="btn btn--xs btn--ghost" style="height:20px;padding:0 4px;min-width:20px"
-                    data-act="delkp" data-id="${U.esc(k.id)}" data-name="${U.esc(k.name)}" title="删除知识点">✕</button>`}
-                </span>`).join('')
-              : tagChips}
-          </div>
-          ${(ch.kps || []).length && tags.length
+          <div class="fz-11 t-dim" style="margin-bottom:6px;font-weight:600">本章知识点（标签）</div>
+          <div class="chips" style="align-items:center">${kpChips}</div>
+          ${kps.length && tags.length
             ? `<p class="fz-11 t-dim" style="margin-top:6px">资源侧标签并集：${tags.map(t => U.esc(t.name)).join('、')}</p>`
             : ''}
         </div>
@@ -411,6 +412,156 @@ const TeacherStructure = {
       Toast.ok('已删除');
       this.render();
     }).catch(err => Toast.error('删除失败', (err && err.message) || ''));
+  },
+
+  /* ---------- 章节详情页（上传 / +KP / 改名 / 删除 集中在此） ---------- */
+  _chapterDetailModal(id) {
+    const ch = (this.data.chapters || []).find(c => c.id === id);
+    if (!ch) return;
+    const kps = ch.kps || [];
+    Modal.open({
+      title: '章节详情',
+      body: `
+        <div class="stack" style="gap:12px">
+          <label class="stack" style="gap:4px"><span class="fz-12 t-dim">章节名称</span>
+            <input class="input" id="cdName" value="${U.esc(ch.name || '')}" placeholder="如：第1章 绪论"></label>
+          <label class="stack" style="gap:4px"><span class="fz-12 t-dim">学时</span>
+            <input class="input" id="cdHours" type="number" min="0" value="${ch.hours || 0}"></label>
+          <div class="row" style="gap:8px;flex-wrap:wrap">
+            <span class="badge badge--outline">资源 ${(ch.resources || []).length}</span>
+            <span class="badge badge--outline">知识点 ${kps.length}</span>
+          </div>
+          <div class="stack" style="gap:6px">
+            <span class="fz-12 t-dim">本章知识点（点击查看 / 编辑详情）</span>
+            <div class="chips">
+              ${kps.map(k => `<button type="button" class="chip" data-kp="${U.esc(k.id)}">${U.esc(k.name)}${k.isKey ? ' ★' : ''}</button>`).join('')
+                || '<span class="fz-11 t-dim">本章暂无知识点</span>'}
+            </div>
+          </div>
+          <p class="fz-12 t-dim">上传资源、新增知识点、改名与删除都在本页完成；目录列表只做展示。</p>
+        </div>`,
+      footer: `
+        <button class="btn btn--primary" id="cdSave" type="button">保存修改</button>
+        <button class="btn" id="cdUpload" type="button">${icon('upload')} 上传资源</button>
+        <button class="btn" id="cdNewKp" type="button">${icon('plus')} 新增知识点</button>
+        <button class="btn btn--danger" id="cdDel" type="button">删除章节</button>
+        <button class="btn" data-close>关闭</button>`,
+      onMount(ov, close) {
+        U.$$('[data-kp]', ov).forEach(b => b.addEventListener('click', () => {
+          close();
+          TeacherStructure._kpDetailModal(b.dataset.kp);
+        }));
+        U.$('#cdUpload', ov).addEventListener('click', () => {
+          close();
+          TeacherStructure.openUploadModal(id);
+        });
+        U.$('#cdNewKp', ov).addEventListener('click', () => {
+          close();
+          TeacherStructure._kpModal(id);
+        });
+        U.$('#cdSave', ov).addEventListener('click', () => {
+          const name = U.$('#cdName', ov).value.trim();
+          const hours = parseInt(U.$('#cdHours', ov).value, 10) || 0;
+          if (!name) { Toast.warn('请输入章节名'); return; }
+          API.teacher.updateChapter(id, { name, hours }).then(() => {
+            Toast.ok('章节已更新');
+            close();
+            TeacherStructure.render();
+          }).catch(err => Toast.error('保存失败', (err && err.message) || ''));
+        });
+        U.$('#cdDel', ov).addEventListener('click', () => {
+          close();
+          TeacherStructure._deleteChapter(id);
+        });
+      }
+    });
+  },
+
+  /* ---------- 知识点详情页（改名 / 换章 / 学时 / 重点 / 简介 / 删除） ---------- */
+  _kpDetailModal(kpId) {
+    const chapters = ((this.data && this.data.chapterOptions) || []).filter(c => c.id);
+    let kp = null;
+    let chapterId = '';
+    for (const c of (this.data.chapters || [])) {
+      const f = (c.kps || []).find(k => k.id === kpId);
+      if (f) { kp = f; chapterId = c.id || ''; break; }
+    }
+    if (!kp) {
+      const o = ((this.data && this.data.kpOptions) || []).find(k => k.id === kpId);
+      if (o) kp = { id: o.id, name: o.name, hours: 0, isKey: false, chapter: o.chapter || '' };
+    }
+    if (!kp) { Toast.warn('未找到该知识点'); return; }
+    if (!chapterId) {
+      const m = chapters.find(c => c.name === kp.chapter);
+      chapterId = m ? m.id : '';
+    }
+
+    Modal.open({
+      title: '知识点详情',
+      body: `
+        <div class="stack" style="gap:12px">
+          <label class="stack" style="gap:4px"><span class="fz-12 t-dim">知识点名称</span>
+            <input class="input" id="kdName" value="${U.esc(kp.name || '')}" placeholder="如：二分查找"></label>
+          <label class="stack" style="gap:4px"><span class="fz-12 t-dim">所属章节</span>
+            <select class="select" id="kdChapter">
+              <option value="">（不修改）</option>
+              ${chapters.map(c => `<option value="${U.esc(c.id)}" ${c.id === chapterId ? 'selected' : ''}>${U.esc(c.name)}</option>`).join('')}
+            </select></label>
+          <label class="stack" style="gap:4px"><span class="fz-12 t-dim">学时</span>
+            <input class="input" id="kdHours" type="number" min="0" value="${kp.hours || 0}"></label>
+          <label class="row" style="gap:6px">
+            <input type="checkbox" id="kdKey" ${kp.isKey ? 'checked' : ''}> <span>标记为重点</span></label>
+          <label class="stack" style="gap:4px"><span class="fz-12 t-dim">知识点介绍</span>
+            <textarea class="input" id="kdSummary" rows="4" placeholder="加载中…"></textarea></label>
+          <div class="row" style="gap:8px;flex-wrap:wrap" id="kdStats"></div>
+        </div>`,
+      footer: `
+        <button class="btn btn--primary" id="kdSave" type="button">保存修改</button>
+        <button class="btn btn--danger" id="kdDel" type="button">删除知识点</button>
+        <button class="btn" data-close>关闭</button>`,
+      onMount(ov, close) {
+        // 简介与真实统计来自后端（kp_details + 关系 + 资源/题目计数）
+        API.teacher.kpDetail({ kpId }).then(d => {
+          const ta = U.$('#kdSummary', ov);
+          if (ta) { ta.value = (d && d.summary) || ''; ta.placeholder = '一句话讲清这个知识点讲什么'; }
+          const st = U.$('#kdStats', ov);
+          if (st && d) {
+            st.innerHTML = [
+              `资源 ${d.resourceCount || 0}`,
+              `题目 ${d.questionCount || 0}`,
+              `前置 ${(d.pre || []).length}`,
+              `后继 ${(d.post || []).length}`,
+            ].map(t => `<span class="badge badge--outline">${t}</span>`).join('');
+          }
+        }).catch(() => {
+          const ta = U.$('#kdSummary', ov);
+          if (ta) { ta.value = ''; ta.placeholder = '（简介加载失败，可直接填写后保存）'; }
+        });
+
+        U.$('#kdSave', ov).addEventListener('click', () => {
+          const name = U.$('#kdName', ov).value.trim();
+          if (!name) { Toast.warn('请输入知识点名称'); return; }
+          const payload = {
+            name,
+            hours: parseInt(U.$('#kdHours', ov).value, 10) || 0,
+            isKey: U.$('#kdKey', ov).checked,
+            summary: (U.$('#kdSummary', ov).value || '').trim(),
+          };
+          const cid = U.$('#kdChapter', ov).value;
+          if (cid) payload.chapterId = cid;
+          API.teacher.updateKp(kpId, payload).then(() => {
+            Toast.ok('知识点已更新', name);
+            close();
+            TeacherStructure.render();
+          }).catch(err => Toast.error('保存失败', (err && err.message) || ''));
+        });
+
+        U.$('#kdDel', ov).addEventListener('click', () => {
+          close();
+          TeacherStructure._deleteKp(kpId, kp.name);
+        });
+      }
+    });
   },
 
   /** 新建本章知识点（标签） */

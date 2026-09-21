@@ -39,10 +39,10 @@ const ViewFns = {
 
 /* —— 课程切换器：数据源 = 我的课程 —— */
 function refreshCourseSel(preferId) {
-  API.course.my().then(list => {
+  return API.course.my().then(list => {
     const courses = Array.isArray(list) ? list : [];
     courseSel.innerHTML = '';
-    if (!courses.length) {
+    if (!list.length) {
       const o = document.createElement('option');
       o.value = ''; o.textContent = '暂无课程 · 点 + 新建';
       courseSel.appendChild(o);
@@ -62,7 +62,19 @@ function refreshCourseSel(preferId) {
     courseSel.value = target;
   }).catch(() => {});
 }
-refreshCourseSel();
+
+/* —— 首屏课程上下文 ——
+   历史 bug：首次登录时 localStorage 里还没有 activeCourseId，而课程列表是异步取的。
+   视图（驾驶舱/学情监测等）先挂载 → 读到空的课程上下文 → 直接渲染「尚未创建或选择课程」，
+   且因为 Router 的 mount 只执行一次，刷新前不会自愈；整页刷新后（activeCourseId 已在
+   localStorage 中同步可读）又一切正常。这里把课程列表做成 Promise：
+     1) start.js 等它 resolve 后再 Router.init（首屏不再抢跑）；
+     2) 若视图已经挂载过（例如别的入口先渲染了），课程就绪后补渲染一次当前视图。 */
+window.__courseReady = refreshCourseSel();
+window.__courseReady.then(() => {
+  const key = Router.current;
+  if (key && Router.views[key] && Router.views[key]._mounted && ViewFns[key]) ViewFns[key]();
+}).catch(() => {});
 
 /* —— 新建课程（弹窗：创建后展示邀请码） —— */
 (function () {

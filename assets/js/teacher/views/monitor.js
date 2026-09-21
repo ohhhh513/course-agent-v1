@@ -3,9 +3,9 @@
   /* ================================================================
      视图 2 · 学情监测看板（热力图 / 个体详情 / 预警复核）
      ================================================================ */
+  /** 时长统一按 分'秒'' 展示（如 3'22''；实现集中在 U.dur） */
   function formatAnswerDuration(value) {
-    const totalSeconds = Math.max(0, Math.floor(Number(value) || 0));
-    return `${totalSeconds}″`;
+    return U.dur(value);
   }
 
   const Monitor = {
@@ -47,16 +47,26 @@
             <div class="search" style="width:160px">${icon('search2')}<input class="input" id="stuSearch" placeholder="姓名 / 学号"></div>
             <div class="seg" id="stuSeg"><button data-l="all" class="is-active">全部</button><button data-l="red">红</button><button data-l="yellow">黄</button><button data-l="green">绿</button></div>
           </div>
-          <div class="card__body card__body--flush"><div class="list" id="stuList" style="max-height:calc(100vh - 184px);overflow:auto">${U.skeleton(300)}</div></div>
+          <div class="card__body card__body--flush"><div class="list" id="stuList" style="height:calc(100vh - 184px);overflow:auto">${U.skeleton(300)}</div></div>
         </div>
 
         <div class="card">
           <div class="card__head"><h3>${icon('bell')} 异常预警列表</h3><span class="spacer"></span>
             <div class="seg" id="alSeg"><button data-l="all" class="is-active">全部</button><button data-l="red">红</button><button data-l="yellow">黄</button></div>
           </div>
-          <div class="card__body stack" id="alList" style="max-height:calc(100vh - 220px);overflow:auto;min-height:240px">${U.skeleton(300)}</div>
+          <div class="card__body stack" id="alList" style="height:calc(100vh - 220px);min-height:240px;overflow:auto">${U.skeleton(300)}</div>
         </div>
       </div>`;
+
+      /* 重绘时把筛选状态回写到 DOM：
+         模板里的 is-active 与搜索框是写死的「全部 / 空」，而 stuLevel / level /
+         stuKeyword 是跨重绘保留的。视图一旦因课程切换或首屏课程上下文就绪而二次渲染
+         （见 teacher/app.js 的 Router.mount 只跑一次 + __courseReady 补渲染），
+         就会出现「高亮回到全部、列表却仍是上次的筛选结果」的错位，
+         表现就是切换分类后选项框自己跳回去。这里统一按状态回写。 */
+      U.$$('#stuSeg button', el).forEach(b => b.classList.toggle('is-active', b.dataset.l === this.stuLevel));
+      U.$$('#alSeg button', el).forEach(b => b.classList.toggle('is-active', b.dataset.l === this.level));
+      U.$('#stuSearch').value = this.stuKeyword || '';
 
       U.$$('#stuSeg button', el).forEach(b => b.addEventListener('click', () => {
         U.$$('#stuSeg button', el).forEach(x => x.classList.remove('is-active')); b.classList.add('is-active');
@@ -111,7 +121,7 @@
           <div class="list__item list__item--clickable" data-uid="${s.userId}">
             <div class="stu-row" style="flex:1;min-width:0">
               <span class="avatar" style="width:34px;height:34px;flex:0 0 34px;font-size:13px">${s.avatar}</span>
-              <div class="stu-row__info"><b>${U.esc(s.name)}</b><span>${s.no} · ${s.lastActive}</span></div>
+              <div class="stu-row__info"><b>${U.esc(s.name)}</b></div>
             </div>
             <div style="width:140px">
               <div class="row fz-11 t-dim" style="margin-bottom:2px"><span>完成率</span><span class="spacer"></span><span class="mono">${Math.round(s.completion || 0)}%</span></div>
@@ -132,8 +142,8 @@
           <div class="node-detail__hero">
             <div class="row" style="gap:9px;margin-bottom:8px">
               <span class="badge badge--brand">${p.className}</span>
-              <span class="badge badge--outline mono">${p.no}</span>
-              <span class="badge badge--outline">班级第 ${p.metrics.rank}/${p.metrics.totalStudents} 名</span>
+             
+              <span class="badge badge--outline">课程第 ${p.metrics.rank}/${p.metrics.totalStudents} 名</span>
             </div>
             <div class="grid g-4" style="gap:10px;margin:4px 0 0">
               <div class="card card--flat card--pad" style="text-align:center"><b class="mono" style="font-size:20px;display:block">${p.metrics.completion}%</b><span class="fz-11 t-dim">完成率</span></div>
@@ -161,7 +171,7 @@
             Charts.bar('#stuTimeChart', p.studyTimeDist.data.map((v, i) => ({ name: p.studyTimeDist.xAxis[i], value: v })), { color: Charts.tokens().brand });
             const studyMinutes = (p.activityTrend.minutes || []).map(v => Number(v) || 0);
             const minutePeak = Math.max(...studyMinutes, 0);
-            let minuteInterval = 1;
+            let minuteInterval = 20;
             while (minutePeak > minuteInterval * 4) minuteInterval *= 2;
             const minuteMax = minuteInterval * 4;
 
@@ -173,7 +183,9 @@
             Charts.line('#stuTrendChart', {
               xAxis: p.activityTrend.xAxis,
               series: [
-                { name: '学习时长', data: studyMinutes, color: Charts.tokens().brand, yAxisIndex: 0 },
+                // 学习时长：接口单位为分钟，提示框按 分'秒'' 展示（与表格口径一致）
+                { name: '学习时长', data: studyMinutes, color: Charts.tokens().brand, yAxisIndex: 0,
+                  valueFormatter: (v) => U.durMin(v) },
                 { name: 'AI 提问', data: aiQuestions, color: Charts.tokens().warn, yAxisIndex: 1 }
               ]
             }, {

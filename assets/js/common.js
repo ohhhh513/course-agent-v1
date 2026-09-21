@@ -35,6 +35,7 @@ const ICONS = {
   chevronRight: '<path d="m9 6 6 6-6 6"/>',
   send: '<path d="M22 2 11 13"/><path d="M22 2 15 22l-4-9-9-4Z"/>',
   refresh: '<path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/>',
+  undo: '<polyline points="9 14 4 9 9 4"/><path d="M20 20v-7a4 4 0 0 0-4-4H4"/>',
   shuffle: '<path d="M16 3h5v5M4 20 21 3M21 16v5h-5M15 15l6 6M4 4l5 5"/>',
   list: '<path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/>',
   users: '<circle cx="9" cy="8" r="3.5"/><path d="M2 21c0-3.9 3.1-7 7-7s7 3.1 7 7"/><path d="M17 4.5a3.5 3.5 0 0 1 0 7M18 21c0-2.5-.7-4.5-2-6"/>',
@@ -157,6 +158,27 @@ const U = {
     if (v == null) return '';
     const up = v >= 0;
     return `<span class="stat__delta ${up ? 'delta-up' : 'delta-down'}">${icon(up ? 'trend' : 'down')} ${up ? '+' : ''}${v}${unit || 'pp'}</span>`;
+  },
+
+  /**
+   * 时长统一展示格式：分'秒"（60 进制；分用单引号，秒用双引号）。
+   * 例：202s → 3'22"；45s → 45"；0 → 0"；3725s → 1:02'05"
+   * 全站「时长」类数值一律走这里，避免各页各写一套（曾出现直接显示 202″ 的写法）。
+   */
+  dur(seconds) {
+    const total = Math.max(0, Math.round(Number(seconds) || 0));
+    const h = Math.floor(total / 3600);
+    const m = Math.floor((total % 3600) / 60);
+    const s = total % 60;
+    const pad = (n) => String(n).padStart(2, '0');
+    if (h > 0) return `${h}:${pad(m)}'${pad(s)}"`;
+    if (m > 0) return `${m}'${pad(s)}"`;
+    return `${s}"`;
+  },
+
+  /** 分钟（可含小数）→ 分'秒" ；用于接口返回「分钟」的时长字段 */
+  durMin(minutes) {
+    return U.dur((Number(minutes) || 0) * 60);
   }
 };
 
@@ -203,6 +225,10 @@ const Toast = {
   ok(t, d) { this.show(t, d, 'ok'); },
   warn(t, d) { this.show(t, d, 'warn'); },
   err(t, d) { this.show(t, d, 'danger'); },
+  /** `error` 是 `err` 的别名：全站有近 30 处调用写的是 Toast.error，
+   *  而这里过去只有 err —— 于是所有失败分支都会抛 "Toast.error is not a function"，
+   *  用户看不到任何提示（表现为「点了没反应」）。保留别名兜住这类写法。 */
+  error(t, d) { this.show(t, d, 'danger'); },
   info(t, d) { this.show(t, d, 'info'); },
   loading(title) {
     // 如果已有 loading toast，先移除
@@ -275,13 +301,18 @@ const Router = {
   register(key, cfg) { this.views[key] = cfg; },
   go(key, params) {
     if (!this.views[key]) return;
-    U.$$('.view').forEach(v => v.classList.remove('is-active'));
+    U.$$('.view').forEach(v => { v.classList.remove('is-active'); v.classList.remove('view-enter'); });
     const el = U.$('#view-' + key);
-    if (el) el.classList.add('is-active');
+    if (el) {
+      el.classList.add('is-active');
+      // 强制回流后再加 view-enter，确保每次切换（含重复点击同一板块）都重放入场动画
+      void el.offsetWidth;
+      el.classList.add('view-enter');
+    }
     U.$$('.nav-item').forEach(n => n.classList.toggle('is-active', n.dataset.view === key));
     const cfg = this.views[key];
     const tt = U.$('#pageTitle'), ts = U.$('#pageSub');
-    if (tt) tt.textContent = cfg.title || '';
+    if (tt) { tt.textContent = cfg.title || ''; tt.classList.remove('ph-enter'); void tt.offsetWidth; tt.classList.add('ph-enter'); }
     if (ts) ts.textContent = cfg.sub || '';
     location.hash = '#' + key;
     this.current = key;
@@ -306,15 +337,42 @@ const Router = {
 };
 
 /* ---------------- 7. 顶栏通用初始化 ---------------- */
-function initTopbar() {
+
+/**
+ * 退出登录二次确认（学生端/教师端/管理端共用）
+ * @param {string} redirect 退出后跳转地址，默认 index.html
+ */
+function confirmLogout(redirect) {
+  const u = (window.Auth && Auth.currentUser) ? Auth.currentUser() : null;
+  const roleText = u && u.role === 'teacher' ? '教师' : u && u.role === 'student' ? '学生' : '管理员';
+  Modal.open({
+    title: '退出登录',
+    body: `
+      <div class="callout callout--warn" style="margin:0">
+        ${icon('alert')}
+        <div><b>确定要退出登录吗？</b><br>
+          退出后需要重新输入账号密码；页面上未保存的编辑内容将丢失。</div>
+      </div>
+      ${u && (u.name || u.userId) ? `<p class="fz-13 t-2" style="margin:14px 0 0">
+        当前账号：<b>${U.esc(u.name || u.userId)}</b>${u.role ? ` · ${roleText}` : ''}</p>` : ''}`,
+    footer: `<button class="btn" data-close>取消</button>
+      <button class="btn btn--danger" id="logoutConfirm">${icon('logout')} 退出登录</button>`,
+    onMount(ov, close) {
+      U.$('#logoutConfirm', ov).addEventListener('click', () => {
+        close();
+        if (window.Auth) Auth.logout();
+        location.href = redirect || 'index.html';
+      });
+    }
+  });
+}
+
+function initTopbar(redirect) {
   const out = U.$('#logoutBtn');
   if (out) {
     out.innerHTML = icon('logout');
     out.title = '退出登录';
-    out.addEventListener('click', () => {
-      if (window.Auth) Auth.logout();
-      location.href = 'index.html';
-    });
+    out.addEventListener('click', () => confirmLogout(redirect));
   }
   if (window.Auth) Auth.applyUserBadge();
 }
@@ -323,8 +381,11 @@ function initTopbar() {
 const R = {
   /** 待办条 */
   todo(t) {
+    const idAttr = t.id ? ' data-todo-id="' + U.esc(t.id) + '"' : '';
     const actionData = t.userId ? ` data-action="${U.esc(t.action)}" data-user-id="${U.esc(t.userId)}" data-user-name="${U.esc(t.userName || '')}"` : '';
-    return `<div class="todo" data-target="${t.target || ''}"${t.sessionId ? ` data-session="${U.esc(t.sessionId)}"` : ''}${t.mode ? ` data-mode="${U.esc(t.mode)}"` : ''}${actionData}>
+    // kpName：待办目标为资源中心时，用于定位到对应知识点（与「我的学情」下钻同一机制）
+    const kpData = t.kpName ? ` data-kp-name="${U.esc(t.kpName)}"` : '';
+    return `<div class="todo"${idAttr} data-target="${t.target || ''}"${t.sessionId ? ` data-session="${U.esc(t.sessionId)}"` : ''}${t.mode ? ` data-mode="${U.esc(t.mode)}"` : ''}${kpData}${actionData}>
       <div class="todo__ico todo__ico--${t.level}">${icon(t.type === 'alert' ? 'alert' : t.type === 'homework' ? 'pencil' : t.type === 'practice' ? 'target' : 'sparkle')}</div>
       <div class="todo__main"><b>${U.esc(t.title)}</b><span>${U.esc(t.desc)}</span></div>
       <button class="btn btn--sm ${t.level === 'danger' ? 'btn--danger' : t.level === 'brand' ? 'btn--primary' : ''}">${t.action}</button>

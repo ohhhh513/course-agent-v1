@@ -20,7 +20,7 @@ from ..models.alert import Alert
 from ..models.question import Question
 from ..models.practice import PracticeSession, AnswerRecord
 from ..models.graph import LearningPath, GraphLink, KpDetail
-from ..models.course import Course, Resource, ResourceProgress
+from ..models.course import Course, Resource, ResourceProgress, ResourceStudyLog
 from ..models.user_course import UserCourse
 from ..models.graph import GraphNode
 from ..middleware.auth import get_current_user
@@ -202,7 +202,7 @@ def teacher_dashboard(
     avg_goal_achieve = round(reached / len(all_lp) * 100, 1) if all_lp else 0
 
     # 今日活跃学生数 + 提交次数
-    # 活跃 = 今日有 PracticeSession 提交 或 今日有 AnswerRecord 答题
+    # 活跃 = 今日有练习提交 / 今日有答题记录 / 今日有资源学习（视频、课件、文献）
     today = china_now().date()
     today_start, today_end = china_day_bounds_utc(today)
 
@@ -224,8 +224,26 @@ def teacher_dashboard(
     active_from_answer = set(a.user_id for a in today_answers)
     submit_today += len(today_answers)
 
-    # 合并活跃学生
-    active_user_ids = active_from_session | active_from_answer
+    # 资源学习：resource_study_log 按「本地日期」记账（视频观看秒数），
+    # 另外 resource_progress.updated_at 落在当天窗口的也算（覆盖课件/文献翻页）。
+    today_res_ids = set()
+    if student_ids:
+        for (uid_,) in db.query(ResourceProgress.user_id).filter(
+            ResourceProgress.user_id.in_(student_ids),
+            ResourceProgress.updated_at >= today_start,
+            ResourceProgress.updated_at <= today_end,
+        ).all():
+            today_res_ids.add(uid_)
+        for (uid_,) in db.query(ResourceStudyLog.user_id).filter(
+            ResourceStudyLog.user_id.in_(student_ids),
+            ResourceStudyLog.day == today.isoformat(),
+            ResourceStudyLog.watch_seconds > 0,
+        ).all():
+            today_res_ids.add(uid_)
+
+    # 合并活跃学生（练习/答题 + 资源学习）
+    active_from_practice = active_from_session | active_from_answer
+    active_user_ids = active_from_practice | today_res_ids
 
     kp_id_name = {n.id: n.name for n in db.query(GraphNode).filter(GraphNode.graph_type == "knowledge").all()}
 
@@ -277,43 +295,98 @@ def teacher_dashboard(
     kp_ranking.sort(key=lambda x: x["mastery"])  # 低的在前面
     kp_ranking = kp_ranking[:5]                    # Top 5
 
-    # ==== liveFeed：前端期望 [{ type, level, text, meta, time, userId }] ====
+    # ==== liveFeed：只保留「当天」动态，口径对齐学生端学习动态 ====
+    # 前端期望 [{ type, level, text, meta, time, userId }]
+    # 历史问题：① 只统计答题、看不到视频学习；② 一次练习逐题罗列（20 题就是 20 条），
+    # 淹没真正的学习行为。现在改成「一场练习一条 + 一次资源学习一条 + 预警一条」。
+    MODE_CN = {"weak": "薄弱点强化", "order": "顺序练习", "random": "随机练习", "wrong": "错题重练"}
+    RES_VERB = {"video": "观看课程视频", "ppt": "学习课堂课件", "doc": "阅读课程文献"}
+    stu_name_map = {s.user_id: s.name for s in students}
+
+    def _clock(sec: int) -> str:
+        sec = max(0, int(sec or 0))
+        return f"{sec // 60}:{str(sec % 60).zfill(2)}"
+
     live = []
-    if active_alerts_all:
-        # 优先放最新的 alert 事件；当前班级的全部未关闭预警都纳入动态。
-        all_alerts = sorted(active_alerts_all, key=lambda a: a.created_at or datetime.min, reverse=True)
-        for a in all_alerts:
-            stu_name = next((s.name for s in students if s.user_id == a.user_id), a.user_id)
-            kp_name = a.kp_name or kp_id_name.get(a.kp_id or "", "") or "未知"
-            level = "danger" if a.level == "red" else "warn" if a.level == "yellow" else "ok"
-            live.append({
-                "type": "alert", "level": level,
-                "userId": a.user_id,
-                "text": f"新增预警：{stu_name} · {kp_name}",
-                "meta": a.title or a.type or a.desc or "未处理",
-                "time": format_china_time(a.created_at, "%H:%M") or china_now().strftime("%H:%M"),
-                "_time_sort": a.created_at or datetime.min,
-            })
-    # 再加当前班级的全部答题事件
-    all_answers = db.query(AnswerRecord).filter(
-        AnswerRecord.user_id.in_(student_ids),
-    ).order_by(desc(AnswerRecord.created_at)).all()
-    for ar in all_answers:
-        stu_name = next((s.name for s in students if s.user_id == ar.user_id), ar.user_id)
-        kp_name = kp_id_name.get(ar.kp_id or "", "") or ar.kp_id or "未知"
+
+    # 1) 今天完成的练习场次（整场一条）
+    for ps in sorted(today_sessions, key=lambda x: x.finished_at or x.created_at or datetime.min, reverse=True):
+        ts = ps.finished_at or ps.created_at
+        total = int(ps.total or 0)
+        correct = int(ps.correct or 0)
+        acc = ps.accuracy if ps.accuracy else (round(correct / total * 100) if total else 0)
+        dur = int(ps.duration_seconds or 0)
+        if not dur and ps.finished_at and ps.created_at:
+            dur = int((ps.finished_at - ps.created_at).total_seconds())
         live.append({
-            "type": "submit",
-            "level": "ok" if ar.is_correct else "warn",
-            "userId": ar.user_id,
-            "text": f"{stu_name} 提交了「{kp_name}」相关题目",
-            "meta": "回答正确" if ar.is_correct else "回答错误",
-            "time": format_china_time(ar.created_at, "%H:%M") or china_now().strftime("%H:%M"),
-            "_time_sort": ar.created_at or datetime.min,
+            "type": "practice",
+            "level": "ok" if acc >= 70 else "warn",
+            "userId": ps.user_id,
+            "text": f"{stu_name_map.get(ps.user_id, ps.user_id)} 完成{MODE_CN.get(ps.mode, ps.mode + '练习')}",
+            "meta": f"答对 {correct}/{total}" + (f" · 用时 {dur // 60} 分" if dur >= 60 else (f" · 用时 {dur} 秒" if dur else "")),
+            "time": format_china_time(ts, "%H:%M") or "",
+            "_time_sort": ts or datetime.min,
         })
+
+    # 2) 今天的资源学习（视频 / 课件 / 文献）——同一学生同一资源只出一条（取最优行）
+    from ..services.resource_progress import row_key as _rp_key
+    res_live = {}
+    if student_ids:
+        for p, r in (
+            db.query(ResourceProgress, Resource)
+            .join(Resource, Resource.res_id == ResourceProgress.res_id)
+            .filter(
+                ResourceProgress.user_id.in_(student_ids),
+                Resource.course_id == course_id,
+                ResourceProgress.updated_at >= today_start,
+                ResourceProgress.updated_at <= today_end,
+            )
+            .all()
+        ):
+            key = (p.user_id, p.res_id)
+            cur = res_live.get(key)
+            if cur is None or _rp_key(p) > _rp_key(cur[0]):
+                res_live[key] = (p, r)
+    for (uid_, _rid), (p, r) in res_live.items():
+        prog = int(p.progress or 0)
+        pos = int(p.position or 0)
+        extra = ""
+        if r.type == "video" and pos:
+            extra = f" · 观看至 {_clock(pos)}"
+        elif r.type in ("ppt", "doc") and pos:
+            extra = f" · 已读 {pos} 页"
+        live.append({
+            "type": "resource",
+            "resType": r.type,
+            "level": "ok" if prog >= 100 else "warn",
+            "userId": uid_,
+            "text": f"{stu_name_map.get(uid_, uid_)} {RES_VERB.get(r.type, '学习资源')}：{r.title}",
+            "meta": ("已完成 100%" if prog >= 100 else f"进度 {prog}%") + extra,
+            "time": format_china_time(p.updated_at, "%H:%M") or "",
+            "_time_sort": p.updated_at or datetime.min,
+        })
+
+    # 3) 今天新增的预警
+    for a in active_alerts_all:
+        ts = a.created_at
+        if not ts or not (today_start <= ts <= today_end):
+            continue
+        kp_name = a.kp_name or kp_id_name.get(a.kp_id or "", "") or "未知"
+        live.append({
+            "type": "alert",
+            "level": "danger" if a.level == "red" else "warn",
+            "userId": a.user_id,
+            "text": f"{stu_name_map.get(a.user_id, a.user_id)} 触发预警：{kp_name}",
+            "meta": a.title or a.desc or "待处理",
+            "time": format_china_time(ts, "%H:%M") or "",
+            "_time_sort": ts,
+        })
+
     # 按数据库中的 UTC 时间排序，展示时再转换为中国时间。
     live.sort(key=lambda x: x.get("_time_sort", datetime.min), reverse=True)
     for item in live:
         item.pop("_time_sort", None)
+    live = live[:50]
 
     # ==== todos：前端期望 [{ level, type, title, desc, action, target }] ====
     todos = []
@@ -349,11 +422,16 @@ def teacher_dashboard(
             "userName": stu.name,
         })
 
+    # 课程名称：界面展示课程名而不是课程代码（C88QUSR4 这类内部编号）
+    course_row = db.query(Course).filter(Course.course_id == course_id).first()
+    course_name = (course_row.name if course_row else "") or f"课程 {course_id}"
+
     return ok({
         "classOverview": {
             "classId": course_id,
-            "className": f"课程 {course_id}",
+            "className": course_name,
             "courseId": course_id,
+            "courseName": course_name,
             "studentCount": n,
             "totalKpCount": total_kp,
             "avgCompletionRate": completion_rate,
@@ -367,11 +445,15 @@ def teacher_dashboard(
             "alertStudentCount": alert_student_count,
             "alertRatio": alert_ratio,
             "activeToday": len(active_user_ids),
+            # 活跃分项：练习/答题人数、资源学习人数（便于核对口径）
+            "activeTodayPractice": len(active_from_practice),
+            "activeTodayResource": len(today_res_ids),
             "submitToday": submit_today,
             "updatedAt": china_now().strftime("%Y-%m-%d %H:%M"),
         },
         "kpRanking": kp_ranking,
         "liveFeed": live,
+        "liveFeedDate": today.isoformat(),
         "todos": todos,
     })
 
@@ -613,20 +695,25 @@ def student_profile(
     accuracy = round(sum(1 for a in ans_rows if a.is_correct) / len(ans_rows) * 100, 1) if ans_rows else 0
     goal = min(round(mastery / 80 * 100, 1), 100) if mastery else 0
 
-    # 班级排名（按 mastery）
-    class_name = stu.class_name or ""
-    class_students = db.query(User).filter(User.role == "student", User.class_name == class_name).all()
-    class_ids = [c.user_id for c in class_students]
-    class_lps = db.query(LearningPath).filter(LearningPath.user_id.in_(class_ids)).all()
-    class_masteries = defaultdict(list)
-    for r in class_lps:
+    # 课程排名（按 mastery 均值，降序）—— 与驾驶舱学生列表/热力图/预警同源：课程成员（user_courses）
+    # 历史 bug：此处曾用 users.class_name 在已废弃的“班级维”里取同班学生，
+    # 而班级维早已废弃、真实成员关系在 user_courses，导致排名分母/分组失真（常为 1 或错配班级）。
+    # 现改为 _course_students(db, course_id)，并按当前课程的学习路径 mastery 计算。
+    course_students = _course_students(db, course_id)
+    course_ids = [s.user_id for s in course_students]
+    course_lps = db.query(LearningPath).filter(
+        LearningPath.user_id.in_(course_ids),
+        LearningPath.course_id == course_id,
+    ).all()
+    course_masteries = defaultdict(list)
+    for r in course_lps:
         if (r.mastery or 0) > 0:
-            class_masteries[r.user_id].append(r.mastery or 0)
-    class_avg = {}
-    for uid, vals in class_masteries.items():
-        class_avg[uid] = round(sum(vals) / len(vals), 1)
-    sorted_class = sorted(class_avg.items(), key=lambda x: -x[1])
-    rank = next((i + 1 for i, (uid, _) in enumerate(sorted_class) if uid == user_id), len(class_ids))
+            course_masteries[r.user_id].append(r.mastery or 0)
+    course_avg = {}
+    for uid, vals in course_masteries.items():
+        course_avg[uid] = round(sum(vals) / len(vals), 1)
+    sorted_course = sorted(course_avg.items(), key=lambda x: -x[1])
+    rank = next((i + 1 for i, (uid, _) in enumerate(sorted_course) if uid == user_id), len(course_ids))
 
     # kp_detail：每个 kp 的掌握率 + 练习数 + 错题 + 时长
     ans_by_kp = defaultdict(list)
@@ -706,18 +793,41 @@ def student_profile(
 
     act_x, act_min, act_q = [], [], []
     total_minutes = 0
+    # 学习时长真实口径（practice_sessions.duration_seconds 从未写入、恒 0，不可用）：
+    #   当天资源观看秒数（resource_study_log.day 为东八区日期字符串）
+    # + 当天答题用时（answer_records.duration_seconds，按东八区日界的 UTC 边界归日）
+    trend_watch = dict(
+        db.query(ResourceStudyLog.day, ResourceStudyLog.watch_seconds)
+        .filter(
+            ResourceStudyLog.user_id == user_id,
+            ResourceStudyLog.day >= (today - timedelta(days=13)).isoformat(),
+            ResourceStudyLog.day <= today.isoformat(),
+        ).all()
+    )
+    trend_answer_seconds = defaultdict(int)
+    for created_at, dur in (
+        db.query(AnswerRecord.created_at, AnswerRecord.duration_seconds)
+        .filter(
+            AnswerRecord.user_id == user_id,
+            AnswerRecord.created_at >= trend_start,
+            AnswerRecord.created_at <= trend_end,
+        ).all()
+    ):
+        if created_at and dur:
+            trend_answer_seconds[format_china_time(created_at, "%Y-%m-%d")] += dur
     for offset in range(13, -1, -1):
         d = today - timedelta(days=offset)
+        day_key = d.isoformat()
         day_start, day_end = china_day_bounds_utc(d)
-        day_ps = [p for p in db.query(PracticeSession).filter(PracticeSession.user_id == user_id).all()
-                  if p.finished_at and day_start <= p.finished_at <= day_end]
-        mins = sum(p.duration_seconds or 0 for p in day_ps) // 60
+        seconds = (trend_watch.get(day_key) or 0) + trend_answer_seconds.get(day_key, 0)
+        mins = round(seconds / 60, 1)
         ai_questions = sum(1 for created_at in ai_question_times if day_start <= created_at <= day_end)
         act_x.append(d.strftime("%m-%d"))
         act_min.append(mins)
         act_q.append(ai_questions)
         total_minutes += mins
 
+    class_name = stu.class_name or ""  # 兼容性保留：班级维已废弃，真实分组以课程成员为准（见 _course_students）
     return ok({
         "userId": user_id,
         "name": stu.name,
@@ -729,8 +839,8 @@ def student_profile(
             "goal": goal,
             "accuracy": accuracy,
             "rank": rank,
-            "totalStudents": len(class_ids),
-            "studyMinutes": total_minutes,
+            "totalStudents": len(course_ids),
+            "studyMinutes": round(total_minutes, 1),
         },
         "studyTimeDist": study_time_dist,
         "activityTrend": {"xAxis": act_x, "minutes": act_min, "questions": act_q},
@@ -883,19 +993,20 @@ def send_message(
     req: SendMessageReq,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
+    course_id: str = Depends(get_current_course_id),
 ):
     from ..models.alert import Message
     import uuid
-    # 越权校验：只能向本班学生发送私信
+    # 越权校验：只能向「当前课程的学生」发送私信。
+    # 历史 bug：这里曾用 users.class_name 去比对 teacher_classes.class_name，
+    # 而该表长期为空（班级维已废弃、以课程成员为准），于是任何学生都被判成"非本班" → 403。
+    # 现在与驾驶舱学生列表同源：课程成员（user_courses）。
     student = db.query(User).filter(User.user_id == req.userId, User.role == "student").first()
     if not student:
         return fail("接收学生不存在", 404)
-    teacher_class_names = {
-        tc.class_name
-        for tc in db.query(TeacherClass).filter(TeacherClass.teacher_user_id == user.user_id).all()
-    }
-    if student.class_name not in teacher_class_names:
-        return fail("无权向非本班学生发送私信", 403)
+    course_student_ids = {s.user_id for s in _course_students(db, course_id)}
+    if req.userId not in course_student_ids:
+        return fail("无权向非本课程学生发送私信", 403)
     msg = Message(
         msg_id="MSG" + uuid.uuid4().hex[:12],
         user_id=req.userId,
@@ -2562,6 +2673,8 @@ class KpBody(BaseModel):
     chapterId: str = ""
     hours: int = 0
     isKey: bool = False
+    # 知识点介绍（落 kp_details.summary；None = 不修改，兼容旧调用方）
+    summary: Optional[str] = None
 
 
 class RelationsBody(BaseModel):
@@ -2643,6 +2756,9 @@ def structure_overview(
     resources = db.query(Resource).filter(Resource.course_id == course_id).order_by(Resource.res_id.asc()).all()
 
     name_map = {n.id: n.name for n in kps}
+    # 知识点介绍（kp_details.summary）随目录一起返回，供「知识点详情」弹窗直接回填
+    intro_map = dict(db.query(KpDetail.kp_id, KpDetail.summary).filter(
+        KpDetail.course_id == course_id).all())
     res_counts: dict = {}
     for r in resources:
         for kid in _resource_kp_ids(r):
@@ -2677,6 +2793,7 @@ def structure_overview(
             "id": k.id, "name": k.name, "hours": k.hours or 0,
             "isKey": bool(k.is_key), "resCount": res_counts.get(k.id, 0),
             "qCount": q_counts.get(k.id, 0), "preCount": len(pre_map.get(k.id, [])),
+            "summary": (intro_map.get(k.id) or ""),
         })
 
     for r in resources:
@@ -2846,11 +2963,12 @@ def create_kp(
     db.add(KpDetail(
         kp_id=kp_id, course_id=course_id, name=name, chapter=ch.name,
         hours=body.hours or 0, is_key=body.isKey,
+        summary=(body.summary or "").strip(),
     ))
     db.flush()
     _rebuild_paths_for_course(db, course_id)
     db.commit()
-    return ok({"id": kp_id, "name": name, "chapter": ch.name})
+    return ok({"id": kp_id, "name": name, "chapter": ch.name, "summary": (body.summary or "").strip()})
 
 
 @router.put("/structure/kps/{kp_id}")
@@ -2885,10 +3003,18 @@ def update_kp(
     kd = db.query(KpDetail).filter(
         KpDetail.kp_id == kp_id, KpDetail.course_id == course_id,
     ).first()
-    if kd:
-        kd.name, kd.chapter, kd.hours, kd.is_key = kp.name, kp.chapter, kp.hours, kp.is_key
+    if not kd:
+        # 历史数据可能缺 KpDetail 行：补一行，保证「知识点介绍」有落库位置
+        kd = KpDetail(
+            kp_id=kp_id, course_id=course_id, name=kp.name, chapter=kp.chapter,
+            hours=kp.hours, is_key=kp.is_key, summary="",
+        )
+        db.add(kd)
+    kd.name, kd.chapter, kd.hours, kd.is_key = kp.name, kp.chapter, kp.hours, kp.is_key
+    if body.summary is not None:
+        kd.summary = body.summary.strip()
     db.commit()
-    return ok({"id": kp.id, "name": kp.name, "chapter": kp.chapter})
+    return ok({"id": kp.id, "name": kp.name, "chapter": kp.chapter, "summary": kd.summary or ""})
 
 
 @router.delete("/structure/kps/{kp_id}")
@@ -3173,4 +3299,93 @@ def save_kp_topology(
         "savedNodes": len(body.nodes),
         "savedEdges": saved_edges,
         "pendingCount": remaining,
+    })
+
+
+@router.get("/graph/kp-detail")
+def get_kp_detail(
+    kpId: str = Query(..., description="知识点 id"),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+    course_id: str = Depends(get_current_course_id),
+):
+    """教师端知识点详情：结构信息 + 图谱关系 + 课程学情（全部真实表计算）。
+
+    供「知识图谱编排」右侧详情面板使用：
+    - 解释/属性：KpDetail 优先，缺失回退 GraphNode
+    - 关系：graph_links 中该点的前置(pre)/后置(pre 反向)/并列(parallel)/进阶(advance)
+    - 学情：课程内学生均值（掌握度/完成度/学习时长），口径见 services/kp_stats
+    """
+    kp = db.query(KpDetail).filter(
+        KpDetail.kp_id == kpId, KpDetail.course_id == course_id,
+    ).first()
+    node = db.query(GraphNode).filter(
+        GraphNode.id == kpId, GraphNode.graph_type == "knowledge",
+        GraphNode.course_id == course_id,
+    ).first()
+    if not kp and not node:
+        return fail("知识点不存在", 404)
+
+    # 关系：以 graph_links 为准（与图谱编排保存同源）
+    links = db.query(GraphLink).filter(
+        GraphLink.course_id == course_id,
+        GraphLink.graph_type == "knowledge",
+        (GraphLink.source == kpId) | (GraphLink.target == kpId),
+    ).all()
+    related_ids = {l.source for l in links} | {l.target for l in links}
+    related_ids.discard(kpId)
+    name_rows = db.query(GraphNode.id, GraphNode.name).filter(
+        GraphNode.graph_type == "knowledge", GraphNode.course_id == course_id,
+        GraphNode.id.in_(related_ids),
+    ).all() if related_ids else []
+    name_map = {nid: nm for nid, nm in name_rows}
+
+    def _rel_list(pairs):
+        out, seen = [], set()
+        for rid, rel in pairs:
+            if rid == kpId or rid in seen or rid not in name_map:
+                continue
+            seen.add(rid)
+            out.append({"id": rid, "name": name_map[rid], "relation": rel})
+        return out
+
+    pre = _rel_list([(l.source, "pre") for l in links if l.relation == "pre" and l.target == kpId])
+    post = _rel_list([(l.target, "pre") for l in links if l.relation == "pre" and l.source == kpId])
+    parallel = _rel_list([(l.target if l.source == kpId else l.source, "parallel")
+                          for l in links if l.relation == "parallel"])
+    advance = _rel_list([(l.target, "advance") for l in links if l.relation == "advance" and l.source == kpId])
+
+    # 资源/题目统计（真实表）
+    chapter = ((kp.chapter if kp else None) or (node.chapter if node else "") or "")
+    if chapter:
+        res_rows = db.query(Resource).filter(
+            (Resource.kp_id == kpId)
+            | ((Resource.kp_id == "") & Resource.kp.like(f"{chapter}%"))
+        ).all()
+    else:
+        res_rows = db.query(Resource).filter(Resource.kp_id == kpId).all()
+    video_res_ids = [r.res_id for r in res_rows if r.type == "video"]
+    question_count = db.query(Question).filter(
+        Question.kp_id == kpId, Question.status == "published",
+    ).count()
+
+    from ..services.kp_stats import kp_course_stats
+    stats = kp_course_stats(db, course_id, kpId, video_res_ids)
+
+    return ok({
+        "kpId": kpId,
+        "name": (kp.name if kp else node.name),
+        "chapter": chapter,
+        "difficulty": (kp.difficulty if kp else node.difficulty) or 0,
+        "isKey": bool(kp.is_key) if kp else bool(node.is_key),
+        "hours": (kp.hours if kp else node.hours) or 0,
+        "summary": ((kp.summary if kp else "") or ""),
+        # 关系一律取自 graph_links —— 与图谱编排里实际画出的连线同源
+        "pre": pre,
+        "post": post,
+        "parallel": parallel,
+        "advance": advance,
+        "resourceCount": len(res_rows),
+        "questionCount": question_count,
+        **stats,
     })

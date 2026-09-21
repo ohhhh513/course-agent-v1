@@ -3,38 +3,46 @@
   /* ================================================================
      视图 1 · 学习驾驶舱
      ================================================================ */
-  let _sessionDurationTimer = null;
+  /* 「今日累计学习时长」= 后端按本地日历日统计的「当天练习用时 + 当天视频观看秒数」，
+     页面每 30 秒静默刷新一次（只读真实业务表，不做本地累加或估算）。 */
+  let _todayDurationTimer = null;
 
-  function _stopSessionDurationTimer() {
-    if (_sessionDurationTimer !== null) {
-      clearInterval(_sessionDurationTimer);
-      _sessionDurationTimer = null;
+  function _stopTodayDurationTimer() {
+    if (_todayDurationTimer !== null) {
+      clearInterval(_todayDurationTimer);
+      _todayDurationTimer = null;
     }
   }
 
-  function _startSessionDurationTimer() {
-    _stopSessionDurationTimer();
-    const startedAt = window.Auth && Auth.sessionStartedAt
-      ? Auth.sessionStartedAt()
-      : Date.now();
-    const update = () => {
-      const target = U.$('#sessionStudyDuration');
-      if (!target) {
-        _stopSessionDurationTimer();
-        return;
-      }
-      const totalSeconds = Math.max(0, Math.floor((Date.now() - startedAt) / 1000));
-      const hours = Math.floor(totalSeconds / 3600);
-      const minutes = Math.floor((totalSeconds % 3600) / 60);
-      const seconds = totalSeconds % 60;
-      target.textContent = `本次学习时长 ${hours} 时 ${minutes} 分 ${seconds} 秒`;
-    };
-    update();
-    _sessionDurationTimer = setInterval(update, 1000);
+  /** 秒 → 「X 时 X 分」/「X 分」 */
+  function _fmtStudyDuration(seconds) {
+    const s = Math.max(0, Math.floor(seconds || 0));
+    const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60);
+    return h > 0 ? `${h} 时 ${m} 分` : `${m} 分`;
+  }
+
+  /** 渲染「今日累计学习时长」徽标；extra 存在时把练习 / 视频明细写进 title */
+  function _paintTodayDuration(seconds, extra) {
+    const el = U.$('#todayStudyDuration');
+    if (!el) return;
+    el.textContent = `今日累计学习 ${_fmtStudyDuration(seconds)}`;
+    if (extra) {
+      el.title = `练习 ${_fmtStudyDuration(extra.practiceSeconds)} · 视频观看 ${_fmtStudyDuration(extra.resourceSeconds)}`;
+    }
+  }
+
+  function _startTodayDurationTimer() {
+    _stopTodayDurationTimer();
+    _todayDurationTimer = setInterval(() => {
+      if (!U.$('#todayStudyDuration')) { _stopTodayDurationTimer(); return; }
+      API.student.studyDuration()
+        .then(r => _paintTodayDuration(r.todaySeconds, r))
+        .catch(() => {});
+    }, 30000);
   }
 
   function renderDashboard() {
-    _stopSessionDurationTimer();
+    _stopTodayDurationTimer();
     const el = U.$('#view-dashboard');
     el.innerHTML = U.skeleton(400);
     API.student.dashboard().then(d => {
@@ -67,7 +75,8 @@
         <div class="hero__main">
           <div class="row" style="margin-bottom:6px">
             ${R.lamp(o.status === 'danger' ? 'red' : o.status === 'warn' ? 'yellow' : 'ok', lampText[o.status])}
-            <span class="badge badge--outline" id="sessionStudyDuration">本次学习时长 0 时 0 分 0 秒</span>
+            <span class="badge badge--outline" id="todayStudyDuration"
+              title="练习 ${_fmtStudyDuration(o.todayPracticeSeconds || 0)} · 视频观看 ${_fmtStudyDuration(o.todayResourceSeconds || 0)}">今日累计学习 ${_fmtStudyDuration(o.todayStudySeconds != null ? o.todayStudySeconds : (o.todayStudyMinutes || 0) * 60)}</span>
           </div>
           <h2>${greeting}，${U.esc(userName)} 👋</h2>
           <p>当前学习节点：<b class="t-brand">${U.esc(currentNodeName)}</b> · 课程总进度 ${o.courseProgress}%</p>
@@ -222,7 +231,7 @@
         </div>
       </div>`;
 
-      _startSessionDurationTimer();
+      _startTodayDurationTimer();
 
       // 交互绑定
       U.$$('[data-goto]', el).forEach(b => b.addEventListener('click', () => Router.go(b.dataset.goto)));
@@ -241,12 +250,20 @@
           Router.go('practice');
           return;
         }
+        // 「继续学习」待办：跳转资源中心并定位到该知识点（与「我的学情」下钻同一机制）
+        if (t.dataset.target === 'resource' && t.dataset.kpName && typeof ResourceView !== 'undefined') {
+          ResourceView._pendingKp = t.dataset.kpName;
+          Router.go('resource');
+          return;
+        }
         if (t.dataset.target) Router.go(t.dataset.target);
       }));
     });
   }
 
-Router.register('dashboard', { title: '学习驾驶舱', mount: renderDashboard });
+// update：视图已 mount 过时再次进入也要刷新 —— 驾驶舱指标（尤其今日累计学习时长）
+// 必须反映最新数据，不能停留在首次进入的快照上。
+Router.register('dashboard', { title: '学习驾驶舱', mount: renderDashboard, update: renderDashboard });
 
 function _greetingByTime() {
   const h = new Date().getHours();

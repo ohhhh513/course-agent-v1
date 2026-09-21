@@ -118,6 +118,66 @@ def create_user(
     })
 
 
+class UpdateUserReq(BaseModel):
+    username: str = ""
+    name: str = ""
+    password: str = ""              # 留空 = 不修改密码
+    className: str = ""             # 学生
+    studentNo: str = ""             # 学生
+    dept: str = ""                  # 教师
+    title: str = ""                 # 教师
+
+
+@router.put("/users/{user_id}")
+def update_user(
+    user_id: str,
+    body: UpdateUserReq,
+    db: Session = Depends(get_db),
+    admin: User = Depends(_require_admin),
+):
+    """编辑教师/学生账号（管理员）。
+
+    - 角色不可改（user_id 前缀与角色绑定）
+    - 用户名改动会做唯一性校验；姓名改动同步刷新 avatar_char
+    - password 留空表示不修改
+    """
+    user = db.query(User).filter(User.user_id == user_id).first()
+    if not user:
+        return fail("账号不存在", 404)
+    if user.role == "admin":
+        return fail("不能编辑管理员账号", 400)
+
+    username = (body.username or "").strip()
+    if username and username != user.username:
+        if db.query(User).filter(User.username == username, User.user_id != user_id).first():
+            return fail("用户名已存在", 400)
+        user.username = username
+
+    name = (body.name or "").strip()
+    if name:
+        user.name = name
+        user.avatar_char = name[0]
+
+    if body.password:
+        if len(body.password) < 6:
+            return fail("密码至少 6 位", 400)
+        user.password = hash_password(body.password)
+
+    if user.role == "student":
+        user.class_name = (body.className or "").strip()
+        user.student_no = (body.studentNo or "").strip()
+    else:
+        user.dept = (body.dept or "").strip()
+        user.title = (body.title or "").strip()
+
+    db.commit()
+    d = to_user_dict(user)
+    d["username"] = user.username
+    d["className"] = user.class_name or ""
+    d["dept"] = user.dept or ""
+    return ok(d)
+
+
 class DeleteUserReq(BaseModel):
     confirmUsername: str = ""
     force: bool = False

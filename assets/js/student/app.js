@@ -9,8 +9,26 @@
     Theme.init();
     // 侧栏图标注入
     U.$$('.nav-item').forEach(n => n.insertAdjacentHTML('afterbegin', icon(n.dataset.icon, 'nav-item__icon')));
-    U.$('#msgBtn').innerHTML = icon('message');
+    U.$('#msgBtn').innerHTML = icon('message') + '<span class="topbar-badge" id="msgBadge" hidden>0</span>';
     initTopbar();
+
+    /* —— 私信未读角标（真实取自 messages 表中 read=false 的条数） —— */
+    let msgList = [];
+    function updateMsgBadge(count) {
+      const badge = U.$('#msgBadge');
+      if (!badge) return;
+      if (count > 0) {
+        badge.textContent = count > 99 ? '99+' : String(count);
+        badge.hidden = false;
+      } else {
+        badge.hidden = true;
+      }
+    }
+    function loadMsgBadge() {
+      return API.student.messages()
+        .then(r => updateMsgBadge((r.list || []).filter(m => !m.read).length))
+        .catch(() => {});
+    }
 
     /* ================================================================
        课程切换器（多课程 · Step 6）
@@ -18,7 +36,7 @@
        ================================================================ */
     const courseSel = U.$('#courseSel');
     function refreshCourseSel(preferId) {
-      API.course.my().then(list => {
+      return API.course.my().then(list => {
         const courses = Array.isArray(list) ? list : [];
         courseSel.innerHTML = '';
         if (!courses.length) {
@@ -36,9 +54,11 @@
         const target = preferId || (courses.some(c => c.courseId === cur) ? cur : courses[0].courseId);
         API.setActiveCourse(target);
         courseSel.value = target;
-      }).catch(() => {});
+        }).catch(() => {});
     }
-    refreshCourseSel();
+    // 首屏课程上下文 Promise：路由启动前必须等它（见 start.js），
+    // 否则首次登录（localStorage 里还没有 activeCourseId）时各视图会误判为「未加入课程」。
+    window.__courseReady = refreshCourseSel();
     courseSel.addEventListener('change', () => {
       if (!courseSel.value) return;
       API.setActiveCourse(courseSel.value);
@@ -80,6 +100,7 @@
     API.student.dashboard().then(d => {
       U.$('#updateTag').textContent = '学情更新于 ' + d.coreMetrics.updatedAt;
     });
+    loadMsgBadge();
 
     /* ================================================================
        导航侧栏 · 预警徽标（动态绑定后端真实 red + yellow 数量）
@@ -94,6 +115,8 @@
     U.$('#msgBtn').addEventListener('click', () => {
       API.student.messages().then(r => {
         const list = r.list || [];
+        msgList = list;
+        updateMsgBadge(list.filter(m => !m.read).length);
         const body = list.length
           ? `<div class="list" style="margin:-20px">${list.map((m, idx) => {
               const preview = (m.content || '').length > 48 ? (m.content.slice(0, 48) + '…') : (m.content || '');
@@ -148,6 +171,7 @@
               listEl.classList.add('is-read');
               const badge = listEl.querySelector('.badge');
               if (badge) badge.remove();
+              updateMsgBadge(msgList.filter(x => !x.read).length);
               if (window.refreshAlertBadge) window.refreshAlertBadge();
             })
             .catch(() => {});

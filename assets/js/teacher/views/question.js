@@ -459,7 +459,6 @@
             <button data-s="all" class="is-active">全部</button><button data-s="pending">待审核</button>
             <button data-s="approved">已审</button><button data-s="published">已发布</button><button data-s="archived">归档</button></div>
           <button class="btn btn--sm" id="bankNew">${icon('pencil')} 新建题目</button>
-          <button class="btn btn--sm btn--primary" id="bankImport">${icon('upload')} 批量导入</button>
         </div>
         <div class="card__body card__body--flush">
           <div class="tbl-wrap bank-table-scroll"><table class="tbl" id="bankTbl"></table></div>
@@ -473,134 +472,6 @@
       }));
       U.$('#bankSearch', box).addEventListener('input', e => { this.bankKeyword = e.target.value.trim(); this.bankPage = 1; this.loadBank(); });
       U.$('#bankNew', box).addEventListener('click', () => openNewQuestionModal(() => this.loadBank()));
-      U.$('#bankImport', box).addEventListener('click', () => {
-        Modal.open({
-          title: '批量导入题目', size: 'wide',
-          body: `
-          <div class="import-tabs">
-            <div class="import-tab is-active" data-tab="file">${icon('upload')} 文件上传</div>
-            <div class="import-tab" data-tab="json">${icon('code')} JSON 粘贴</div>
-          </div>
-
-          <div class="import-panel" data-panel="file">
-            <div class="callout callout--brand" style="margin-bottom:14px">${icon('info')}<div>
-              <b>支持格式</b>：Word (.docx)、PDF (.pdf)、文本 (.txt)、图片 (.png/.jpg/.jpeg)<br/>
-              <b>识别格式</b>：每题以数字开头（如 <code>1.</code> / <code>1)</code> / <code>第1题</code>），含题干、选项（A./B./C./D.）、答案（答案: B）
-            </div></div>
-            <input type="file" id="importFile" accept=".docx,.doc,.pdf,.txt,.png,.jpg,.jpeg,.bmp" style="display:none">
-            <div class="import-dropzone" id="importDrop">
-              <div style="font-size:48px">${icon('upload')}</div>
-              <div style="margin-top:8px"><b>点击选择文件</b> 或将文件拖拽到此处</div>
-              <div class="fz-12 t-dim" style="margin-top:4px">支持 .docx / .pdf / .txt / .png / .jpg / .jpeg</div>
-            </div>
-            <div id="importFileInfo" style="display:none;margin-top:12px"></div>
-          </div>
-
-          <div class="import-panel" data-panel="json" style="display:none">
-            <div class="callout callout--brand" style="margin-bottom:14px">${icon('info')}<div>
-              <b>粘贴 JSON 数组</b> — 适合已准备好结构化数据的场景
-            </div></div>
-            <p class="fz-12 t-dim" style="margin-bottom:6px">格式示例：<code>[{"stem":"题干...","type":"single","difficulty":3,"kp_id":"KP1","options":[{"key":"A","text":"选项A"},{"key":"B","text":"选项B","right":true}],"answer":"B"}]</code></p>
-            <textarea class="code-edit" id="importJson" style="min-height:280px;font-family:monospace;font-size:12px" placeholder='在此粘贴 JSON 数组...'></textarea>
-          </div>
-          `,
-          footer: `<button class="btn" data-close>取消</button>
-            <button class="btn btn--primary" id="importSubmit">${icon('check')} 开始导入</button>`,
-          onMount(ov, close) {
-            let importMode = 'file';  // 'file' 或 'json'
-            let selectedFile = null;
-            let parsedQuestions = null;
-
-            // Tab 切换
-            U.$$('.import-tab', ov).forEach(t => t.addEventListener('click', () => {
-              U.$$('.import-tab', ov).forEach(x => x.classList.remove('is-active'));
-              t.classList.add('is-active');
-              importMode = t.dataset.tab;
-              U.$$('.import-panel', ov).forEach(p => p.style.display = p.dataset.panel === importMode ? '' : 'none');
-            }));
-
-            // ===== 文件上传模式 =====
-            const dropzone = U.$('#importDrop', ov);
-            const fileInput = U.$('#importFile', ov);
-            const fileInfo = U.$('#importFileInfo', ov);
-
-            dropzone.addEventListener('click', () => fileInput.click());
-            ['dragenter', 'dragover'].forEach(ev => dropzone.addEventListener(ev, e => { e.preventDefault(); dropzone.classList.add('is-hover'); }));
-            ['dragleave', 'drop'].forEach(ev => dropzone.addEventListener(ev, e => { e.preventDefault(); dropzone.classList.remove('is-hover'); }));
-            dropzone.addEventListener('drop', e => {
-              if (e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0]);
-            });
-            fileInput.addEventListener('change', e => {
-              if (e.target.files.length) handleFile(e.target.files[0]);
-            });
-
-            function handleFile(f) {
-              selectedFile = f;
-              const ext = f.name.split('.').pop().toLowerCase();
-              const sizeKB = Math.round(f.size / 1024);
-              fileInfo.style.display = '';
-              fileInfo.innerHTML = `<div class="row fz-13" style="align-items:center">
-                ${icon('file')} <b>${f.name}</b> <span class="fz-12 t-dim">· ${sizeKB}KB · .${ext}</span>
-                <span class="spacer"></span><button class="btn btn--sm btn--outline" id="removeFile">移除</button>
-              </div>`;
-              U.$('#removeFile', fileInfo).addEventListener('click', () => {
-                selectedFile = null; fileInfo.style.display = 'none'; fileInput.value = '';
-              });
-            }
-
-            // ===== JSON 粘贴模式 =====
-            U.$('#importJson', ov).addEventListener('input', () => { parsedQuestions = null; });
-
-            // ===== 提交 =====
-            U.$('#importSubmit', ov).addEventListener('click', async () => {
-              U.$('#importSubmit', ov).disabled = true;
-              try {
-                if (importMode === 'file') {
-                  if (!selectedFile) return Toast.warn('请先选择文件');
-                  Toast.loading('正在解析 ' + selectedFile.name + ' ...');
-                  const fd = new FormData();
-                  fd.append('file', selectedFile);
-                  const resp = await fetch('/api/v1/question/import/file', {
-                    method: 'POST', headers: { 'Authorization': 'Bearer ' + (localStorage.getItem('token') || '') },
-                    body: fd
-                  });
-                  const r = await resp.json();
-                  const d = r.data || {};
-                  Toast.ok('导入完成', d.success + ' 成功 / ' + d.failed + ' 失败 · 共 ' + d.total + ' 题');
-                  if (d.errors && d.errors.length) {
-                    Modal.open({ title: '导入错误详情', body: `<pre style="white-space:pre-wrap;font-size:12px">${d.errors.join('\\n')}</pre>`, footer: `<button class="btn btn--primary" data-close>知道了</button>` });
-                  }
-                  if (d.warnings && d.warnings.length) {
-                    Toast.warn(d.warnings.join('; '));
-                  }
-                  close(); Question.loadBank();
-                } else {
-                  let qList = parsedQuestions;
-                  if (!qList) {
-                    const txt = U.$('#importJson', ov).value.trim();
-                    if (!txt) return Toast.warn('请先粘贴 JSON');
-                    try { qList = JSON.parse(txt); } catch (err) { return Toast.warn('JSON 格式错误：' + err.message); }
-                  }
-                  if (!Array.isArray(qList)) return Toast.warn('JSON 必须是数组格式');
-                  if (qList.length === 0) return Toast.warn('没有有效的题目');
-                  const body = qList[0].stem !== undefined ? { questions: qList } : qList;
-                  Toast.loading('正在导入 ' + body.questions.length + ' 道题目...');
-                  const r = await API.question.importBatch(body);
-                  Toast.ok('导入完成', r.success + ' 成功 / ' + r.failed + ' 失败 · 共 ' + r.total + ' 题');
-                  if (r.errors && r.errors.length) {
-                    Modal.open({ title: '导入错误详情', body: `<pre style="white-space:pre-wrap;font-size:12px">${r.errors.join('\\n')}</pre>`, footer: `<button class="btn btn--primary" data-close>知道了</button>` });
-                  }
-                  close(); Question.loadBank();
-                }
-              } catch (err) {
-                Toast.warn('导入失败：' + (err.message || String(err)));
-              } finally {
-                U.$('#importSubmit', ov).disabled = false;
-              }
-            });
-          }
-        });
-      });
       this.loadBank();
     },
 
@@ -613,18 +484,25 @@
         const totalPages = Math.max(1, Math.ceil((r.total || 0) / this.bankPageSize));
         if (this.bankPage > totalPages) { this.bankPage = totalPages; return this.loadBank(); }
         const stMap = { pending: ['待审核', 'badge--warn'], approved: ['已审', 'badge--ok'], published: ['已发布', 'badge--brand'], archived: ['归档', 'badge--outline'] };
+        const TYPE_LABEL = { single: '单选题', multiple: '多选题', blank: '填空题', judge: '判断题', essay: '简答题' };
         t.innerHTML = `
-          <thead><tr><th>题号</th><th>题干</th><th>题型</th><th>知识点</th><th>难度</th><th class="t-right">正确率</th><th>状态</th><th></th></tr></thead>
+          <thead><tr>
+            <th>题号</th><th>题干</th><th>题型</th><th>知识点</th><th>难度</th>
+            <th class="t-center">重难点</th>
+            <th class="t-center">正确率</th><th class="t-center">状态</th><th class="t-center">操作</th>
+          </tr></thead>
           <tbody>${r.list.map(q => {
             const [lbl, bd] = stMap[q.status] || ['—', 'badge--outline'];
+            const typeLabel = TYPE_LABEL[q.type] || q.type || '—';
             return `<tr>
               <td class="mono fz-12">${q.qId}</td>
               <td><div class="bank-stem-scroll">${U.esc(q.stem)}</div></td>
-              <td>${q.type}</td><td>${U.esc(q.kp)}</td>
+              <td>${typeLabel}</td><td>${U.esc(q.kp)}</td>
               <td>${U.stars(q.difficulty)}</td>
-              <td class="t-right num ${q.correctRate === null ? 't-dim' : (q.correctRate < 60 ? 't-danger' : '')}">${q.correctRate === null ? '—' : q.correctRate + '%'}</td>
-              <td><span class="badge ${bd}">${lbl}</span>${q.isKey ? ' <span class="badge badge--warn">◆</span>' : ''}</td>
-              <td class="t-right"><button class="btn btn--xs btn--ghost" data-edit="${q.qId}">编辑</button>
+              <td class="t-center">${q.isKey ? '<span class="badge badge--warn">◆ 重点</span>' : '<span class="t-dim">' + '—' + '</span>'}</td>
+              <td class="t-center num ${q.correctRate === null ? 't-dim' : (q.correctRate < 60 ? 't-danger' : '')}">${q.correctRate === null ? '—' : q.correctRate + '%'}</td>
+              <td class="t-center"><span class="badge ${bd}">${lbl}</span></td>
+              <td class="t-center"><button class="btn btn--xs btn--ghost" data-edit="${q.qId}">编辑</button>
                 <button class="btn btn--xs btn--ghost" data-del="${q.qId}">删除</button></td>
             </tr>`;
           }).join('')}</tbody>`;
@@ -635,23 +513,69 @@
 
         const pager = U.$('#bankPagination');
         if (!pager) return;
+        /* wallpaper 风格紧凑页码：首尾页恒显，当前页前后共 ~7 页，间隔处渲染可点击的「…」 */
+        const WIN = 7; /* 页码窗口宽度 */
+        const pages = [];
+        if (totalPages <= WIN + 2) {
+          for (let p = 1; p <= totalPages; p++) pages.push(p);
+        } else {
+          let lo = Math.max(2, this.bankPage - Math.floor((WIN - 1) / 2));
+          let hi = Math.min(totalPages - 1, lo + WIN - 2);
+          lo = Math.max(2, hi - WIN + 2);
+          pages.push(1);
+          if (lo > 2) pages.push('...');
+          for (let p = lo; p <= hi; p++) pages.push(p);
+          if (hi < totalPages - 1) pages.push('...');
+          pages.push(totalPages);
+        }
         pager.innerHTML = `
-          <button class="bank-page-btn" data-page-action="first" aria-label="第一页" ${this.bankPage === 1 ? 'disabled' : ''}>«</button>
-          <button class="bank-page-btn" data-page-action="prev" aria-label="上一页" ${this.bankPage === 1 ? 'disabled' : ''}>‹</button>
-          ${Array.from({ length: totalPages }, (_, i) => i + 1).map(p =>
-            `<button class="bank-page-btn ${p === this.bankPage ? 'is-active' : ''}" data-page="${p}">${p}</button>`
+          <button class="bank-page-btn" data-page-action="prev" aria-label="上一页" ${this.bankPage === 1 ? 'disabled' : ''}>«</button>
+          ${pages.map(p => p === '...'
+            ? `<button class="bank-page-btn bank-page-ellipsis" data-page-action="jump" title="输入页码跳转">...</button>`
+            : `<button class="bank-page-btn ${p === this.bankPage ? 'is-active' : ''}" data-page="${p}">${p}</button>`
           ).join('')}
-          <button class="bank-page-btn" data-page-action="next" aria-label="下一页" ${this.bankPage === totalPages ? 'disabled' : ''}>›</button>
-          <button class="bank-page-btn" data-page-action="last" aria-label="最后一页" ${this.bankPage === totalPages ? 'disabled' : ''}>»</button>`;
+          <button class="bank-page-btn" data-page-action="next" aria-label="下一页" ${this.bankPage === totalPages ? 'disabled' : ''}>»</button>`;
         const go = page => {
           if (page < 1 || page > totalPages || page === this.bankPage) return;
           this.bankPage = page; this.loadBank();
         };
+        const openJumpModal = () => {
+          Modal.open({
+            title: '输入页码',
+            body: `<input class="input" id="bankJumpInput" type="number" min="1" max="${totalPages}" placeholder="1 - ${totalPages}" style="width:100%">
+              <p class="modal__hint" id="bankJumpHint"></p>`,
+            footer: `<button class="btn btn--ghost" data-close>取消</button>
+              <button class="btn btn--primary" id="bankJumpOk">确认</button>`,
+            onMount(ov, close) {
+              const inp = U.$('#bankJumpInput', ov);
+              const ok = U.$('#bankJumpOk', ov);
+              const hint = U.$('#bankJumpHint', ov);
+              const doJump = () => {
+                const raw = inp.value.trim();
+                const v = parseInt(raw, 10);
+                if (raw === '' || isNaN(v)) {
+                  hint.textContent = '请输入页码数字';
+                  Toast.warn('请输入页码数字');
+                  return;
+                }
+                if (v < 1 || v > totalPages) {
+                  hint.textContent = `页码超出范围，请输入 1 - ${totalPages}`;
+                  Toast.warn(`请输入 1 - ${totalPages} 之间的页码`);
+                  return;
+                }
+                hint.textContent = '';
+                close(); go(v);
+              };
+              ok.addEventListener('click', doJump);
+              inp.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); doJump(); } });
+              setTimeout(() => { inp.focus(); inp.select(); }, 30);
+            }
+          });
+        };
         U.$$('[data-page]', pager).forEach(b => b.addEventListener('click', () => go(+b.dataset.page)));
-        U.$('[data-page-action="first"]', pager).addEventListener('click', () => go(1));
         U.$('[data-page-action="prev"]', pager).addEventListener('click', () => go(this.bankPage - 1));
         U.$('[data-page-action="next"]', pager).addEventListener('click', () => go(this.bankPage + 1));
-        U.$('[data-page-action="last"]', pager).addEventListener('click', () => go(totalPages));
+        U.$$('[data-page-action="jump"]', pager).forEach(b => b.addEventListener('click', openJumpModal));
       });
     },
 
@@ -1129,7 +1053,7 @@ function openNewQuestionModal(onDone) {
       ov.querySelector("#nqAddOpt").addEventListener("click", () => {
         const box = $("#nqOpts");
         const used = [...box.querySelectorAll("[data-opt]")].map(x => x.dataset.opt);
-        const next = "ABCDEFGH".find(k => !used.includes(k));
+        const next = "ABCDEFGH".split('').find(k => !used.includes(k));
         if (!next) { Toast.warn("最多 8 个选项"); return; }
         const div = document.createElement("div");
         div.className = "row"; div.style.cssText = "gap:8px";
