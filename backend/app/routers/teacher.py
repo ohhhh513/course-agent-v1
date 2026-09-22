@@ -3418,14 +3418,14 @@ def get_kp_detail(
     advance = _rel_list([(l.target, "advance") for l in links if l.relation == "advance" and l.source == kpId])
 
     # 资源/题目统计（真实表）
+    # 资源口径与学生端/学习路径同源：主 kp_id + kp_ids 多标签 + 同章未绑定 kp 的兜底资源
     chapter = ((kp.chapter if kp else None) or (node.chapter if node else "") or "")
-    if chapter:
-        res_rows = db.query(Resource).filter(
-            (Resource.kp_id == kpId)
-            | ((Resource.kp_id == "") & Resource.kp.like(f"{chapter}%"))
-        ).all()
-    else:
-        res_rows = db.query(Resource).filter(Resource.kp_id == kpId).all()
+    from ..services.catalog_helpers import resource_hits_kp
+    res_rows = [
+        r for r in db.query(Resource).all()
+        if resource_hits_kp(r, kpId)
+        or ((not (r.kp_id or "").strip()) and chapter and (r.kp or "").startswith(chapter))
+    ]
     video_res_ids = [r.res_id for r in res_rows if r.type == "video"]
     question_count = db.query(Question).filter(
         Question.kp_id == kpId, Question.status == "published",

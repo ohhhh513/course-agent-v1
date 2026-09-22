@@ -116,6 +116,10 @@ Graph = {
 >   上传/删除资源时同步，学生端会一直显示建路径时的旧值（新建行甚至是 0）。
 > - 前端章节行显示的「N 个资源」按**去重后的资源条数**统计（同一资源挂多个知识点只算一次），
 >   所以章节合计 ≤ 该章各知识点 `resCount` 之和。
+> - **点进某个知识点后列出的资源必须与 `resCount` 同口径**（主 `kp_id` ∪ `kp_ids`），
+>   即 `GET /student/resources?kpId=` 与图谱「挂载学习资源」都用
+>   `services/catalog_helpers.resource_hits_kp()` 过滤；历史上这里只匹配主 `kp_id`，
+>   会出现「标记 6 个、点进去只有 4 个」（2026-09-22 已修）。
 > - `mastery` / `progress` / `status` 在每次 `GET /graph/path` 时按真实答题与资源进度刷新。
 
 ### 2.6 Dashboard（驾驶舱）

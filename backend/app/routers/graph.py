@@ -278,20 +278,21 @@ def kp_detail(
             AnswerRecord.is_correct == 0,
         ).count()
 
-    # 挂载资源：精确匹配 kp_id + 同章节且未绑定具体 kp 的兜底资源
+    # 挂载资源：主 kp_id + kp_ids 多标签 + 同章节且未绑定具体 kp 的兜底资源。
+    # 口径必须与「学习路径 N 个资源」（learning_path.resource_count_map）一致，
+    # 否则图谱右侧「挂载学习资源」会比标记数少（多标签资源被漏掉）。
     resources = []
     if node or kp:
         chapter = (kp.chapter if kp else None) or (node.chapter if node else "")
         # 同一资源重复行只取最优（否则可能取到 0 那行，资源进度显示为未学）
         from ..services.resource_progress import progress_map as _progress_map
+        from ..services.catalog_helpers import resource_hits_kp
         prog_map = _progress_map(db, user.user_id) if user else {}
-        if chapter:
-            rows = db.query(Resource).filter(
-                (Resource.kp_id == kp_id) |
-                ((Resource.kp_id == "") & Resource.kp.like(f"{chapter}%"))
-            ).all()
-        else:
-            rows = db.query(Resource).filter(Resource.kp_id == kp_id).all()
+        rows = [
+            r for r in db.query(Resource).all()
+            if resource_hits_kp(r, kp_id)
+            or ((not (r.kp_id or "").strip()) and chapter and (r.kp or "").startswith(chapter))
+        ]
         resources = [
             {
                 "resId": r.res_id, "type": r.type, "title": r.title,

@@ -529,14 +529,19 @@ def student_resources(
     q = db.query(Resource).filter(Resource.course_id == course_id)
     if type and type != "all":
         q = q.filter(Resource.type == type)
-    if kpId:
-        q = q.filter(Resource.kp_id == kpId)
     if category:
         q = q.filter(Resource.category == category)
     if keyword:
         like = f"%{keyword}%"
         q = q.filter(Resource.title.like(like) | Resource.kp.like(like) | Resource.source.like(like))
     all_items = q.all()
+    # 知识点过滤放在「取回列表后」做，且与学习路径的资源计数同源：
+    # 主 kp_id 和 kp_ids 多标签都算命中。此前用 SQL 只匹配 Resource.kp_id == kpId，
+    # 会把「主挂载在别的知识点、但 kp_ids 里带上本知识点」的资源凭空丢掉
+    # （典型现象：左侧标 6 个资源、点进去只有 4 张卡片）。
+    if kpId:
+        from ..services.catalog_helpers import filter_resources_by_kp
+        all_items = filter_resources_by_kp(all_items, kpId)
     total = len(all_items)
     start = (page - 1) * size
     end = start + size
