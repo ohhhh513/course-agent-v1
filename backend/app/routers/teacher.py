@@ -1698,10 +1698,28 @@ def question_bank(
     if type: q = q.filter(Question.type == type)
     if status and status != "all": q = q.filter(Question.status == status)
     if difficulty: q = q.filter(Question.difficulty == difficulty)
-    if keyword:
-        k = f"%{keyword}%"
-        q = q.filter(Question.stem.like(k) | Question.q_id.like(k))
+
+    # 知识点名称来自当前课程图谱；搜索不能只查题干和题号，
+    # 还要覆盖主 kp_id 与多知识点 kp_ids。
+    kp_id_name = {
+        n.id: n.name for n in db.query(GraphNode).filter(
+            GraphNode.graph_type == "knowledge",
+            GraphNode.course_id == course_id,
+        ).all()
+    }
     all_items = q.all()
+    if keyword and keyword.strip():
+        needle = keyword.strip().casefold()
+
+        def matches_keyword(row):
+            if needle in (row.q_id or "").casefold() or needle in (row.stem or "").casefold():
+                return True
+            kp_ids = _parse_kp_ids(getattr(row, "kp_ids", None))
+            if row.kp_id and row.kp_id not in kp_ids:
+                kp_ids.insert(0, row.kp_id)
+            return any(needle in (kp_id_name.get(kid, "") or "").casefold() for kid in kp_ids)
+
+        all_items = [row for row in all_items if matches_keyword(row)]
 
     # 批量算 correctRate（从 answer_records 聚合）
     q_ids = [x.q_id for x in all_items]
@@ -1712,8 +1730,6 @@ def question_bank(
     for qid, total, correct in ar_cnt:
         if total > 0:
             correct_rate_map[qid] = round(correct / total * 100, 1)
-
-    kp_id_name = {n.id: n.name for n in db.query(GraphNode).filter(GraphNode.graph_type == "knowledge").all()}
 
     total = len(all_items)
     start = (page - 1) * size
@@ -3017,6 +3033,13 @@ def create_kp(
     ).first()
     if not ch:
         return fail("请选择所属章节", 400)
+    duplicate = db.query(GraphNode).filter(
+        GraphNode.graph_type == "knowledge",
+        GraphNode.course_id == course_id,
+        GraphNode.name == name,
+    ).first()
+    if duplicate:
+        return fail("已存在知识点", 400)
     kp_id = _next_graph_id(db, "KP", "knowledge")
     db.add(GraphNode(
         id=kp_id, graph_type="knowledge", course_id=course_id,
@@ -3051,6 +3074,14 @@ def update_kp(
     name = (body.name or "").strip()
     if not name:
         return fail("知识点名称不能为空", 400)
+    duplicate = db.query(GraphNode).filter(
+        GraphNode.graph_type == "knowledge",
+        GraphNode.course_id == course_id,
+        GraphNode.name == name,
+        GraphNode.id != kp_id,
+    ).first()
+    if duplicate:
+        return fail("已存在知识点", 400)
     kp.name = name
     kp.hours = body.hours or 0
     kp.is_key = body.isKey
@@ -3259,7 +3290,18 @@ def get_kp_topology(
         GraphLink.graph_type == "knowledge",
         GraphLink.course_id == course_id,
         GraphLink.relation.in_(_EDITABLE_EDGE_RELS),
-    ).all()
+    ).order_by(GraphLink.id.asc()).all()
+    # 两个知识点之间按无向组合只展示一条可编辑关系，避免历史重复边在画布中出现多条。
+    seen_pairs = set()
+    topology_edges = []
+    for link in edges:
+        pair = tuple(sorted((link.source, link.target)))
+        if pair in seen_pairs:
+            continue
+        seen_pairs.add(pair)
+        topology_edges.append({
+            "source": link.source, "target": link.target, "relation": link.relation,
+        })
     return ok({
         "nodes": [
             {
@@ -3273,10 +3315,7 @@ def get_kp_topology(
         ],
         "pendingCount": len(pending),
         "pending": [{"id": n.id, "name": n.name, "chapter": n.chapter or ""} for n in pending],
-        "edges": [
-            {"source": l.source, "target": l.target, "relation": l.relation}
-            for l in edges
-        ],
+        "edges": topology_edges,
     })
 
 
@@ -3315,7 +3354,8 @@ def save_kp_topology(
         GraphLink.relation.in_(_EDITABLE_EDGE_RELS),
     ).delete(synchronize_session=False)
 
-    seen = set()
+    seen_pairs = set()
+    accepted_edges = []
     saved_edges = 0
     for e in body.edges:
         s = str(e.get("source") or "").strip()
@@ -3325,10 +3365,11 @@ def save_kp_topology(
             continue
         if s not in valid_ids or t not in valid_ids or s == t:
             continue
-        key = (s, t, rel)
-        if key in seen:
+        pair = tuple(sorted((s, t)))
+        if pair in seen_pairs:
             continue
-        seen.add(key)
+        seen_pairs.add(pair)
+        accepted_edges.append((s, t, rel))
         db.add(GraphLink(
             graph_type="knowledge", course_id=course_id,
             source=s, target=t, relation=rel,
@@ -3337,7 +3378,7 @@ def save_kp_topology(
 
     # 同步前置到 kp_details（仅 pre 关系）
     pre_map: dict = {}
-    for s, t, rel in seen:
+    for s, t, rel in accepted_edges:
         if rel == "pre":
             pre_map.setdefault(t, []).append(s)
     for kid, pres in pre_map.items():

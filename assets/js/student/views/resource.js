@@ -885,6 +885,20 @@
   Router.register('resource', {
     title: '学习资源中心',
     mount: () => ResourceView.render(),
+    reset: () => {
+      ResourceView.filter = 'all';
+      ResourceView.keyword = '';
+      ResourceView.currentMode = 'all';
+      ResourceView.currentKpId = '';
+      ResourceView.currentKpName = '';
+      ResourceView.currentChapter = '';
+      ResourceView._pendingKp = '';
+      ResourceView._allPaths = [];
+      ResourceView._resList = [];
+      ResourceView._resCountByKp = {};
+      ResourceView._resCountTrusted = false;
+      ResourceView._activeChapter = null;
+    },
     // 已 mount 过时再次进入：仅当带着「待定位知识点」才重绘（避免无谓刷新覆盖用户当前筛选）
     update: () => { if (ResourceView._pendingKp) ResourceView.render(); },
   });

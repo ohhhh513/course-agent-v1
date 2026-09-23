@@ -9,6 +9,30 @@
     // 错题本「按章节知识点归纳」的筛选状态（跨重渲染保留）
     _wChapter: '', _wKpId: '', _wSumOpen: true,
 
+    resetCourseContext() {
+      clearInterval(this._timer);
+      this.tab = 'quiz';
+      this.state = 'select';
+      this.mode = null;
+      this.activeMode = null;
+      this.qs = [];
+      this.idx = 0;
+      this.answers = {};
+      this.picked = null;
+      this.startAt = 0;
+      this.sessionId = '';
+      this._wChapter = '';
+      this._wKpId = '';
+      this._wSumOpen = true;
+      this.lastWrongFilter = 'false';
+      this._weakKpIds = [];
+      this._lastKpIds = undefined;
+      this._lastQIds = undefined;
+      this._pendingTarget = null;
+      this._pendingResume = null;
+      this._startTab = null;
+    },
+
     render() {
       const el = U.$('#view-practice');
       el.innerHTML = `
@@ -33,7 +57,8 @@
       const box = U.$('#pBody');
       // 竞态防护：本视图要等两个接口才渲染。若期间用户已经切到「错题本」，
       // 后到的回调不能再把 #pBody 覆盖回练习页（否则切页会被"弹回去"）。
-      const stale = () => this.tab !== 'quiz' || U.$('#pBody') !== box;
+      const courseId = API.config.activeCourseId;
+      const stale = () => this.tab !== 'quiz' || U.$('#pBody') !== box || API.config.activeCourseId !== courseId;
       API.practice.modes().then(ms => {
         if (stale()) return;
         API.student.dashboard().then(d => {
@@ -148,12 +173,14 @@
 
     /* --- 练习入口（任意模式）：检查存档 → 继续挑战 / 开始新练习 --- */
     enterMode(mode, ms, cardEl) {
+      const courseId = API.config.activeCourseId;
       this.activeMode = mode;
       U.$$('#modeGrid .card[data-mode]').forEach(c => c.classList.toggle('is-active', c === cardEl));
       const panel = U.$('#modePanel');
       if (panel) panel.hidden = false;
       panel.innerHTML = `<div class="card"><div class="card__body t-dim fz-13">检查存档…</div></div>`;
       API.practice.current({ mode }).then(sv => {
+        if (API.config.activeCourseId !== courseId) return;
         // 有实际作答进度、且未做完，才算「存档」；空会话（0 题）不提示
         if (sv && sv.sessionId && sv.answered > 0 && sv.answered < sv.total) this._renderResumePanel(mode, ms, sv);
         else this._startMode(mode, ms);
@@ -196,11 +223,13 @@
 
     /* --- 顺序练习：选择章节 / 知识点 --- */
     _renderChapterPick(ms) {
+      const courseId = API.config.activeCourseId;
       const panel = U.$('#modePanel');
       if (panel) panel.hidden = false;
       const mCount = ((ms || []).find(x => x.key === 'order') || {}).count || 20;
       panel.innerHTML = `<div class="card"><div class="card__body t-dim fz-13">加载章节…</div></div>`;
       API.graph.get({ type: 'knowledge' }).then(g => {
+        if (API.config.activeCourseId !== courseId) return;
         const byCh = {};
         (g.nodes || []).forEach(n => {
           const ch = n.chapter || '其它';
@@ -261,6 +290,7 @@
 
     /* --- 开始练习 --- */
     start(mode, ms, opts) {
+      const courseId = API.config.activeCourseId;
       const m = (ms || []).find(x => x.key === mode);
       // 记录进入练习时的 tab，退出时按此恢复到对应列表
       this._startTab = this.tab;
@@ -270,6 +300,15 @@
       if (this._lastKpIds) body.kpIds = this._lastKpIds;
       if (this._lastQIds) body.qIds = this._lastQIds;
       API.practice.create(body).then(s => {
+        if (API.config.activeCourseId !== courseId) return;
+        if (!s.questions || !s.questions.length) {
+          this.qs = [];
+          this.state = 'select';
+          const target = U.$('#modePanel') || U.$('#pBody');
+          if (target) target.innerHTML = `<div class="callout callout--warn">${icon('info')}<div><b>当前课程暂无可练习题目</b><div class="fz-12 t-dim">请等待教师发布题目后再开始练习。</div></div></div>`;
+          Toast.warn('当前课程暂无可练习题目');
+          return;
+        }
         this.mode = mode; this.qs = s.questions; this.idx = 0; this.answers = {};
         this.sessionId = s.sessionId;  // 保存真实 sessionId，后续 submit/finish 要用
         this.state = 'quiz';
@@ -549,6 +588,7 @@
 
     /* --- 错题本（含「按章节 → 知识点」归纳筛选） --- */
     renderWrong(filter) {
+      const courseId = API.config.activeCourseId;
       const f = filter || 'false';
       this.lastWrongFilter = f;
       this.tab = 'wrong';
@@ -561,7 +601,7 @@
         kpId: kpId || undefined,
       }).then(r => {
         // 竞态防护：请求期间用户已切走（如切回「智能练习」）就不再覆盖页面
-        if (this.tab !== 'wrong' || U.$('#pBody') !== box) return;
+        if (this.tab !== 'wrong' || U.$('#pBody') !== box || API.config.activeCourseId !== courseId) return;
         const groups = r.groups || [];
         // 归纳面板里的知识点名（用于「已筛选」回显）
         let kpLabel = kpId;
@@ -804,6 +844,7 @@
 Router.register('practice', {
   title: '智能练习',
   mount: () => Practice.render(),
+  reset: () => Practice.resetCourseContext(),
   // 已 mount 过时再次进入：只在带「继续挑战」待办时重绘（否则会打断进行中的练习）
   update: () => { if (Practice._pendingResume) Practice.render(); },
 });

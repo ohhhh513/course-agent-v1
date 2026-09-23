@@ -47,13 +47,10 @@ def ai_sessions(
     user=Depends(get_current_user),
     course_id: str = Depends(get_current_course_id),
 ):
-    """答疑历史会话 —— 按**学生个人**检索（跨课程汇总）。
-
-    课程隔离落在写入侧（chat_sessions.course_id 由 AgentStore 按当前课程写入），
-    历史列表则维持「按学生 id」的语义：学生在不同课程里的提问都应看得到。
-    """
+    """答疑历史会话 —— 按当前学生和当前课程检索。"""
     rows = db.query(ChatSession).filter(
         ChatSession.user_id == user.user_id,
+        ChatSession.course_id == course_id,
     ).order_by(ChatSession.updated_at.desc()).all()
     items = [
         {
@@ -72,13 +69,16 @@ def ai_delete_session(
     session_id: str,
     db: Session = Depends(get_db),
     user=Depends(get_current_user),
+    course_id: str = Depends(get_current_course_id),
 ):
     """删除会话（含全部消息），仅限本人会话"""
-    s = db.query(ChatSession).filter(ChatSession.session_id == session_id).first()
+    s = db.query(ChatSession).filter(
+        ChatSession.session_id == session_id,
+        ChatSession.user_id == user.user_id,
+        ChatSession.course_id == course_id,
+    ).first()
     if not s:
         return fail("会话不存在", 404)
-    if s.user_id and s.user_id != user.user_id:
-        return fail("无权删除他人的会话", 403)
     db.query(ChatMessage).filter(ChatMessage.session_id == session_id).delete()
     db.delete(s)
     db.commit()
@@ -90,7 +90,15 @@ def ai_session_messages(
     session_id: str,
     db: Session = Depends(get_db),
     user=Depends(get_current_user),
+    course_id: str = Depends(get_current_course_id),
 ):
+    session = db.query(ChatSession).filter(
+        ChatSession.session_id == session_id,
+        ChatSession.user_id == user.user_id,
+        ChatSession.course_id == course_id,
+    ).first()
+    if not session:
+        return fail("会话不存在", 404)
     rows = db.query(ChatMessage).filter(ChatMessage.session_id == session_id).order_by(ChatMessage.id.asc()).all()
     if not rows:
         # 不再兜底返回他人的 chat_messages —— 新会话无消息则返回空

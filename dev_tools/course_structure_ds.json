@@ -631,7 +631,7 @@
     "edges": []
   },
   "questionsFile": null,
-  "textbooksRoot": "\"D:\\all_contest\\2026_9_4_course-agent\\course-agent-v1.0\\assets\\resources\\data-structures-1-9\\textbooks\"",
-  "videosRoot": "\"D:\\all_contest\\2026_9_4_course-agent\\course-agent-v1.0\\assets\\resources\\data-structures-1-9\\videos\"",
-  "slidesRoot": "\"D:\\all_contest\\2026_9_4_course-agent\\course-agent-v1.0\\assets\\resources\\data-structures-1-9\\slides\""
+  "textbooksRoot": "D:\\桌面\\stuco\\course-agent-v1\\resources\\data-structures-1-9\\textbooks",
+  "videosRoot": "D:\\桌面\\stuco\\course-agent-v1\\resources\\data-structures-1-9\\videos",
+  "slidesRoot": "D:\\桌面\\stuco\\course-agent-v1\\resources\\data-structures-1-9\\slides"
 }

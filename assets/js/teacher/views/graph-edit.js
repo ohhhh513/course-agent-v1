@@ -30,6 +30,7 @@ const TeacherGraphEdit = {
   _nodeEls: null,      // Map<id, { g, core, plus, r }>
   _edgeEls: null,      // [ { g, hit, line, text, e } ]
   _keyBound: false,
+  _loadToken: 0,
 
   COLORS: [
     '#0f766e', '#0284c7', '#7c3aed', '#db2777',
@@ -214,7 +215,11 @@ const TeacherGraphEdit = {
   /* 数据                                                                 */
   /* ------------------------------------------------------------------ */
   load() {
+    const loadToken = ++this._loadToken;
+    const courseId = API.config.activeCourseId;
     API.teacher.kpTopology().then(d => {
+      // 切换课程或重新加载后，旧课程的请求不能覆盖当前图谱。
+      if (loadToken !== this._loadToken || courseId !== API.config.activeCourseId) return;
       this.data = d;
       this.sel = null;
       this.linking = null;
@@ -227,7 +232,10 @@ const TeacherGraphEdit = {
       // 再补一帧兜底：避免依赖 rAF 在后台标签页/无头环境被节流导致首屏空白。
       this.fitView();
       requestAnimationFrame(() => this.fitView());
-    }).catch(err => Toast.error('加载图谱失败', (err && err.message) || ''));
+    }).catch(err => {
+      if (loadToken !== this._loadToken || courseId !== API.config.activeCourseId) return;
+      Toast.error('加载图谱失败', (err && err.message) || '');
+    });
   },
 
   autoPlacePending() {
@@ -492,6 +500,11 @@ const TeacherGraphEdit = {
   },
 
   _edgeKey(e) { return `${e.source}|${e.target}|${e.relation}`; },
+
+  // 关系唯一性按两个知识点的无向组合判断，与发起连线的方向无关。
+  _pairKey(source, target) {
+    return source < target ? `${source}|${target}` : `${target}|${source}`;
+  },
 
   _edgeGeom(a, b) {
     const dx = b.x - a.x, dy = b.y - a.y, len = Math.hypot(dx, dy) || 1;
@@ -759,10 +772,11 @@ const TeacherGraphEdit = {
 
   _finishLink(targetId) {
     const { src, rel } = this.linking;
+    const pairKey = this._pairKey(src, targetId);
     const exists = (this.data.edges || []).some(e =>
-      e.source === src && e.target === targetId && e.relation === rel);
+      this._pairKey(e.source, e.target) === pairKey);
     if (exists) {
-      Toast.warn('两点之间已有该类型连线');
+      Toast.warn('两个知识点之间只允许一种关系');
       this._cancelLinking();
       return;
     }

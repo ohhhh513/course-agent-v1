@@ -35,11 +35,50 @@
        数据源 = GET /course/my；切换即 setActiveCourse + 重绘当前视图
        ================================================================ */
     const courseSel = U.$('#courseSel');
+    window.renderStudentNoCourse = function (el) {
+      if (!el) return;
+      el.innerHTML = `
+        <div class="student-course-empty">
+          <div class="card student-course-empty__card">
+            <div class="card__body">
+              <div class="empty">
+                ${icon('book')}
+                <b>尚未加入课程</b>
+                <p>请先点击右上角的「+」加入课程，加入后即可查看学习内容。</p>
+              </div>
+            </div>
+          </div>
+        </div>`;
+    };
+    Router.emptyState = (key, el) => {
+      if (API.config.activeCourseId) return false;
+      window.renderStudentNoCourse(el);
+      return true;
+    };
+    function refreshStudentViewsAfterCourseChange() {
+      Object.values(Router.views).forEach(view => {
+        if (typeof view.reset === 'function') view.reset();
+        view._mounted = false;
+      });
+      const key = Router.current;
+      if (key && Router.views[key]) Router.go(key);
+      refreshStudentUpdatedAt();
+    }
+    function refreshStudentUpdatedAt() {
+      const courseId = API.config.activeCourseId;
+      if (!courseId) return;
+      API.student.dashboard().then(d => {
+        if (API.config.activeCourseId !== courseId) return;
+        const tag = U.$('#updateTag');
+        if (tag && d && d.coreMetrics) tag.textContent = '学情更新于 ' + d.coreMetrics.updatedAt;
+      }).catch(() => {});
+    }
     function refreshCourseSel(preferId) {
       return API.course.my().then(list => {
         const courses = Array.isArray(list) ? list : [];
         courseSel.innerHTML = '';
         if (!courses.length) {
+          API.setActiveCourse('');
           const o = document.createElement('option');
           o.value = ''; o.textContent = '未加入课程 · 点 + 加入';
           courseSel.appendChild(o);
@@ -63,7 +102,7 @@
       if (!courseSel.value) return;
       API.setActiveCourse(courseSel.value);
       Toast.info('已切换课程', courseSel.options[courseSel.selectedIndex].text);
-      Router.rerender();
+      refreshStudentViewsAfterCourseChange();
     });
 
     /* —— 凭邀请码加入课程 —— */
@@ -85,8 +124,7 @@
               API.course.join({ inviteCode: code }).then(r => {
                 close();
                 Toast.ok(r.alreadyJoined ? '你已在该课程中' : '加入成功', r.name);
-                refreshCourseSel(r.courseId);
-                Router.rerender();
+                refreshCourseSel(r.courseId).then(() => refreshStudentViewsAfterCourseChange());
               }).catch(err => Toast.error('加入失败', err && err.message || ''));
             });
           }
@@ -97,9 +135,7 @@
     /* ================================================================
        顶栏：更新时间 + 消息
        ================================================================ */
-    API.student.dashboard().then(d => {
-      U.$('#updateTag').textContent = '学情更新于 ' + d.coreMetrics.updatedAt;
-    });
+    refreshStudentUpdatedAt();
     loadMsgBadge();
 
     /* ================================================================

@@ -298,6 +298,7 @@ const Router = {
   views: {},
   current: null,
   titles: {},
+  emptyState: null,
   register(key, cfg) { this.views[key] = cfg; },
   go(key, params) {
     if (!this.views[key]) return;
@@ -317,6 +318,7 @@ const Router = {
     location.hash = '#' + key;
     this.current = key;
     U.$('.content').scrollTo ? window.scrollTo({ top: 0, behavior: 'smooth' }) : null;
+    if (this.emptyState && this.emptyState(key, el, params)) return;
     if (cfg.mount && !cfg._mounted) { cfg.mount(params); cfg._mounted = true; }
     else if (cfg.update) cfg.update(params);
   },

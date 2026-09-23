@@ -28,6 +28,17 @@ const ViewFns = {
   'graph-edit': () => TeacherGraphEdit.render(),
 };
 
+/* —— 切换课程后让所有教师端视图重新挂载 ——
+   仅重绘当前页不够：Router 会把其它页面保留为已挂载状态，之后再次进入时
+   不会执行 mount，页面就会继续显示上一门课程的旧 DOM 和旧数据。 */
+function refreshTeacherViewsAfterCourseChange() {
+  Object.values(Router.views).forEach(view => { view._mounted = false; });
+  const key = Router.current;
+  if (!key || !ViewFns[key]) return;
+  ViewFns[key]();
+  if (Router.views[key]) Router.views[key]._mounted = true;
+}
+
 /* —— 路由守卫（需提前返回，独立 IIFE） —— */
 (function () {
   if (window.Auth && !Auth.requireAuth('teacher')) return;
@@ -108,8 +119,13 @@ window.__courseReady.then(() => {
               </div>`,
               footer: `<button class="btn btn--primary" data-close>我知道了</button>`,
             });
-            refreshCourseSel(r.courseId);
-            if (ViewFns[Router.current]) ViewFns[Router.current]();
+            // 建课接口返回后，课程下拉刷新是异步的。必须等新课程上下文
+            // 写入 API.config/localStorage 后再重绘当前视图，否则目录页
+            // 会先按旧的 X-Course-Id 请求，表现为仍显示上一门课程。
+            API.setActiveCourse(r.courseId);
+            refreshCourseSel(r.courseId).then(() => {
+              refreshTeacherViewsAfterCourseChange();
+            });
           }).catch(err => Toast.error('创建失败', err && err.message || ''));
         });
       }
@@ -122,7 +138,7 @@ courseSel.addEventListener('change', () => {
   if (!courseSel.value) return;
   API.setActiveCourse(courseSel.value);
   Toast.info('已切换课程', courseSel.options[courseSel.selectedIndex].text);
-  if (ViewFns[Router.current]) ViewFns[Router.current]();
+  refreshTeacherViewsAfterCourseChange();
 });
 
 /* —— 查看当前课程邀请码（GET /course/my 中教师角色带 inviteCode） —— */

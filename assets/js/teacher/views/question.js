@@ -8,7 +8,19 @@
     gen: { kpIds: [], difficulty: 3, count: 6 },
     bankFilter: 'all', bankKeyword: '', bankPage: 1, bankPageSize: 10,
     draftFilter: 'all',
+    _renderToken: 0,
+    _renderCourseId: '',
     render() {
+      const previousCourseId = this._renderCourseId;
+      this._renderCourseId = API.config.activeCourseId;
+      this._renderToken += 1;
+      if (previousCourseId !== this._renderCourseId) {
+        // 切换课程后不能沿用上一门课程的知识点选择、草稿生成状态。
+        this.gen.kpIds = [];
+        this._drafts = [];
+        this._genBusy = false;
+        this.bankPage = 1;
+      }
       const el = U.$('#view-question');
       if (!API.config.activeCourseId) {
         el.innerHTML = `<div class="card"><div class="card__body"><div class="empty" style="padding:48px;text-align:center"><b>尚未创建或选择课程</b><p class="fz-12 t-dim">请先建课后再进入题库与 AI 出题。</p></div></div></div>`;
@@ -32,8 +44,13 @@
     },
 
     renderGen() {
+      const renderToken = this._renderToken;
+      const renderCourseId = this._renderCourseId;
+      const isCurrent = () => renderToken === this._renderToken
+        && renderCourseId === API.config.activeCourseId;
       const box = U.$('#qBody');
       API.question.genConfig({}).then(cfg => {
+        if (!isCurrent()) return;
         this._cfg = cfg;
         box.innerHTML = `
         <div class="gen-layout">
@@ -164,12 +181,17 @@
             difficulty: this.gen.difficulty, count: this.gen.count,
             requirement: this.gen.requirement || ''
           }, {
-            onMeta: (d) => { const p = U.$('#genProc', box); if (p) p.textContent = `批次 ${d.batchId} · 共 ${d.count} 题`; },
+            onMeta: (d) => {
+              if (!isCurrent()) return;
+              const p = U.$('#genProc', box); if (p) p.textContent = `批次 ${d.batchId} · 共 ${d.count} 题`;
+            },
             onLog: (d) => {
+              if (!isCurrent()) return;
               const p = U.$('#genProc', box);
               if (p && d.type === 'tool_start') p.textContent = `正在调用 ${d.name} …`;
             },
             onDraft: (d) => {
+              if (!isCurrent()) return;
               this._drafts.push(d);
               const i = this._drafts.length - 1;
               if (!U.$('#genList', box)) {
@@ -198,8 +220,9 @@
               }
               box.scrollTop = box.scrollHeight;
             },
-            onError: (d) => Toast.err('生成出错', (d && d.message) || ''),
+            onError: (d) => { if (isCurrent()) Toast.err('生成出错', (d && d.message) || ''); },
             onDone: (d) => {
+              if (!isCurrent()) return;
               this._genBusy = false;
               const progressStatus = U.$('#genProgressStatus', box);
               if (progressStatus) progressStatus.remove();
@@ -208,6 +231,7 @@
               Toast.ok('AI 出题完成', `${d.count || 0} 道草稿已存入草稿箱`);
             },
           }).catch((e) => {
+            if (!isCurrent()) return;
             this._genBusy = false;
             const progressText = U.$('#genProgressText', box);
             if (progressText) progressText.textContent = '生成已中断，请重试';
@@ -280,8 +304,14 @@
 
     loadDrafts() {
       const list = U.$('#draftList');
+      const renderToken = this._renderToken;
+      const renderCourseId = this._renderCourseId;
+      const isCurrent = () => renderToken === this._renderToken
+        && renderCourseId === API.config.activeCourseId;
+      if (!list) return;
       list.innerHTML = `<div class="fz-12 t-dim" style="padding:14px">加载中…</div>`;
       API.question.drafts({ status: this.draftFilter }).then(r => {
+        if (!isCurrent()) return;
         if (!r.list.length) {
           list.innerHTML = `<div class="fz-12 t-dim" style="padding:20px;text-align:center">
             ${icon('pencil')} 暂无草稿——去「AI 智能出题」生成，草稿会自动出现在这里</div>`;
@@ -324,6 +354,7 @@
           }).catch(err => Toast.err('删除失败', err && err.message));
         }));
       }).catch(err => {
+        if (!isCurrent()) return;
         list.innerHTML = `<div class="fz-12 t-dim" style="padding:14px">加载失败：${U.esc(err.message || '')}</div>`;
       });
     },
@@ -455,7 +486,7 @@
         <div class="card__head">
           <h3>${icon('file')} 题库${API.config.activeCourseId ? '（' + U.esc(API.config.activeCourseId) + '）' : ''}</h3>
           <span class="spacer"></span>
-          <div class="search" style="width:180px">${icon('search2')}<input class="input" id="bankSearch" placeholder="题号 / 题干 / 知识点"></div>
+          <div class="search" style="width:180px">${icon('search2')}<input class="input" id="bankSearch" placeholder="题干 / 知识点"></div>
           <div class="seg" id="bankSeg">
             <button data-s="all" class="is-active">全部</button><button data-s="pending">待审核</button>
             <button data-s="approved">已审</button><button data-s="published">已发布</button><button data-s="archived">归档</button></div>
@@ -476,11 +507,25 @@
       this.loadBank();
     },
 
+    bankHighlight(text) {
+      const value = String(text == null ? '' : text);
+      const keyword = (this.bankKeyword || '').trim();
+      if (!keyword) return U.esc(value);
+      const escapedKeyword = U.esc(keyword).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      return U.esc(value).replace(new RegExp(escapedKeyword, 'gi'), hit =>
+        `<mark class="bank-hit">${hit}</mark>`);
+    },
+
     loadBank() {
+      const renderToken = this._renderToken;
+      const renderCourseId = this._renderCourseId;
+      const isCurrent = () => renderToken === this._renderToken
+        && renderCourseId === API.config.activeCourseId;
       API.question.bank({
         status: this.bankFilter, keyword: this.bankKeyword,
         page: this.bankPage, size: this.bankPageSize
       }).then(r => {
+        if (!isCurrent()) return;
         const t = U.$('#bankTbl'); if (!t) return;
         const totalPages = Math.max(1, Math.ceil((r.total || 0) / this.bankPageSize));
         if (this.bankPage > totalPages) { this.bankPage = totalPages; return this.loadBank(); }
@@ -492,13 +537,16 @@
             <th class="t-center">重难点</th>
             <th class="t-center">正确率</th><th class="t-center">状态</th><th class="t-center">操作</th>
           </tr></thead>
-          <tbody>${r.list.map(q => {
+        <tbody>${r.list.map(q => {
             const [lbl, bd] = stMap[q.status] || ['—', 'badge--outline'];
             const typeLabel = TYPE_LABEL[q.type] || q.type || '—';
+            const kpText = (q.tags && q.tags.length
+              ? q.tags.map(t => t.name || t.kpName || '').filter(Boolean).join('、')
+              : (q.kp || ''));
             return `<tr>
-              <td class="mono fz-12">${q.qId}</td>
-              <td><div class="bank-stem-scroll">${U.esc(q.stem)}</div></td>
-              <td>${typeLabel}</td><td>${U.esc(q.kp)}</td>
+              <td class="mono fz-12">${this.bankHighlight(q.qId)}</td>
+              <td><div class="bank-stem-scroll">${this.bankHighlight(q.stem)}</div></td>
+              <td>${typeLabel}</td><td>${this.bankHighlight(kpText)}</td>
               <td>${U.stars(q.difficulty)}</td>
               <td class="t-center">${q.isKey ? '<span class="badge badge--warn">◆ 重点</span>' : '<span class="t-dim">' + '—' + '</span>'}</td>
               <td class="t-center num ${q.correctRate === null ? 't-dim' : (q.correctRate < 60 ? 't-danger' : '')}">${q.correctRate === null ? '—' : q.correctRate + '%'}</td>

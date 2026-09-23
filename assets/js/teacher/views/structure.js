@@ -7,14 +7,22 @@
 const TeacherStructure = {
   data: null,
   selectedChapterId: null,
+  _renderToken: 0,
 
   render() {
     const el = U.$('#view-structure');
+    const courseId = API.config.activeCourseId;
+    const renderToken = ++this._renderToken;
+    // 切换课程后不能沿用上一门课程的章节选择，避免上传/操作误指向旧章节。
+    this.selectedChapterId = null;
     el.innerHTML = `<div class="card"><div class="card__body" style="padding:30px;text-align:center">${icon('refresh')} 加载中…</div></div>`;
     API.teacher.structure().then(d => {
+      // 课程切换或再次重绘后，旧请求即使晚返回也不能覆盖当前课程页面。
+      if (renderToken !== this._renderToken || courseId !== API.config.activeCourseId) return;
       this.data = d;
       this._paint();
     }).catch(err => {
+      if (renderToken !== this._renderToken || courseId !== API.config.activeCourseId) return;
       el.innerHTML = `<div class="empty">${icon('alert')}<b>加载失败</b><p>${U.esc(err.message || '')}</p></div>`;
     });
   },
@@ -176,13 +184,8 @@ const TeacherStructure = {
           <input class="input" type="text" id="trTitle" placeholder="默认使用文件名"></label>
         <div class="stack" style="gap:6px">
           <span class="fz-12 t-dim">KP 标签（可多选；标签=知识点）</span>
-          <div id="trKpTags" class="chips" style="max-height:140px;overflow:auto">
-            ${kps.map(k => `<button type="button" class="chip" data-kp="${U.esc(k.id)}" data-ch="${U.esc(k.chapter || '')}">${U.esc(k.name)}</button>`).join('')
-              || '<span class="fz-11 t-dim">暂无知识点，可在下方输入新建</span>'}
-          </div>
-          <div class="row" style="gap:6px">
-            <input class="input" id="trNewKp" placeholder="新建 KP 标签名，回车加入" style="flex:1">
-            <button type="button" class="btn btn--sm btn--outline" id="trAddKp">新建</button>
+          <div id="trKpTags" class="stack" style="gap:10px;max-height:190px;overflow:auto">
+            <span class="fz-11 t-dim">加载中…</span>
           </div>
         </div>
         <p class="fz-12 t-dim">PDF / PPT / TXT / JSON 上传后自动 RAG 切片。</p>
@@ -204,10 +207,33 @@ const TeacherStructure = {
           });
         };
 
+        const renderKpGroup = (title, subtitle, list, emptyText) => `
+          <div class="stack" style="gap:5px">
+            <div class="row fz-11" style="gap:6px">
+              <b>${title}</b>${subtitle ? `<span class="t-dim">${subtitle}</span>` : ''}
+            </div>
+            <div class="chips" style="align-items:center">
+              ${list.map(k => `<button type="button" class="chip" data-kp="${U.esc(k.id)}" data-ch="${U.esc(k.chapter || '')}">${U.esc(k.name)}</button>`).join('')
+                || `<span class="fz-11 t-dim">${emptyText}</span>`}
+            </div>
+          </div>`;
+
+        const renderKpGroups = (chId) => {
+          const ch = chapters.find(c => c.id === chId);
+          const primary = ch ? kps.filter(k => k.chapter === ch.name) : [];
+          const related = ch ? kps.filter(k => k.chapter !== ch.name) : kps;
+          tagBox.innerHTML = [
+            renderKpGroup('主知识点', '', primary, '本章节暂无知识点'),
+            renderKpGroup('涉及知识点', '', related, '暂无其他章节知识点'),
+          ].join('');
+          paint();
+        };
+
         const selectChapterKps = (chId) => {
           selected.clear();
           const ch = chapters.find(c => c.id === chId);
-          if (!ch) { paint(); return; }
+          renderKpGroups(chId);
+          if (!ch) return;
           kps.filter(k => k.chapter === ch.name).forEach(k => selected.add(k.id));
           paint();
         };
@@ -223,41 +249,6 @@ const TeacherStructure = {
         U.$('#trChapter', ov).addEventListener('change', () => selectChapterKps(U.$('#trChapter', ov).value));
         selectChapterKps(U.$('#trChapter', ov).value);
 
-        async function addNewKp() {
-          const name = (U.$('#trNewKp', ov).value || '').trim();
-          if (!name) { Toast.warn('请输入标签名'); return; }
-          try {
-            const r = await API.teacher.createKp({
-              name,
-              chapterId: U.$('#trChapter', ov).value,
-              hours: 0,
-              isKey: false,
-            });
-            const id = (r && (r.id || r.kpId)) || '';
-            const chip = document.createElement('button');
-            chip.type = 'button';
-            chip.className = 'chip';
-            chip.dataset.kp = id;
-            chip.textContent = name;
-            tagBox.appendChild(chip);
-            selected.add(id);
-            paint();
-            U.$('#trNewKp', ov).value = '';
-            // 刷新缓存
-            if (TeacherStructure.data) {
-              TeacherStructure.data.kpOptions = TeacherStructure.data.kpOptions || [];
-              TeacherStructure.data.kpOptions.push({ id, name, chapter: '' });
-            }
-            Toast.ok('已新建 KP 标签', name);
-          } catch (err) {
-            Toast.error('新建失败', (err && err.message) || '');
-          }
-        }
-        U.$('#trAddKp', ov).addEventListener('click', addNewKp);
-        U.$('#trNewKp', ov).addEventListener('keydown', e => {
-          if (e.key === 'Enter') { e.preventDefault(); addNewKp(); }
-        });
-
         U.$('#trFile', ov).addEventListener('change', e => {
           const f = e.target.files[0];
           const titleIn = U.$('#trTitle', ov);
@@ -272,7 +263,13 @@ const TeacherStructure = {
           const chId = U.$('#trChapter', ov).value;
           if (!chId) { Toast.error('请选择章节目录'); return; }
           const ch = chapters.find(c => c.id === chId);
-          const kpIds = [...selected];
+          const primaryIds = kps
+            .filter(k => k.chapter === (ch ? ch.name : '') && selected.has(k.id))
+            .map(k => k.id);
+          const relatedIds = kps
+            .filter(k => k.chapter !== (ch ? ch.name : '') && selected.has(k.id))
+            .map(k => k.id);
+          const kpIds = [...primaryIds, ...relatedIds];
           const fd = new FormData();
           fd.append('file', f);
           fd.append('title', U.$('#trTitle', ov).value.trim());
@@ -568,10 +565,10 @@ const TeacherStructure = {
   _kpModal(chapterId) {
     const ch = (this.data.chapters || []).find(c => c.id === chapterId);
     Modal.open({
-      title: '添加知识点标签',
+      title: '新增知识点',
       body: `
         <div class="stack" style="gap:12px">
-          <label class="stack" style="gap:4px"><span class="fz-12 t-dim">所属章节</span>
+          <label class="stack" style="gap:4px"><span class="fz-12 t-dim">所属章节（主知识点归属）</span>
             <input class="input" value="${U.esc(ch ? ch.name : '')}" disabled></label>
           <label class="stack" style="gap:4px"><span class="fz-12 t-dim">知识点名称</span>
             <input class="input" id="kpNewName" placeholder="如：二分查找"></label>
@@ -582,6 +579,11 @@ const TeacherStructure = {
         U.$('#kpNewSave', ov).addEventListener('click', () => {
           const name = U.$('#kpNewName', ov).value.trim();
           if (!name) { Toast.warn('请输入知识点名称'); return; }
+          const duplicate = (TeacherStructure.data.kpOptions || []).some(k => (k.name || '').trim() === name);
+          if (duplicate) {
+            Toast.warn('已存在知识点', '请更换知识点名称');
+            return;
+          }
           API.teacher.createKp({
             name,
             chapterId,

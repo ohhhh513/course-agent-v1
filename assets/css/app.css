@@ -25,6 +25,19 @@
 .card__head--col .badge { align-self: flex-start; }
 
 /* ---------- 教学驾驶舱 · 卡片滚动与对齐 ---------- */
+.student-course-empty {
+  min-height: calc(100vh - var(--topbar-h) - 100px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.student-course-empty__card {
+  width: min(520px, 100%);
+}
+.student-course-empty .empty {
+  padding: 58px 28px;
+}
+
 .dash-todo-card { min-width: 0; align-self: stretch; overflow: hidden; }
 .dash-todo-card__body { height: 320px; min-height: 320px; flex: 0 0 320px; overflow-y: auto; overflow-x: hidden; }
 .dash-kp-ranking-card { min-width: 0; min-height: 0; align-self: stretch; }
@@ -908,6 +921,10 @@
 .bank-stem-scroll::-webkit-scrollbar { width: 5px; }
 .bank-stem-scroll::-webkit-scrollbar-track { background: var(--surface-3); border-radius: var(--r-full); }
 .bank-stem-scroll::-webkit-scrollbar-thumb { background: var(--brand-300); border-radius: var(--r-full); }
+.bank-hit {
+  color: #15803d; background: #dcfce7; border-radius: 3px; padding: 0 2px;
+  font-weight: 700;
+}
 
 /* ---------- 编辑习题弹窗 ---------- */
 .question-edit { display: flex; flex-direction: column; gap: 14px; }
@@ -1326,3 +1343,9 @@
 #sessBox .list__item:hover .sess-del { display: flex; }
 .sess-del:hover { background: var(--danger-soft, #fee2e2); color: var(--danger); }
 .sess-del.is-arm { display: flex; background: var(--danger); color: #fff; }
+.report-archive-list {
+  max-height: 480px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}

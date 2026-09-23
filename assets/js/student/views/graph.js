@@ -353,4 +353,13 @@
     }
   };
 
-Router.register('graph', { title: '课程图谱导航', mount: () => GraphView.render() });
+Router.register('graph', {
+  title: '课程图谱导航',
+  mount: () => GraphView.render(),
+  reset: () => {
+    GraphView.type = 'knowledge';
+    GraphView.sideTab = 'overview';
+    GraphView._graph = null;
+    GraphView._cur = null;
+  },
+});

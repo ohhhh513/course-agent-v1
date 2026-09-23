@@ -44,6 +44,10 @@
   function renderDashboard() {
     _stopTodayDurationTimer();
     const el = U.$('#view-dashboard');
+    if (!API.config.activeCourseId) {
+      if (window.renderStudentNoCourse) window.renderStudentNoCourse(el);
+      return;
+    }
     el.innerHTML = U.skeleton(400);
     API.student.dashboard().then(d => {
       const o = d.overview, m = d.coreMetrics;

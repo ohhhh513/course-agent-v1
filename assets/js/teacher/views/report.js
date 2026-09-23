@@ -39,7 +39,7 @@
         </div>
         <div class="card">
           <div class="card__head"><h3>${icon('calendar')} 历史归档</h3></div>
-          <div class="card__body card__body--flush"><div class="list" id="repList"></div></div>
+          <div class="card__body card__body--flush"><div class="list report-archive-list" id="repList"></div></div>
         </div>
       </div>`;
 
@@ -48,23 +48,39 @@
         U.$('#repList').innerHTML = `<div class="empty" style="padding:30px;text-align:center"><b>尚未创建或选择课程</b></div>`;
         return;
       }
-      API.report.list({}).then(r => {
-        U.$('#repList').innerHTML = r.list.map(rp => `
+      this.loadArchive();
+    },
+
+    loadArchive() {
+      const listEl = U.$('#repList');
+      if (!listEl) return Promise.resolve();
+      return API.report.list({}).then(r => {
+        const list = Array.isArray(r && r.list) ? r.list : [];
+        if (!list.length) {
+          listEl.innerHTML = `<div class="empty" style="padding:30px;text-align:center">暂无历史报告</div>`;
+          return;
+        }
+        listEl.innerHTML = list.map(rp => `
           <div class="list__item list__item--clickable" data-rid="${rp.reportId}">
             <span class="list__lead" style="color:var(--brand-400)">${icon('file')}</span>
             <div class="list__main"><b>${U.esc(rp.title)}</b>
-              <p>${rp.scope} · ${rp.period} · 由 ${rp.creator} 生成 · ${rp.pages} 页</p></div>
+              <p>${U.esc(rp.scope || '全课程')} · ${U.esc(rp.period || '')} · 由 ${U.esc(rp.creator || '系统')} 生成 · ${rp.pages || 0} 页</p></div>
             <div class="list__trail"><span class="badge ${rp.status === 'ready' ? 'badge--ok' : 'badge--outline'}">${rp.status === 'ready' ? '可查看' : '归档'}</span></div>
           </div>`).join('');
-        U.$$('[data-rid]', el).forEach(b => b.addEventListener('click', () => this.openDetail(b.dataset.rid)));
+        U.$$('[data-rid]', listEl).forEach(b => b.addEventListener('click', () => this.openDetail(b.dataset.rid)));
+      }).catch(() => {
+        listEl.innerHTML = `<div class="empty" style="padding:30px;text-align:center">历史报告加载失败</div>`;
       });
     },
 
     async openGen() {
+      const reportView = this;
       const [courses, kps] = await Promise.all([
         API.course.my().then(r => Array.isArray(r) ? r : []).catch(() => []),
         API.teacher.resourceKps().then(d => (d && d.chapters) || []).catch(() => [])
       ]);
+      const currentCourseId = API.config.activeCourseId || (courses[0] && courses[0].courseId) || '';
+      const courseOptions = courses.length ? courses : (currentCourseId ? [{ courseId: currentCourseId, name: currentCourseId }] : []);
       // 统计范围（章节）以真实图谱章节为准，按「第N章」归一去重，避免短名与全名同显造成重复。
       const normKey = ch => { const m = /第\s*(\d+)\s*章/.exec(ch || ''); return m ? '第' + m[1] + '章' : (ch || ''); };
       const seen = new Set();
@@ -86,16 +102,16 @@
         title: '生成学情分析报告',
         body: `<div class="stack" style="gap:14px">
           <div><p class="fz-12 t-dim" style="margin-bottom:6px">选择课程</p>
-            <select class="select" id="rgCourse">${courses.map(c => `<option value="${U.esc(c.courseId)}">${U.esc(c.name || c.courseId)}</option>`).join('') || '<option value="">（暂无课程）</option>'}</select></div>
+            <select class="select" id="rgCourse">${courseOptions.map(c => `<option value="${U.esc(c.courseId)}"${c.courseId === currentCourseId ? ' selected' : ''}>${U.esc(c.name || c.courseId)}</option>`).join('') || '<option value="">（暂无课程）</option>'}</select></div>
           <div>
-            <p class="fz-12 t-dim" style="margin-bottom:6px">统计范围（可多选章节，默认不选）</p>
+            <p class="fz-12 t-dim" style="margin-bottom:6px">统计范围（可多选章节，默认全选）</p>
             <div class="report-scope-list" id="rgScope">
               ${scopeOptions.map(c => `<label class="report-scope-option" title="${U.esc(c.label)}">
-                <input type="checkbox" name="rgCourse" value="${U.esc(c.value)}">
+                <input type="checkbox" name="rgCourse" value="${U.esc(c.value)}" checked>
                 <span>${U.esc(c.label)}</span>
               </label>`).join('')}
             </div>
-            <div class="report-scope-foot"><span id="rgScopeCount">已选 0 个章节</span><span>可多选</span></div>
+            <div class="report-scope-foot"><span id="rgScopeCount">已选 ${scopeOptions.length} 个章节</span><span>可多选</span></div>
           </div>
           <div class="grid g-2 report-date-grid"><div>
             <p class="fz-12 t-dim" style="margin-bottom:6px">开始日期</p>
@@ -142,10 +158,23 @@
             if (!startDate || !endDate) return Toast.warn('请选择完整的日期范围');
             if (startDate > endDate) return Toast.warn('开始日期不能晚于结束日期');
             const sections = U.$$('#rgSec .chip.is-active', ov).map(c => c.textContent);
+            if (!sections.length) return Toast.warn('请至少选择一个报告部分');
+            const courseId = U.$('#rgCourse', ov).value || currentCourseId;
+            if (!courseId) return Toast.warn('请先选择或创建课程');
+            if (API.setActiveCourse) API.setActiveCourse(courseId);
             API.report.generate({
-              courseId: U.$('#rgCourse', ov).value, chapter: selectedCourses.join('、'),
+              classIds: [courseId], chapter: selectedCourses.join('、'),
               startDate, endDate, sections
-            }).then(r => { Toast.ok('报告已生成', r.reportId); close(); this.openDetail(r.reportId); });
+            }).then(async r => {
+              const error = r && r.detail && r.detail.error;
+              if (!r || r.status === 'error' || error || !r.reportId) {
+                return Toast.warn(error || '报告生成失败，请稍后重试');
+              }
+              Toast.ok('报告已生成', r.reportId);
+              close();
+              await reportView.loadArchive();
+              reportView.openDetail(r.reportId);
+            }).catch(err => Toast.warn('报告生成失败：' + (err.message || err)));
           });
         }
       });

@@ -506,4 +506,12 @@
     }
   };
 
-Router.register('ai', { title: 'AI 智能答疑', mount: () => Chat.render() });
+Router.register('ai', {
+  title: 'AI 智能答疑',
+  mount: () => Chat.render(),
+  reset: () => {
+    Chat.busy = false;
+    Chat.sessionId = 'new';
+    Chat.pendingDraft = null;
+  },
+});
