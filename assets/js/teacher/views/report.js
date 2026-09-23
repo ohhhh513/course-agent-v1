@@ -32,7 +32,7 @@
           <div class="card__head"><h3>${icon('file')} 学情分析报告</h3><span class="spacer"></span>
             <button class="btn btn--primary btn--sm" id="genReport">${icon('sparkle')} 一键生成报告</button></div>
           <div class="card__body">
-            <p class="fz-13 t-2" style="line-height:1.8">基于班级 / 章节 / 时间段，自动汇总<b>整体掌握度、共性短板、个体预警、干预效果、目标达成度</b>，支持 PDF / 网页导出，便于教研与上报。</p>
+            <p class="fz-13 t-2" style="line-height:1.8">基于课程 / 章节 / 时间段，自动汇总<b>整体掌握度、共性短板、个体预警、目标达成度</b>，支持 PDF / 网页导出，便于教研与上报。</p>
             <div class="divider"></div>
             <div class="row fz-12 t-dim"><span>数据来源</span><span class="spacer"></span><span>当前课程真实学情记录</span></div>
           </div>
@@ -122,7 +122,7 @@
           <div><p class="fz-12 t-dim" style="margin-bottom:6px">包含章节（可多选）</p>
             <div class="chips" id="rgSec">
               <button class="chip is-active">整体掌握度</button><button class="chip is-active">共性短板归因</button>
-              <button class="chip is-active">个体预警</button><button class="chip is-active">干预效果</button><button class="chip is-active">目标达成度</button></div></div>
+              <button class="chip is-active">个体预警</button><button class="chip is-active">目标达成度</button></div></div>
         </div>`,
         footer: `<button class="btn" data-close>取消</button><button class="btn btn--primary" id="rgGo">${icon('sparkle')} 生成</button>`,
         onMount(ov, close) {
@@ -198,9 +198,12 @@
           body: `<div class="report">
             <div class="report__hd"><h2>${U.esc(d.title)}</h2>
               <div class="report__meta">
-                <span>班级：${U.esc(meta.className || '—')}</span><span>人数：${U.esc(meta.studentCount ?? '—')}</span>
-                <span>章节：${U.esc(meta.chapter || '全课程')}</span><span>区间：${U.esc(meta.period || ((meta.startDate || '') + (meta.endDate ? ' ~ ' + meta.endDate : '')) || '—')}</span>
-                <span>生成：${U.esc(meta.generatedAt || '—')}</span><span>${U.esc(meta.generator || '系统')}</span></div></div>
+                <span>课程：${U.esc(meta.courseName || meta.className || '—')}</span>
+                <span>人数：${U.esc(meta.studentCount != null && meta.studentCount !== '' ? meta.studentCount : '—')}</span>
+                <span>章节：${U.esc(meta.chapter || '全课程')}</span>
+                <span>区间：${U.esc(meta.period || ((meta.startDate || '') + (meta.endDate ? ' ~ ' + meta.endDate : '')) || '—')}</span>
+                <span>生成者：${U.esc(meta.generator || '系统')}</span>
+                <span>${U.esc(meta.generatedAt || '—')}</span></div></div>
             ${d.sections.map(s => `
               <h3>${U.esc(s.title)}</h3>
               ${(s.paragraphs || []).map(p => `<p>${U.esc(p)}</p>`).join('')}

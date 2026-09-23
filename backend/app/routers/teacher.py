@@ -1686,6 +1686,8 @@ def question_bank(
     status: str = Query("all"),
     difficulty: int = Query(None),
     keyword: str = Query(None),
+    sort: str = Query(None),                 # 2026-09-24：题库管理排序 — default | kp | correctRate | difficulty
+    dir: str = Query("asc"),                  # 2026-09-24：排序方向 asc | desc
     page: int = Query(1),
     size: int = Query(20),
     db: Session = Depends(get_db),
@@ -1730,6 +1732,34 @@ def question_bank(
     for qid, total, correct in ar_cnt:
         if total > 0:
             correct_rate_map[qid] = round(correct / total * 100, 1)
+
+    # 2026-09-24 题库管理排序（默认 default=DB 原顺序）：
+    #   correctRate  — 按真实答题正确率（升序/降序由 dir 控制）
+    #   difficulty   — 按难度 1~5 星
+    #   kp           — 按主知识点字母（kp_id 字典序），同 KP 内按 q_id 字母兜底
+    # 空值/未知排序键一律放末尾。
+    sort_key = (sort or "").strip().lower()
+    sort_dir = (dir or "asc").strip().lower()
+    descending = sort_dir == "desc"
+
+    def _nulls_last(values_fn, items):
+        """对每条记录 values_fn() 返回值做 None-aware 排序：None 总在末尾，方向由 descending 决定。"""
+        pairs = [(values_fn(item), item) for item in items]
+        non_null = [(k, i) for k, i in pairs if k is not None]
+        null = [(k, i) for k, i in pairs if k is None]
+        non_null.sort(key=lambda x: x[0], reverse=descending)
+        return [i for _, i in non_null] + [i for _, i in null]
+
+    if sort_key == "correctrate":
+        all_items = _nulls_last(lambda x: correct_rate_map.get(x.q_id), all_items)
+    elif sort_key == "difficulty":
+        all_items = _nulls_last(lambda x: x.difficulty, all_items)
+    elif sort_key == "kp":
+        # 空 kp_id 视为无归属，单独抽到末尾，剩余按 kp_id 字典序排列，相同 kp 内按 q_id 兜底
+        non_empty = [x for x in all_items if (x.kp_id or "").strip()]
+        empty = [x for x in all_items if not (x.kp_id or "").strip()]
+        non_empty.sort(key=lambda x: ((x.kp_id or "").lower(), (x.q_id or "").lower()), reverse=descending)
+        all_items = non_empty + empty
 
     total = len(all_items)
     start = (page - 1) * size

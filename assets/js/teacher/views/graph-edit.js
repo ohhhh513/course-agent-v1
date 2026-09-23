@@ -130,13 +130,26 @@ const TeacherGraphEdit = {
         /* 连线预览（Visio 式橡皮筋线段） */
         #view-graph-edit .ge-board .link-preview{fill:none;stroke:var(--brand);stroke-width:1.5;
           stroke-dasharray:6 4;opacity:.85;pointer-events:none}
-        #view-graph-edit .ge-edge path.line{fill:none;stroke-width:1.5}
+        #view-graph-edit .ge-edge path.line{fill:none;stroke-width:1.5;stroke-linejoin:round;transition:stroke-width .14s ease}
+        /* 选中连线 → 线、箭头、文字三者风格统一高亮：
+           - 主线 stroke-width 1.5→2.4 加粗
+           - halo（白底层 path）平时透明，选中时显示为 5.5px 白色 stroke，给主线一圈白条边（与箭头白条风格一致）
+           - 关系标签加粗、染品牌色、字号 10→11px
+           不使用 drop-shadow 滤镜，避免箭头周围出现割裂阴影。*/
+        #view-graph-edit .ge-edge.on path.line{stroke-width:2.4}
+        #view-graph-edit .ge-edge path.halo{fill:none;stroke:transparent;stroke-width:5.5;stroke-linejoin:round;transition:stroke .14s ease}
+        #view-graph-edit .ge-edge.on path.halo{stroke:#fff}
+        #view-graph-edit .ge-edge.on text{fill:var(--brand);font-weight:700;font-size:11px}
         #view-graph-edit .ge-edge path.hit{stroke:transparent;stroke-width:14;fill:none;cursor:pointer}
         #view-graph-edit .ge-edge text{fill:var(--text-3);font-size:10px;pointer-events:none;user-select:none;-webkit-user-select:none;
-          paint-order:stroke;stroke:var(--surface,#fff);stroke-width:3px;stroke-linejoin:round}
+          paint-order:stroke;stroke:var(--surface,#fff);stroke-width:3px;stroke-linejoin:round;transition:fill .14s ease,font-size .14s ease,font-weight .14s ease}
         #view-graph-edit .ge-plus{cursor:pointer}
-        #view-graph-edit .ge-plus circle{fill:var(--brand);stroke:#fff;stroke-width:1.5}
-        #view-graph-edit .ge-plus text{fill:#fff;font-size:13px;font-weight:700;pointer-events:none;user-select:none}
+        #view-graph-edit .ge-plus circle{fill:var(--brand);stroke:#fff;stroke-width:2;transition:transform .12s ease,filter .12s ease}
+        #view-graph-edit .ge-plus text{fill:#fff;font-size:18px;font-weight:700;pointer-events:none;user-select:none}
+        /* +号悬停反馈：放大 + 阴影 + 顶部品牌色光晕 */
+        #view-graph-edit .ge-plus:hover{cursor:pointer}
+        #view-graph-edit .ge-plus:hover circle{filter:drop-shadow(0 2px 6px rgba(15,118,110,.45));transform-origin:center;transform-box:fill-box}
+        #view-graph-edit .ge-plus:hover text{font-size:19px}
         #view-graph-edit .ge-relpop{position:absolute;z-index:9;min-width:132px;padding:6px;border:1px solid var(--border);
           border-radius:10px;background:var(--surface);box-shadow:0 8px 24px rgba(15,23,42,.14)}
         #view-graph-edit .ge-relpop b{display:block;font-size:11px;color:var(--text-3);padding:2px 6px 4px;font-weight:600}
@@ -375,6 +388,9 @@ const TeacherGraphEdit = {
     const markers = Object.keys(REL).map(k => `
       <marker id="ge-ar-${k}" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5.5" markerHeight="5.5" orient="auto-start-reverse">
         <path d="M0 0 L10 5 L0 10z" fill="${REL[k].color}"/>
+      </marker>
+      <marker id="ge-ar-${k}-on" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto-start-reverse">
+        <path d="M0 0 L10 5 L0 10z" fill="${REL[k].color}" stroke="#fff" stroke-width="2.2" stroke-linejoin="round" paint-order="stroke fill"/>
       </marker>`).join('');
 
     board.innerHTML = `<defs>${markers}</defs>
@@ -394,13 +410,15 @@ const TeacherGraphEdit = {
       const r = REL[e.relation] || REL.pre;
       return `<g class="ge-edge" data-edge="${i}">
         <path class="hit" d=""/>
+        <path class="halo" d=""/>
         <path class="line" d="" stroke="${r.color}" stroke-dasharray="${r.dash}" marker-end="url(#ge-ar-${e.relation || 'pre'})" ${e.relation === 'parallel' ? 'marker-start="url(#ge-ar-parallel)"' : ''}/>
         <text text-anchor="middle"></text>
       </g>`;
     }).join('');
     [...gE.children].forEach((g, i) => {
       this._edgeEls.push({
-        g, hit: g.querySelector('.hit'), line: g.querySelector('.line'),
+        g, hit: g.querySelector('.hit'), halo: g.querySelector('.halo'),
+        line: g.querySelector('.line'),
         text: g.querySelector('text'), e: edges[i], key: this._edgeKey(edges[i]),
       });
     });
@@ -414,7 +432,7 @@ const TeacherGraphEdit = {
         <circle class="hit" r="${r + 8}" fill="transparent"/>
         <text class="lab" x="0" y="${r + 13}" text-anchor="middle">${U.esc(label)}</text>
         <g class="ge-plus" data-plus="${n.id}" style="display:none">
-          <circle r="9"/>
+          <circle r="13"/>
           <text y="0" text-anchor="middle" dominant-baseline="central">+</text>
         </g>
       </g>`;
@@ -448,10 +466,12 @@ const TeacherGraphEdit = {
       if (!n) return;
       el.g.setAttribute('transform', `translate(${n.x},${n.y})`);
       if (el.plus) {
-        // 「+」放在节点右上外侧（45° 斜向、正切于圆外），不遮节点本体：
-        // 偏移 = (r+11)/√2，使加号圆(r=9)最近点距圆心 r+2，完全在节点圆面之外
-        const off = Math.round((el.r + 11) * 0.7071 * 10) / 10;
-        el.plus.setAttribute('transform', `translate(${off},${-off}) scale(${inv})`);
+        // 「+」放在节点正上方（不遮节点本体、不偏离视觉重心）：
+        // 偏移 = -(r + plusR + gap)，使加号圆(plusR=13)最近点距圆心 r+gap+2，
+        // 完全在节点圆面之上、并保持约 3px 视觉间隙。
+        const plusR = 13, gap = 3;
+        const offY = -(el.r + plusR + gap);
+        el.plus.setAttribute('transform', `translate(0,${offY}) scale(${inv})`);
       }
     });
     this._edgeEls.forEach(o => {
@@ -459,6 +479,7 @@ const TeacherGraphEdit = {
       if (!a || !b) return;
       const g = this._edgeGeom(a, b);
       o.hit.setAttribute('d', g.d);
+      o.halo.setAttribute('d', g.d);
       o.line.setAttribute('d', g.d);
       o.text.setAttribute('x', g.lx);
       o.text.setAttribute('y', g.ly);
@@ -495,7 +516,13 @@ const TeacherGraphEdit = {
     this._edgeEls.forEach(o => {
       const on = this.sel && this.sel.type === 'edge' && this.sel.id === o.key;
       o.g.classList.toggle('on', !!on);
-      o.line.setAttribute('stroke-width', on ? 2.3 : 1.5);
+      // 选中态箭头换为放大并带白边的版本（marker-end / marker-start），与文字加粗、染品牌色形成统一高亮。
+      // 线宽、命中区颜色等其它视觉态均由 CSS（.ge-edge.on）控制；箭头粗细通过 marker 切换实现，
+      // 不使用 drop-shadow 滤镜，避免箭头周围出现割裂阴影。
+      const rel = o.e.relation || 'pre';
+      const mk = on ? `url(#ge-ar-${rel}-on)` : `url(#ge-ar-${rel})`;
+      o.line.setAttribute('marker-end', mk);
+      if (o.e.relation === 'parallel') o.line.setAttribute('marker-start', mk);
     });
   },
 

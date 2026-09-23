@@ -7,7 +7,9 @@
     tab: 'gen',
     gen: { kpIds: [], difficulty: 3, count: 6 },
     bankFilter: 'all', bankKeyword: '', bankPage: 1, bankPageSize: 10,
-    draftFilter: 'all',
+    bankSort: 'default',                       // 2026-09-24：题库管理排序键 default | kp | correctRate | difficulty
+    bankDir: 'asc',                            // 2026-09-24：排序方向 asc | desc（按知识点排序按字母 a→z）
+    draftFilter: 'draft',                       // 2026-09-24：草稿箱默认「待处理」，选项仅 draft / published
     _renderToken: 0,
     _renderCourseId: '',
     render() {
@@ -20,6 +22,9 @@
         this._drafts = [];
         this._genBusy = false;
         this.bankPage = 1;
+        this.bankSort = 'default';     // 2026-09-24：切换课程后题库排序回到默认
+        this.bankDir = 'asc';          // 2026-09-24：排序方向重置为升序
+        this.draftFilter = 'draft';       // 2026-09-24：切换课程后草稿箱回到「待处理」
       }
       const el = U.$('#view-question');
       if (!API.config.activeCourseId) {
@@ -287,8 +292,8 @@
           <span class="badge badge--outline">仅本人可见 · 发布后进入题库</span>
           <span class="spacer"></span>
           <div class="seg" id="draftSeg">
-            <button data-s="all" class="is-active">全部</button><button data-s="draft">待处理</button>
-            <button data-s="invalid">校验未过</button><button data-s="published">已发布</button>
+            <button data-s="draft" class="is-active">待处理</button>
+            <button data-s="published">已发布</button>
           </div>
           <button class="btn btn--sm btn--outline" id="draftRefresh">${icon('refresh')} 刷新</button>
         </div>
@@ -487,9 +492,16 @@
           <h3>${icon('file')} 题库${API.config.activeCourseId ? '（' + U.esc(API.config.activeCourseId) + '）' : ''}</h3>
           <span class="spacer"></span>
           <div class="search" style="width:180px">${icon('search2')}<input class="input" id="bankSearch" placeholder="题干 / 知识点"></div>
-          <div class="seg" id="bankSeg">
-            <button data-s="all" class="is-active">全部</button><button data-s="pending">待审核</button>
-            <button data-s="approved">已审</button><button data-s="published">已发布</button><button data-s="archived">归档</button></div>
+          <div class="seg" id="bankSeg" title="题库排序">
+            <button data-s="default" class="is-active">默认</button>
+            <button data-s="kp">知识点</button>
+            <button data-s="correctRate">正确率</button>
+            <button data-s="difficulty">难度</button>
+            <button data-s="dir" id="bankDirBtn" class="seg__dir" title="反转当前排序">
+              <span class="seg__dir-arrow"></span>
+              <span class="seg__dir-label">升序</span>
+            </button>
+          </div>
           <button class="btn btn--sm" id="bankNew">${icon('pencil')} 新建题目</button>
         </div>
         <div class="card__body card__body--flush">
@@ -498,10 +510,26 @@
         </div>
       </div>`;
 
-      U.$$('#bankSeg button', box).forEach(b => b.addEventListener('click', () => {
-        U.$$('#bankSeg button', box).forEach(x => x.classList.remove('is-active'));
-        b.classList.add('is-active'); this.bankFilter = b.dataset.s; this.bankPage = 1; this.loadBank();
+      const sortBtns = U.$$('#bankSeg button[data-s]:not([data-s="dir"])', box);
+      sortBtns.forEach(b => b.addEventListener('click', () => {
+        sortBtns.forEach(x => x.classList.remove('is-active'));
+        b.classList.add('is-active');
+        this.bankSort = b.dataset.s;
+        this.bankPage = 1;
+        this.loadBank();
       }));
+      // 排序反转按钮：仅切换升降序方向，不改变当前排序键；按钮文案/箭头同步。
+      const dirBtn = U.$('#bankDirBtn', box);
+      if (dirBtn) {
+        dirBtn.addEventListener('click', () => {
+          this.bankDir = this.bankDir === 'asc' ? 'desc' : 'asc';
+          this.bankPage = 1;
+          // 立即刷新按钮箭头与文案，再异步刷新表格（按钮本身不在表格内，loadBank 不会动它）
+          this._renderBankDirBtn(box);
+          this.loadBank();
+        });
+      }
+      this._renderBankDirBtn(box);
       U.$('#bankSearch', box).addEventListener('input', e => { this.bankKeyword = e.target.value.trim(); this.bankPage = 1; this.loadBank(); });
       U.$('#bankNew', box).addEventListener('click', () => openNewQuestionModal(() => this.loadBank()));
       this.loadBank();
@@ -516,13 +544,27 @@
         `<mark class="bank-hit">${hit}</mark>`);
     },
 
+    /** 渲染题库排序方向的开关按钮文案/图标：升序 ↘ 降序 ↗。 */
+    _renderBankDirBtn(box) {
+      // box 可能已被卸载，直接查 document 兜底，保证点击反转后一定能拿到当前 DOM。
+      const btn = (box && U.$('#bankDirBtn', box)) || document.getElementById('bankDirBtn');
+      if (!btn) return;
+      const isAsc = this.bankDir !== 'desc';
+      const arrow = btn.querySelector('.seg__dir-arrow');
+      const label = btn.querySelector('.seg__dir-label');
+      if (arrow) arrow.textContent = isAsc ? '↘' : '↗';
+      if (label) label.textContent = isAsc ? '升序' : '降序';
+      btn.classList.toggle('is-desc', !isAsc);
+      btn.setAttribute('aria-pressed', String(!isAsc));
+    },
+
     loadBank() {
       const renderToken = this._renderToken;
       const renderCourseId = this._renderCourseId;
       const isCurrent = () => renderToken === this._renderToken
         && renderCourseId === API.config.activeCourseId;
       API.question.bank({
-        status: this.bankFilter, keyword: this.bankKeyword,
+        sort: this.bankSort, dir: this.bankDir, keyword: this.bankKeyword,
         page: this.bankPage, size: this.bankPageSize
       }).then(r => {
         if (!isCurrent()) return;
@@ -630,8 +672,8 @@
 
     editQ(qId, list) {
       const q = list.find(x => x.qId === qId);
-      // 先拉取完整数据（bank 返回的字段可能不全）
-      API.question.bank({ status: 'all' }).then(r => {
+      // 先拉取完整数据（bank 返回的字段可能不全）；保留当前排序键/方向，避免列表顺序错乱
+      API.question.bank({ sort: this.bankSort, dir: this.bankDir }).then(r => {
         const full = r.list.find(x => x.qId === qId) || q;
         _openEditModal(qId, full);
       });

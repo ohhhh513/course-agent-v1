@@ -465,13 +465,17 @@ def generate_report(
 ):
     """一键生成学情分析报告 — 按当前课程成员真实统计"""
     from ..models.user_course import UserCourse as _UC
+    from ..models.course import Course as _Course
     students = (
         db.query(User)
         .join(_UC, _UC.user_id == User.user_id)
         .filter(_UC.course_id == course_id, User.role == "student")
         .all()
     )
-    class_name = f"课程 {course_id}"
+    # 课程名：优先从 courses 表读真实名（如"数据结构与算法"）；读不到则回退到"课程 {course_id}"。
+    course_row = db.query(_Course).filter(_Course.course_id == course_id).first()
+    course_name = (course_row.name if course_row and course_row.name else "").strip() or f"课程 {course_id}"
+    class_name = course_name
     student_ids = [s.user_id for s in students]
 
     # 1. 真实统计：整体概况（按课程学习路径）
@@ -607,12 +611,12 @@ def generate_report(
     else:
         effect_paragraphs = ["当前暂无完整的干预前后测数据，暂不能计算干预提升幅度；完成干预并录入复测结果后重新生成即可。"]
         effect_bullets = ["建议对红色预警学生完成针对性练习后进行复测，并持续记录干预结果。"]
-    section_effect = {"title": "四、干预效果", "paragraphs": effect_paragraphs, "bullets": effect_bullets}
+    # 已按需求去除"四、干预效果"section（2026-09-24）
     mastery_by_kp = {kid: round(sum(values) / len(values), 1) for kid, values in kp_mastery.items() if values}
     achieved_kp_count = sum(1 for mastery in mastery_by_kp.values() if mastery >= 60)
     goal_rate = round(achieved_kp_count / total_kp * 100, 1) if total_kp else 0
     section_goal = {
-        "title": "五、目标达成度",
+        "title": "四、目标达成度",
         "paragraphs": [f"按平均掌握率达到 60% 作为阶段性达标线，当前 {achieved_kp_count}/{total_kp} 个知识点达到目标，目标达成度为 {goal_rate}%。"],
         "bullets": [
             f"阶段性目标：知识点掌握率达到 60%（当前达成 {achieved_kp_count} 个）",
@@ -623,24 +627,32 @@ def generate_report(
         "整体掌握度": section_overview,
         "共性短板归因": section_weakness,
         "个体预警": section_alerts,
-        "干预效果": section_effect,
         "目标达成度": section_goal,
     }
     requested_sections = {str(section).strip() for section in (req.sections or []) if str(section).strip()}
+    # 老报告若仍携带"干预效果"选项，静默忽略（2026-09-24 已下线该 section）
+    requested_sections.discard("干预效果")
     selected_sections = [section_map[name] for name in section_map if not requested_sections or name in requested_sections]
     if not selected_sections:
         selected_sections = list(section_map.values())
 
+    period_text = ""
+    if req.startDate or req.endDate:
+        period_text = f"{req.startDate or ''} ~ {req.endDate or ''}".strip(" ~")
     detail = {
-        "title": f"{class_name} · 学情分析报告 - {datetime.now().strftime('%Y-%m-%d')}",
+        "title": f"{class_name} · 学情分析报告 {datetime.now().strftime('%Y-%m-%d')}",
         "sections": selected_sections,
         "meta": {
             "courseId": course_id,
+            "courseName": course_name,           # 2026-09-24：用课程名替代班级名
             "chapter": req.chapter or "全课程",
             "startDate": req.startDate or "",
             "endDate": req.endDate or "",
-            "className": class_name,
+            "period": period_text,
+            "studentCount": len(students),       # 2026-09-24：人数即该课程学生人数
+            "className": class_name,             # 兼容旧导出模板（PDF/HTML 仍可能引用）
             "generator": user.name or user.username or "教师",
+            "generatedAt": datetime.now().strftime("%Y-%m-%d %H:%M"),
         },
     }
 
@@ -780,7 +792,8 @@ def export_report(
 
         add_text(title, size=17, width=32, leading=25)
         lines.append(("", 11, 10))
-        add_text(f"班级：{meta.get('className') or '—'}")
+        add_text(f"课程：{meta.get('courseName') or meta.get('className') or '—'}")
+        add_text(f"人数：{meta.get('studentCount') if meta.get('studentCount') is not None else '—'}")
         add_text(f"统计范围：{meta.get('chapter') or '全课程'}")
         add_text(f"时间区间：{period}")
         add_text(f"生成者：{meta.get('generator') or '系统'}")

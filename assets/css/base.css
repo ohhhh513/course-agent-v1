@@ -384,6 +384,16 @@ a.badge--outline:hover { border-color: var(--brand-400); color: var(--brand-300)
 }
 .seg button:hover { color: var(--text); }
 .seg button.is-active { background: var(--surface); color: var(--text); box-shadow: var(--shadow-sm); font-weight: 600; }
+/* 2026-09-24 题库排序方向反转按钮：与其它 seg 按钮风格统一，仅追加前缀 ↘/↗ 与文案。 */
+.seg button.seg__dir {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-feature-settings: "tnum";
+}
+.seg button.seg__dir .seg__dir-arrow {
+  font-size: 11px; opacity: .8; line-height: 1;
+}
+.seg button.seg__dir .seg__dir-label { font-size: 12px; }
+.seg button.seg__dir.is-desc { color: var(--brand-500); }
 
 /* Tabs 下划线式 */
 .tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--border); overflow-x: auto; overflow-y: hidden; scrollbar-width: none; }
