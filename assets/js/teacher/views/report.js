@@ -32,49 +32,64 @@
           <div class="card__head"><h3>${icon('file')} 学情分析报告</h3><span class="spacer"></span>
             <button class="btn btn--primary btn--sm" id="genReport">${icon('sparkle')} 一键生成报告</button></div>
           <div class="card__body">
-            <p class="fz-13 t-2" style="line-height:1.8">基于班级 / 章节 / 时间段，自动汇总<b>整体掌握度、共性短板、个体预警、干预效果、目标达成度</b>，支持 PDF / 网页导出，便于教研与上报。</p>
+            <p class="fz-13 t-2" style="line-height:1.8">基于课程 / 章节 / 时间段，自动汇总<b>整体掌握度、共性短板、个体预警、目标达成度</b>，支持 PDF / 网页导出，便于教研与上报。</p>
             <div class="divider"></div>
-            <div class="row fz-12 t-dim"><span>覆盖章节</span><span class="spacer"></span><span>第1章 ~ 第9章 · 25 个知识点</span></div>
+            <div class="row fz-12 t-dim"><span>数据来源</span><span class="spacer"></span><span>当前课程真实学情记录</span></div>
           </div>
         </div>
         <div class="card">
           <div class="card__head"><h3>${icon('calendar')} 历史归档</h3></div>
-          <div class="card__body card__body--flush"><div class="list" id="repList"></div></div>
+          <div class="card__body card__body--flush"><div class="list report-archive-list" id="repList"></div></div>
         </div>
       </div>`;
 
       U.$('#genReport').addEventListener('click', () => this.openGen());
-      API.report.list({ classId: state.classId }).then(r => {
-        U.$('#repList').innerHTML = r.list.map(rp => `
+      if (!API.config.activeCourseId) {
+        U.$('#repList').innerHTML = `<div class="empty" style="padding:30px;text-align:center"><b>尚未创建或选择课程</b></div>`;
+        return;
+      }
+      this.loadArchive();
+    },
+
+    loadArchive() {
+      const listEl = U.$('#repList');
+      if (!listEl) return Promise.resolve();
+      return API.report.list({}).then(r => {
+        const list = Array.isArray(r && r.list) ? r.list : [];
+        if (!list.length) {
+          listEl.innerHTML = `<div class="empty" style="padding:30px;text-align:center">暂无历史报告</div>`;
+          return;
+        }
+        listEl.innerHTML = list.map(rp => `
           <div class="list__item list__item--clickable" data-rid="${rp.reportId}">
             <span class="list__lead" style="color:var(--brand-400)">${icon('file')}</span>
             <div class="list__main"><b>${U.esc(rp.title)}</b>
-              <p>${rp.scope} · ${rp.period} · 由 ${rp.creator} 生成 · ${rp.pages} 页</p></div>
+              <p>${U.esc(rp.scope || '全课程')} · ${U.esc(rp.period || '')} · 由 ${U.esc(rp.creator || '系统')} 生成 · ${rp.pages || 0} 页</p></div>
             <div class="list__trail"><span class="badge ${rp.status === 'ready' ? 'badge--ok' : 'badge--outline'}">${rp.status === 'ready' ? '可查看' : '归档'}</span></div>
           </div>`).join('');
-        U.$$('[data-rid]', el).forEach(b => b.addEventListener('click', () => this.openDetail(b.dataset.rid)));
+        U.$$('[data-rid]', listEl).forEach(b => b.addEventListener('click', () => this.openDetail(b.dataset.rid)));
+      }).catch(() => {
+        listEl.innerHTML = `<div class="empty" style="padding:30px;text-align:center">历史报告加载失败</div>`;
       });
     },
 
     async openGen() {
-      const [classes, kps] = await Promise.all([
-        API.teacher.classes().then(r => Array.isArray(r) ? r : ((r && r.list) || [])).catch(() => []),
+      const reportView = this;
+      const [courses, kps] = await Promise.all([
+        API.course.my().then(r => Array.isArray(r) ? r : []).catch(() => []),
         API.teacher.resourceKps().then(d => (d && d.chapters) || []).catch(() => [])
       ]);
-      // 与学生端「学习资源」中的课程章节保持完全一致，不能按接口返回的字典序排列，
-      // 也不能只依赖当前已有知识点，否则会漏掉暂时还没有数据的章节。
-      const CHAPTER_ORDER = [
-        ['第1章', '第1章 绪论'], ['第2章', '第2章 线性表'], ['第3章', '第3章 栈和队列'],
-        ['第4章', '第4章 串'], ['第5章', '第5章 数组和广义表'], ['第6章', '第6章 树和二叉树'],
-        ['第7章', '第7章 图'], ['第8章', '第8章 查找'], ['第9章', '第9章 排序']
-      ].map(([value, label]) => ({ value, label }));
-      const knownChapters = new Set(CHAPTER_ORDER.map(c => c.value));
-      const extraOptions = kps
-        .map(c => ({ value: c.chapter, label: c.chapter }))
-        .filter((c, i, arr) => c.value && !knownChapters.has(c.value) && arr.findIndex(x => x.value === c.value) === i);
-      // 当前报告接口以 chapter 字段承载统计范围；复选框保留多选能力。
-      const courseOptions = CHAPTER_ORDER.concat(extraOptions);
-      const scopeOptions = courseOptions.length ? courseOptions : [{ value: '全课程', label: '全课程' }];
+      const currentCourseId = API.config.activeCourseId || (courses[0] && courses[0].courseId) || '';
+      const courseOptions = courses.length ? courses : (currentCourseId ? [{ courseId: currentCourseId, name: currentCourseId }] : []);
+      // 统计范围（章节）以真实图谱章节为准，按「第N章」归一去重，避免短名与全名同显造成重复。
+      const normKey = ch => { const m = /第\s*(\d+)\s*章/.exec(ch || ''); return m ? '第' + m[1] + '章' : (ch || ''); };
+      const seen = new Set();
+      const scopeOptions = [];
+      (kps || []).map(c => c.chapter).filter(Boolean).forEach(ch => {
+        const k = normKey(ch);
+        if (k && !seen.has(k)) { seen.add(k); scopeOptions.push({ value: k, label: ch }); }
+      });
+      if (!scopeOptions.length) scopeOptions.push({ value: '全课程', label: '全课程' });
       const today = new Date();
       const maxDate = formatDateInput(today);
       const minDateObj = new Date(today);
@@ -86,17 +101,17 @@
       Modal.open({
         title: '生成学情分析报告',
         body: `<div class="stack" style="gap:14px">
-          <div><p class="fz-12 t-dim" style="margin-bottom:6px">选择班级</p>
-            <select class="select" id="rgClass">${classes.map(c => `<option value="${U.esc(c.classId)}">${U.esc(c.name)}</option>`).join('')}</select></div>
+          <div><p class="fz-12 t-dim" style="margin-bottom:6px">选择课程</p>
+            <select class="select" id="rgCourse">${courseOptions.map(c => `<option value="${U.esc(c.courseId)}"${c.courseId === currentCourseId ? ' selected' : ''}>${U.esc(c.name || c.courseId)}</option>`).join('') || '<option value="">（暂无课程）</option>'}</select></div>
           <div>
-            <p class="fz-12 t-dim" style="margin-bottom:6px">统计范围（可多选课程）</p>
+            <p class="fz-12 t-dim" style="margin-bottom:6px">统计范围（可多选章节，默认全选）</p>
             <div class="report-scope-list" id="rgScope">
               ${scopeOptions.map(c => `<label class="report-scope-option" title="${U.esc(c.label)}">
                 <input type="checkbox" name="rgCourse" value="${U.esc(c.value)}" checked>
                 <span>${U.esc(c.label)}</span>
               </label>`).join('')}
             </div>
-            <div class="report-scope-foot"><span id="rgScopeCount">已选 ${scopeOptions.length} 个课程</span><span>可多选</span></div>
+            <div class="report-scope-foot"><span id="rgScopeCount">已选 ${scopeOptions.length} 个章节</span><span>可多选</span></div>
           </div>
           <div class="grid g-2 report-date-grid"><div>
             <p class="fz-12 t-dim" style="margin-bottom:6px">开始日期</p>
@@ -107,7 +122,7 @@
           <div><p class="fz-12 t-dim" style="margin-bottom:6px">包含章节（可多选）</p>
             <div class="chips" id="rgSec">
               <button class="chip is-active">整体掌握度</button><button class="chip is-active">共性短板归因</button>
-              <button class="chip is-active">个体预警</button><button class="chip is-active">干预效果</button><button class="chip is-active">目标达成度</button></div></div>
+              <button class="chip is-active">个体预警</button><button class="chip is-active">目标达成度</button></div></div>
         </div>`,
         footer: `<button class="btn" data-close>取消</button><button class="btn btn--primary" id="rgGo">${icon('sparkle')} 生成</button>`,
         onMount(ov, close) {
@@ -119,7 +134,7 @@
             const count = scopeInputs.filter(input => input.checked).length;
             const countEl = U.$('#rgScopeCount', ov);
             const generateButton = U.$('#rgGo', ov);
-            if (countEl) countEl.textContent = `已选 ${count} 个课程`;
+            if (countEl) countEl.textContent = `已选 ${count} 个章节`;
             if (generateButton) generateButton.disabled = count === 0;
           };
           const syncDateRange = () => {
@@ -139,14 +154,27 @@
             const selectedCourses = scopeInputs.filter(input => input.checked).map(input => input.value);
             const startDate = startInput && startInput.value;
             const endDate = endInput && endInput.value;
-            if (!selectedCourses.length) return Toast.warn('请至少选择一个统计课程');
+            if (!selectedCourses.length) return Toast.warn('请至少选择一个统计章节');
             if (!startDate || !endDate) return Toast.warn('请选择完整的日期范围');
             if (startDate > endDate) return Toast.warn('开始日期不能晚于结束日期');
             const sections = U.$$('#rgSec .chip.is-active', ov).map(c => c.textContent);
+            if (!sections.length) return Toast.warn('请至少选择一个报告部分');
+            const courseId = U.$('#rgCourse', ov).value || currentCourseId;
+            if (!courseId) return Toast.warn('请先选择或创建课程');
+            if (API.setActiveCourse) API.setActiveCourse(courseId);
             API.report.generate({
-              classIds: [U.$('#rgClass', ov).value], chapter: selectedCourses.join('、'),
+              classIds: [courseId], chapter: selectedCourses.join('、'),
               startDate, endDate, sections
-            }).then(r => { Toast.ok('报告已生成', r.reportId); close(); this.openDetail(r.reportId); });
+            }).then(async r => {
+              const error = r && r.detail && r.detail.error;
+              if (!r || r.status === 'error' || error || !r.reportId) {
+                return Toast.warn(error || '报告生成失败，请稍后重试');
+              }
+              Toast.ok('报告已生成', r.reportId);
+              close();
+              await reportView.loadArchive();
+              reportView.openDetail(r.reportId);
+            }).catch(err => Toast.warn('报告生成失败：' + (err.message || err)));
           });
         }
       });
@@ -170,9 +198,12 @@
           body: `<div class="report">
             <div class="report__hd"><h2>${U.esc(d.title)}</h2>
               <div class="report__meta">
-                <span>班级：${U.esc(meta.className || '—')}</span><span>人数：${U.esc(meta.studentCount ?? '—')}</span>
-                <span>章节：${U.esc(meta.chapter || '全课程')}</span><span>区间：${U.esc(meta.period || ((meta.startDate || '') + (meta.endDate ? ' ~ ' + meta.endDate : '')) || '—')}</span>
-                <span>生成：${U.esc(meta.generatedAt || '—')}</span><span>${U.esc(meta.generator || '系统')}</span></div></div>
+                <span>课程：${U.esc(meta.courseName || meta.className || '—')}</span>
+                <span>人数：${U.esc(meta.studentCount != null && meta.studentCount !== '' ? meta.studentCount : '—')}</span>
+                <span>章节：${U.esc(meta.chapter || '全课程')}</span>
+                <span>区间：${U.esc(meta.period || ((meta.startDate || '') + (meta.endDate ? ' ~ ' + meta.endDate : '')) || '—')}</span>
+                <span>生成者：${U.esc(meta.generator || '系统')}</span>
+                <span>${U.esc(meta.generatedAt || '—')}</span></div></div>
             ${d.sections.map(s => `
               <h3>${U.esc(s.title)}</h3>
               ${(s.paragraphs || []).map(p => `<p>${U.esc(p)}</p>`).join('')}

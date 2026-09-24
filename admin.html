@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>管理员 · 课程智能体系统</title>
+  <link rel="stylesheet" href="assets/css/base.css">
+  <link rel="stylesheet" href="assets/css/app.css">
+  <link rel="stylesheet" href="assets/css/refresh.css">
+  <script src="assets/js/ui-enhancements.js" defer></script>
+</head>
+<body>
+<div class="app">
+  <aside class="sidebar">
+    <div class="sidebar__brand">
+      <div class="brand-logo">管</div>
+      <div class="brand-text"><b>系统管理</b><span>账号开通</span></div>
+    </div>
+    <nav class="sidebar__nav">
+      <div class="nav-group">
+        <div class="nav-group__label">管理</div>
+        <button class="nav-item" id="navUsers" data-icon="users">
+          <span class="nav-item__text">账号管理</span>
+        </button>
+      </div>
+    </nav>
+    <div class="sidebar__foot">
+      <button class="user-chip" type="button">
+        <span class="avatar" id="tbAvatar">管</span>
+        <span class="user-chip__info"><b id="tbUserName">管理员</b><span id="tbUid">admin</span></span>
+      </button>
+    </div>
+  </aside>
+  <div class="main">
+    <header class="topbar">
+      <div class="topbar__title"><h1 id="pageTitle">账号管理</h1></div>
+      <div class="topbar__actions">
+        <button class="btn btn--primary btn--sm" id="btnCreate" type="button">新建账号</button>
+        <button class="btn btn--ghost btn--icon" id="logoutBtn" type="button" title="退出登录"></button>
+      </div>
+    </header>
+    <main class="content">
+      <div class="card" style="height:calc(100vh - var(--topbar-h) - 44px);display:flex;flex-direction:column;min-height:0">
+        <div class="card__head">
+          <h3>教师 / 学生账号</h3>
+          <span class="spacer"></span>
+          <select class="select select--sm" id="fRole" style="width:120px">
+            <option value="">全部角色</option>
+            <option value="teacher">教师</option>
+            <option value="student">学生</option>
+          </select>
+          <div class="search" style="width:200px">
+            <input class="input" id="fKey" placeholder="搜索用户名 / 姓名">
+          </div>
+        </div>
+        <div class="card__body" style="min-height:0;overflow:auto">
+          <table class="tbl" id="userTable">
+            <thead><tr>
+              <th>用户名</th><th>姓名</th><th>角色</th><th>班级/部门</th><th>用户ID</th><th>操作</th>
+            </tr></thead>
+            <tbody><tr><td colspan="6" class="t-dim">加载中…</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+    </main>
+  </div>
+</div>
+
+<script src="assets/js/common.js"></script>
+<script src="assets/js/api.js"></script>
+<script src="assets/js/auth.js"></script>
+<script>
+(function () {
+  'use strict';
+  if (window.Auth && !Auth.requireAuth('admin')) return;
+  Theme.init();
+  U.$$('.nav-item').forEach(n => n.insertAdjacentHTML('afterbegin', icon(n.dataset.icon || 'users', 'nav-item__icon')));
+  Auth.applyUserBadge();
+  if (document.getElementById('tbUid')) {
+    document.getElementById('tbUid').textContent = '管理员 · admin';
+  }
+
+  function load() {
+    const role = U.$('#fRole').value;
+    const keyword = U.$('#fKey').value.trim();
+    API.admin.listUsers({ role, keyword }).then(r => {
+      const list = (r && r.list) || [];
+      const tb = U.$('#userTable tbody');
+      if (!list.length) {
+        tb.innerHTML = `<tr><td colspan="5" class="t-dim" style="padding:20px;text-align:center">暂无账号，点右上角「新建账号」</td></tr>`;
+        return;
+      }
+      tb.innerHTML = list.map(u => `
+        <tr data-uid="${U.esc(u.userId)}" data-user="${U.esc(u.username)}">
+          <td><b>${U.esc(u.username)}</b></td>
+          <td>${U.esc(u.name)}</td>
+          <td><span class="badge ${u.role === 'teacher' ? 'badge--brand' : 'badge--outline'}">${u.role === 'teacher' ? '教师' : '学生'}</span></td>
+          <td>${U.esc(u.className || u.dept || '—')}</td>
+          <td class="mono fz-11">${U.esc(u.userId)}</td>
+          <td>
+            <button class="btn btn--xs" type="button" data-edit="${U.esc(u.userId)}">编辑</button>
+            <button class="btn btn--xs btn--danger" type="button" data-del="${U.esc(u.userId)}" data-user="${U.esc(u.username)}">删除</button>
+          </td>
+        </tr>`).join('');
+      U.$$('#userTable [data-del]', document).forEach(btn => {
+        btn.addEventListener('click', () => confirmDelete(btn.dataset.del, btn.dataset.user));
+      });
+      U.$$('#userTable [data-edit]', document).forEach(btn => {
+        btn.addEventListener('click', () => {
+          const u = list.find(x => x.userId === btn.dataset.edit);
+          if (u) openEdit(u);
+        });
+      });
+    }).catch(err => {
+      U.$('#userTable tbody').innerHTML = `<tr><td colspan="6" class="t-danger">${U.esc(err.message || '加载失败')}</td></tr>`;
+    });
+  }
+
+  U.$('#fRole').addEventListener('change', load);
+  let tm;
+  U.$('#fKey').addEventListener('input', () => { clearTimeout(tm); tm = setTimeout(load, 250); });
+  U.$('#btnCreate').addEventListener('click', () => {
+    Modal.open({
+      title: '新建账号',
+      body: `
+        <form class="stack" style="gap:12px" id="cuForm">
+          <label class="stack" style="gap:4px"><span class="fz-12 t-dim">角色</span>
+            <select class="select" id="cuRole">
+              <option value="teacher">教师</option>
+              <option value="student">学生</option>
+            </select></label>
+          <label class="stack" style="gap:4px"><span class="fz-12 t-dim">用户名</span>
+            <input class="input" id="cuUser" placeholder="登录用，如 t_wang / s_li" autocomplete="off"></label>
+          <label class="stack" style="gap:4px"><span class="fz-12 t-dim">姓名</span>
+            <input class="input" id="cuName" placeholder="真实姓名"></label>
+          <label class="stack" style="gap:4px"><span class="fz-12 t-dim">密码</span>
+            <input class="input" id="cuPwd" type="password" placeholder="至少 6 位" value="123456"></label>
+          <label class="stack" style="gap:4px" id="cuClassWrap"><span class="fz-12 t-dim">班级（学生）</span>
+            <input class="input" id="cuClass" placeholder="如：计算机 2301 班"></label>
+          <label class="stack" style="gap:4px;display:none" id="cuDeptWrap"><span class="fz-12 t-dim">部门（教师，可选）</span>
+            <input class="input" id="cuDept" placeholder="如：计算机学院"></label>
+        </form>`,
+      footer: `<button class="btn btn--primary" id="cuGo" type="button">创建</button><button class="btn" data-close>取消</button>`,
+      onMount(ov, close) {
+        const sync = () => {
+          const role = U.$('#cuRole', ov).value;
+          U.$('#cuClassWrap', ov).style.display = role === 'student' ? '' : 'none';
+          U.$('#cuDeptWrap', ov).style.display = role === 'teacher' ? '' : 'none';
+        };
+        U.$('#cuRole', ov).addEventListener('change', sync);
+        sync();
+        U.$('#cuGo', ov).addEventListener('click', () => {
+          const role = U.$('#cuRole', ov).value;
+          const payload = {
+            role,
+            username: U.$('#cuUser', ov).value.trim(),
+            name: U.$('#cuName', ov).value.trim(),
+            password: U.$('#cuPwd', ov).value,
+            className: role === 'student' ? U.$('#cuClass', ov).value.trim() : '',
+            dept: role === 'teacher' ? U.$('#cuDept', ov).value.trim() : '',
+          };
+          API.admin.createUser(payload).then(r => {
+            close();
+            Toast.ok('账号已创建', r.username + ' · ' + (r.role === 'teacher' ? '教师' : '学生'));
+            load();
+          }).catch(err => Toast.error('创建失败', (err && err.message) || ''));
+        });
+      }
+    });
+  });
+
+  function openEdit(u) {
+    const isTeacher = u.role === 'teacher';
+    Modal.open({
+      title: '编辑账号',
+      body: `
+        <form class="stack" style="gap:12px" id="euForm">
+          <div class="stack" style="gap:4px"><span class="fz-12 t-dim">角色（不可修改）</span>
+            <div><span class="badge ${isTeacher ? 'badge--brand' : 'badge--outline'}">${isTeacher ? '教师' : '学生'}</span>
+            <span class="mono fz-11 t-dim" style="margin-left:6px">${U.esc(u.userId)}</span></div></div>
+          <label class="stack" style="gap:4px"><span class="fz-12 t-dim">用户名</span>
+            <input class="input" id="euUser" value="${U.esc(u.username)}" autocomplete="off"></label>
+          <label class="stack" style="gap:4px"><span class="fz-12 t-dim">姓名</span>
+            <input class="input" id="euName" value="${U.esc(u.name || '')}"></label>
+          <label class="stack" style="gap:4px"><span class="fz-12 t-dim">重置密码（留空 = 不修改）</span>
+            <input class="input" id="euPwd" type="password" placeholder="至少 6 位" autocomplete="new-password"></label>
+          <label class="stack" style="gap:4px" id="euClassWrap"><span class="fz-12 t-dim">班级（学生）</span>
+            <input class="input" id="euClass" value="${U.esc(u.className || '')}" placeholder="如：计算机 2301 班"></label>
+          <label class="stack" style="gap:4px" id="euNoWrap"><span class="fz-12 t-dim">学号（学生，可选）</span>
+            <input class="input" id="euNo" value="${U.esc(u.no || '')}"></label>
+          <label class="stack" style="gap:4px;display:none" id="euDeptWrap"><span class="fz-12 t-dim">部门（教师，可选）</span>
+            <input class="input" id="euDept" value="${U.esc(u.dept || '')}" placeholder="如：计算机学院"></label>
+          <label class="stack" style="gap:4px;display:none" id="euTitleWrap"><span class="fz-12 t-dim">职称（教师，可选）</span>
+            <input class="input" id="euTitle" value="${U.esc(u.title || '')}" placeholder="如：副教授"></label>
+        </form>`,
+      footer: `<button class="btn btn--primary" id="euGo" type="button">保存</button><button class="btn" data-close>取消</button>`,
+      onMount(ov, close) {
+        U.$('#euClassWrap', ov).style.display = isTeacher ? 'none' : '';
+        U.$('#euNoWrap', ov).style.display = isTeacher ? 'none' : '';
+        U.$('#euDeptWrap', ov).style.display = isTeacher ? '' : 'none';
+        U.$('#euTitleWrap', ov).style.display = isTeacher ? '' : 'none';
+        U.$('#euGo', ov).addEventListener('click', () => {
+          const payload = {
+            username: U.$('#euUser', ov).value.trim(),
+            name: U.$('#euName', ov).value.trim(),
+            password: U.$('#euPwd', ov).value,
+            className: isTeacher ? '' : U.$('#euClass', ov).value.trim(),
+            studentNo: isTeacher ? '' : U.$('#euNo', ov).value.trim(),
+            dept: isTeacher ? U.$('#euDept', ov).value.trim() : '',
+            title: isTeacher ? U.$('#euTitle', ov).value.trim() : '',
+          };
+          if (!payload.username || !payload.name) {
+            Toast.warn('用户名与姓名不能为空');
+            return;
+          }
+          if (payload.password && payload.password.length < 6) {
+            Toast.warn('密码至少 6 位');
+            return;
+          }
+          const btn = U.$('#euGo', ov);
+          btn.disabled = true;
+          API.admin.updateUser(u.userId, payload).then(r => {
+            close();
+            Toast.ok('账号已更新', (r.username || payload.username) + ' · ' + (r.role === 'teacher' ? '教师' : '学生'));
+            load();
+          }).catch(err => {
+            btn.disabled = false;
+            Toast.error('保存失败', (err && err.message) || '');
+          });
+        });
+      }
+    });
+  }
+
+  function confirmDelete(userId, username) {
+    Modal.open({
+      title: '删除账号',
+      body: `
+        <div class="stack" style="gap:12px">
+          <div class="callout callout--danger">${icon('alert')}
+            <div>将删除教师/学生账号 <b>${U.esc(username)}</b>，并级联清理其练习、进度、AI 会话、预警消息、草稿与课程成员关系。<br>
+            <b>不会</b>删除课程本身、资源文件与题库；若该教师是课程创建者（owner）会被拒绝。</div>
+          </div>
+          <label class="stack" style="gap:4px">
+            <span class="fz-12 t-dim">请输入用户名以确认：${U.esc(username)}</span>
+            <input class="input" id="delConfirmUser" placeholder="${U.esc(username)}" autocomplete="off">
+          </label>
+        </div>`,
+      footer: `<button class="btn btn--danger" id="delGo" type="button">确认删除</button>
+               <button class="btn" data-close>取消</button>`,
+      onMount(ov, close) {
+        U.$('#delGo', ov).addEventListener('click', () => {
+          const typed = U.$('#delConfirmUser', ov).value.trim();
+          if (typed !== username) {
+            Toast.warn('用户名不一致');
+            return;
+          }
+          const btn = U.$('#delGo', ov);
+          btn.disabled = true;
+          API.admin.deleteUser(userId, { confirmUsername: username }).then(r => {
+            close();
+            Toast.ok('账号已删除', r.username || username);
+            load();
+          }).catch(err => {
+            btn.disabled = false;
+            Toast.error('删除失败', (err && err.message) || '');
+          });
+        });
+      }
+    });
+  }
+
+  initTopbar('index.html?role=admin');
+
+  load();
+})();
+</script>
+</body>
+</html>

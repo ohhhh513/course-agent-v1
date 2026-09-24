@@ -18,7 +18,9 @@ from ..models.user import User, TeacherClass
 from ..models.alert import Alert
 from ..models.graph import LearningPath, GraphNode
 from ..models.practice import AnswerRecord
+from ..models.question import Question
 from ..middleware.auth import get_current_user
+from ..dependencies import get_current_course_id
 from ..schemas.common import ok, list_response
 from ..utils import loads, fmt_dt
 
@@ -41,7 +43,9 @@ class SaveTemplateReq(BaseModel):
 
 
 class GenerateReportReq(BaseModel):
-    classIds: List[str]
+    classIds: List[str] = []
+    # 兼容旧版前端字段；当前课程仍以 X-Course-Id 为准。
+    courseId: Optional[str] = None
     chapter: Optional[str] = None
     kpIds: Optional[List[str]] = None
     startDate: str = ""
@@ -419,17 +423,21 @@ def save_template(
 # ====== 报告列表 ======
 @report_router.get("/list")
 def report_list(
-    classId: str = Query("CL2301"),
+    classId: str = Query(None),
     page: int = Query(1),
     size: int = Query(20),
     db: Session = Depends(get_db),
     user=Depends(get_current_user),
+    course_id: str = Depends(get_current_course_id),
 ):
-    rows = db.query(Report).filter(Report.class_id == classId).order_by(Report.created_at.desc()).all()
+    rows = db.query(Report).order_by(Report.created_at.desc()).all()
     items = []
     for r in rows:
         detail = loads(r.detail_json) or {}
         meta = detail.get("meta") or {}
+        # 报告按详情中的课程 ID 严格隔离；旧报告没有课程标记时不展示。
+        if meta.get("courseId") != course_id:
+            continue
         sections = detail.get("sections") or []
         start = meta.get("startDate") or fmt_dt(r.created_at, "%Y-%m-%d")
         end = meta.get("endDate") or start
@@ -453,17 +461,32 @@ def generate_report(
     req: GenerateReportReq,
     db: Session = Depends(get_db),
     user=Depends(get_current_user),
+    course_id: str = Depends(get_current_course_id),
 ):
-    """一键生成学情分析报告 — 数据全部来自真实 DB 查询"""
-    class_id = req.classIds[0] if req.classIds else "CL2301"
-    class_name, students = _get_class_info_for_report(db, class_id)
-    if not class_name:
-        return ok({"reportId": "", "status": "error", "detail": {"error": "班级不存在"}})
+    """一键生成学情分析报告 — 按当前课程成员真实统计"""
+    from ..models.user_course import UserCourse as _UC
+    from ..models.course import Course as _Course
+    students = (
+        db.query(User)
+        .join(_UC, _UC.user_id == User.user_id)
+        .filter(_UC.course_id == course_id, User.role == "student")
+        .all()
+    )
+    # 课程名：优先从 courses 表读真实名（如"数据结构与算法"）；读不到则回退到"课程 {course_id}"。
+    course_row = db.query(_Course).filter(_Course.course_id == course_id).first()
+    course_name = (course_row.name if course_row and course_row.name else "").strip() or f"课程 {course_id}"
+    class_name = course_name
     student_ids = [s.user_id for s in students]
 
-    # 1. 真实统计：整体概况
-    lp_rows = db.query(LearningPath).filter(LearningPath.user_id.in_(student_ids)).all()
-    total_kp = len(set(r.kp_id for r in lp_rows))
+    # 1. 真实统计：整体概况（按课程学习路径）
+    lp_rows = db.query(LearningPath).filter(
+        LearningPath.user_id.in_(student_ids),
+        LearningPath.course_id == course_id,
+    ).all()
+    graph_kps = db.query(GraphNode).filter(
+        GraphNode.graph_type == "knowledge", GraphNode.course_id == course_id
+    ).all()
+    total_kp = max(len(set(r.kp_id for r in lp_rows)), len(graph_kps))
     done_count = sum(1 for r in lp_rows if r.status == "done")
     active_lps = [r for r in lp_rows if r.status != "todo" and (r.mastery or 0) > 0]
     avg_completion = round(done_count / len(lp_rows) * 100, 1) if lp_rows else 0
@@ -473,7 +496,7 @@ def generate_report(
     kp_mastery = defaultdict(list)
     for r in active_lps:
         kp_mastery[r.kp_id].append(r.mastery or 0)
-    kp_id_name = {n.id: n.name for n in db.query(GraphNode).filter(GraphNode.graph_type == "knowledge").all()}
+    kp_id_name = {n.id: n.name for n in graph_kps}
     weak_kps = sorted(
         [(kid, round(sum(v) / len(v), 1)) for kid, v in kp_mastery.items()],
         key=lambda x: x[1]
@@ -482,27 +505,74 @@ def generate_report(
     # 3. 真实统计：错题 Top 3（来自 answer_records）
     wrong_rows = db.query(AnswerRecord).filter(
         AnswerRecord.user_id.in_(student_ids),
+        AnswerRecord.course_id == course_id,
         AnswerRecord.is_correct == False
     ).all()
+    question_ids = {r.q_id for r in wrong_rows if r.q_id}
+    question_rows = db.query(Question).filter(Question.q_id.in_(question_ids)).all() if question_ids else []
+    question_kp_map = {}
+    for question in question_rows:
+        kp_ids = []
+        if question.kp_id:
+            kp_ids.append(question.kp_id)
+        kp_ids.extend(loads(question.kp_ids) or [])
+        kp_names = []
+        for kp_id in kp_ids:
+            if isinstance(kp_id, dict):
+                kp_id = kp_id.get("id") or kp_id.get("kpId") or kp_id.get("name")
+            if kp_id:
+                kp_names.append(kp_id_name.get(str(kp_id), str(kp_id)))
+        if not kp_names:
+            kp_path = loads(question.kp_path) or []
+            if isinstance(kp_path, list):
+                kp_names = [
+                    str(item.get("name") or item.get("label") or item)
+                    if isinstance(item, dict) else str(item)
+                    for item in kp_path if item
+                ]
+        if kp_names:
+            question_kp_map[question.q_id] = "、".join(dict.fromkeys(kp_names))
+
     err_type_cnt = defaultdict(int)
     for r in wrong_rows:
-        err_type_cnt[r.error_type or "未分类"] += 1
+        error_type = (r.error_type or "").strip() or "题目类型"
+        if error_type == "未分类" or error_type == "题目类型":
+            error_type = question_kp_map.get(r.q_id) or "题目知识点未关联"
+        err_type_cnt[error_type] += 1
     top_errors = sorted(err_type_cnt.items(), key=lambda x: -x[1])[:3]
 
     # 4. 真实统计：预警情况
     alert_rows = db.query(Alert).filter(
-        Alert.class_id == class_id, Alert.status != "closed"
+        Alert.user_id.in_(student_ids), Alert.status != "closed"
     ).all()
     red_cnt = sum(1 for a in alert_rows if a.level == "red")
     yellow_cnt = sum(1 for a in alert_rows if a.level == "yellow")
+    alert_student_count = len({a.user_id for a in alert_rows if a.user_id})
 
-    # 构建报告详情
+    intervention_rows = db.query(Intervention).filter(
+        Intervention.class_id == course_id
+    ).all()
+    effect_records = []
+    for intervention in intervention_rows:
+        execution = loads(intervention.execution_json) or {}
+        if not isinstance(execution, dict):
+            continue
+        before = execution.get("masteryBefore")
+        after = execution.get("masteryAfter")
+        if intervention.status == "done" and isinstance(before, (int, float)) and isinstance(after, (int, float)):
+            effect_records.append({"before": before, "after": after})
+
+    overview_paragraphs = [
+        f"{class_name} 学情分析报告共覆盖 {len(students)} 名学生，统计范围为 {req.chapter or '全课程'}。",
+        f"报告生成时间：{datetime.now().strftime('%Y-%m-%d %H:%M')}。当前课程知识点总数为 {total_kp} 个。",
+    ]
+    if not students or not lp_rows:
+        overview_paragraphs.append(
+            "当前暂无可用于统计的学生学习记录，本报告已按统一模板生成；学生加入课程并产生学习记录后，可重新生成以更新分析结果。"
+        )
     section_overview = {
         "title": "一、班级整体概况",
-        "paragraphs": [
-            f"《数据结构与算法》课程 - {class_name}，共 {len(students)} 名学生。",
-            f"报告生成时间：{datetime.now().strftime('%Y-%m-%d %H:%M')}。统计范围覆盖 {total_kp} 个知识点的学习数据。",
-        ],
+        "paragraphs": overview_paragraphs,
         "bullets": [
             f"知识点完成率：{avg_completion}%（{done_count}/{len(lp_rows)}）",
             f"平均掌握率：{avg_mastery}%",
@@ -510,52 +580,87 @@ def generate_report(
             f"待加强知识点：{sum(1 for _, m in kp_mastery.items() if sum(m)/len(m) < 60)} 个",
         ],
     }
-
     section_weakness = {
-        "title": "二、薄弱点分析",
+        "title": "二、共性短板归因",
         "paragraphs": [
-            f"班级薄弱知识点识别（按平均掌握率升序）：" +
-            ("、".join([f"「{kp_id_name.get(kid, kid)}」" for kid, _ in weak_kps]) if weak_kps else "暂无明显薄弱点。"),
+            "班级薄弱知识点按平均掌握率升序识别：" +
+            ("、".join([f"「{kp_id_name.get(kid, kid)}」" for kid, _ in weak_kps]) if weak_kps else "暂无可识别的共性薄弱点。"),
+            f"本统计阶段共收集 {len(wrong_rows)} 道错题记录，错误类型缺失时按题目知识点归因：" +
+            ("、".join([f"「{et}」（{cnt} 次）" for et, cnt in top_errors]) if top_errors else "暂无错题归因数据。"),
         ],
-        "bullets": [f"「{kp_id_name.get(kid, kid)}」: 平均掌握率 {m}%" for kid, m in weak_kps] if weak_kps else ["暂无薄弱点"],
+        "bullets": (
+            [f"「{kp_id_name.get(kid, kid)}」：平均掌握率 {m}%" for kid, m in weak_kps] +
+            [f"「{et}」：占错题 {cnt}/{len(wrong_rows)} 次" for et, cnt in top_errors]
+        ) or ["暂无学习记录，待后续数据积累后分析共性短板。"],
     }
-
-    section_errors = {
-        "title": "三、错题与归因",
-        "paragraphs": [
-            f"本阶段共收集到 {len(wrong_rows)} 道错题记录，主要错误类型集中在：" +
-            ("、".join([f"「{et}」（{cnt} 次）" for et, cnt in top_errors]) if top_errors else "暂无错题。"),
-        ],
-        "bullets": [f"「{et}」: 占错题 {cnt}/{len(wrong_rows)} 次" for et, cnt in top_errors] if top_errors else ["暂无错题"],
-    }
-
     section_alerts = {
-        "title": "四、预警与干预建议",
+        "title": "三、个体预警",
         "paragraphs": [
-            f"当前活跃预警 {red_cnt + yellow_cnt} 条（红色 {red_cnt} 条，黄色 {yellow_cnt} 条）。建议优先处理红色预警，黄色预警持续观察。",
+            f"当前活跃预警 {red_cnt + yellow_cnt} 条，涉及 {alert_student_count} 名学生（红色 {red_cnt} 条，黄色 {yellow_cnt} 条）。",
         ],
         "bullets": [
-            f"红色预警：{red_cnt} 条 — 建议立即人工介入",
-            f"黄色预警：{yellow_cnt} 条 — 建议持续监控并安排靶向练习",
+            f"红色预警：{red_cnt} 条——建议优先进行人工介入",
+            f"黄色预警：{yellow_cnt} 条——建议持续观察并安排针对性练习",
         ],
     }
+    if effect_records:
+        before_avg = round(sum(item["before"] for item in effect_records) / len(effect_records), 1)
+        after_avg = round(sum(item["after"] for item in effect_records) / len(effect_records), 1)
+        effect_paragraphs = [f"已有 {len(effect_records)} 条已完成干预记录包含前后测数据，平均掌握率由 {before_avg}% 提升至 {after_avg}%。"]
+        effect_bullets = [f"平均掌握率变化：{after_avg - before_avg:+.1f} 个百分点"]
+    else:
+        effect_paragraphs = ["当前暂无完整的干预前后测数据，暂不能计算干预提升幅度；完成干预并录入复测结果后重新生成即可。"]
+        effect_bullets = ["建议对红色预警学生完成针对性练习后进行复测，并持续记录干预结果。"]
+    # 已按需求去除"四、干预效果"section（2026-09-24）
+    mastery_by_kp = {kid: round(sum(values) / len(values), 1) for kid, values in kp_mastery.items() if values}
+    achieved_kp_count = sum(1 for mastery in mastery_by_kp.values() if mastery >= 60)
+    goal_rate = round(achieved_kp_count / total_kp * 100, 1) if total_kp else 0
+    section_goal = {
+        "title": "四、目标达成度",
+        "paragraphs": [f"按平均掌握率达到 60% 作为阶段性达标线，当前 {achieved_kp_count}/{total_kp} 个知识点达到目标，目标达成度为 {goal_rate}%。"],
+        "bullets": [
+            f"阶段性目标：知识点掌握率达到 60%（当前达成 {achieved_kp_count} 个）",
+            f"后续重点：优先补强 {len(weak_kps)} 个低掌握知识点，并在下一统计周期复评。",
+        ],
+    }
+    section_map = {
+        "整体掌握度": section_overview,
+        "共性短板归因": section_weakness,
+        "个体预警": section_alerts,
+        "目标达成度": section_goal,
+    }
+    requested_sections = {str(section).strip() for section in (req.sections or []) if str(section).strip()}
+    # 老报告若仍携带"干预效果"选项，静默忽略（2026-09-24 已下线该 section）
+    requested_sections.discard("干预效果")
+    selected_sections = [section_map[name] for name in section_map if not requested_sections or name in requested_sections]
+    if not selected_sections:
+        selected_sections = list(section_map.values())
 
+    period_text = ""
+    if req.startDate or req.endDate:
+        period_text = f"{req.startDate or ''} ~ {req.endDate or ''}".strip(" ~")
     detail = {
-        "title": f"《数据结构与算法》{class_name} · 学情分析报告 - {datetime.now().strftime('%Y-%m-%d')}",
-        "sections": [section_overview, section_weakness, section_errors, section_alerts],
+        "title": f"{class_name} · 学情分析报告 {datetime.now().strftime('%Y-%m-%d')}",
+        "sections": selected_sections,
         "meta": {
+            "courseId": course_id,
+            "courseName": course_name,           # 2026-09-24：用课程名替代班级名
             "chapter": req.chapter or "全课程",
             "startDate": req.startDate or "",
             "endDate": req.endDate or "",
-            "className": class_name,
+            "period": period_text,
+            "studentCount": len(students),       # 2026-09-24：人数即该课程学生人数
+            "className": class_name,             # 兼容旧导出模板（PDF/HTML 仍可能引用）
             "generator": user.name or user.username or "教师",
+            "generatedAt": datetime.now().strftime("%Y-%m-%d %H:%M"),
         },
     }
 
     # 写入真实 reports 表
     report = Report(
         report_id="RP" + uuid.uuid4().hex[:12].upper(),
-        class_id=class_id,
+        # 当前报告按课程上下文归属；旧表的 class_id 外键指向 classes，不能写入 course_id。
+        class_id=None,
         title=detail["title"],
         status="ready",
         detail_json=_json.dumps(detail, ensure_ascii=False),
@@ -687,7 +792,8 @@ def export_report(
 
         add_text(title, size=17, width=32, leading=25)
         lines.append(("", 11, 10))
-        add_text(f"班级：{meta.get('className') or '—'}")
+        add_text(f"课程：{meta.get('courseName') or meta.get('className') or '—'}")
+        add_text(f"人数：{meta.get('studentCount') if meta.get('studentCount') is not None else '—'}")
         add_text(f"统计范围：{meta.get('chapter') or '全课程'}")
         add_text(f"时间区间：{period}")
         add_text(f"生成者：{meta.get('generator') or '系统'}")

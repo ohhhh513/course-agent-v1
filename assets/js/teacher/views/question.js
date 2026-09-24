@@ -7,9 +7,30 @@
     tab: 'gen',
     gen: { kpIds: [], difficulty: 3, count: 6 },
     bankFilter: 'all', bankKeyword: '', bankPage: 1, bankPageSize: 10,
-    draftFilter: 'all',
+    bankSort: 'default',                       // 2026-09-24：题库管理排序键 default | kp | correctRate | difficulty
+    bankDir: 'asc',                            // 2026-09-24：排序方向 asc | desc（按知识点排序按字母 a→z）
+    draftFilter: 'draft',                       // 2026-09-24：草稿箱默认「待处理」，选项仅 draft / published
+    _renderToken: 0,
+    _renderCourseId: '',
     render() {
+      const previousCourseId = this._renderCourseId;
+      this._renderCourseId = API.config.activeCourseId;
+      this._renderToken += 1;
+      if (previousCourseId !== this._renderCourseId) {
+        // 切换课程后不能沿用上一门课程的知识点选择、草稿生成状态。
+        this.gen.kpIds = [];
+        this._drafts = [];
+        this._genBusy = false;
+        this.bankPage = 1;
+        this.bankSort = 'default';     // 2026-09-24：切换课程后题库排序回到默认
+        this.bankDir = 'asc';          // 2026-09-24：排序方向重置为升序
+        this.draftFilter = 'draft';       // 2026-09-24：切换课程后草稿箱回到「待处理」
+      }
       const el = U.$('#view-question');
+      if (!API.config.activeCourseId) {
+        el.innerHTML = `<div class="card"><div class="card__body"><div class="empty" style="padding:48px;text-align:center"><b>尚未创建或选择课程</b><p class="fz-12 t-dim">请先建课后再进入题库与 AI 出题。</p></div></div></div>`;
+        return;
+      }
       el.innerHTML = `
       <div class="tabs" id="qTabs" style="margin-bottom:16px">
         <button class="is-active" data-t="gen">${icon('sparkle')} AI 智能出题</button>
@@ -28,8 +49,13 @@
     },
 
     renderGen() {
+      const renderToken = this._renderToken;
+      const renderCourseId = this._renderCourseId;
+      const isCurrent = () => renderToken === this._renderToken
+        && renderCourseId === API.config.activeCourseId;
       const box = U.$('#qBody');
-      API.question.genConfig({ classId: state.classId }).then(cfg => {
+      API.question.genConfig({}).then(cfg => {
+        if (!isCurrent()) return;
         this._cfg = cfg;
         box.innerHTML = `
         <div class="gen-layout">
@@ -160,12 +186,17 @@
             difficulty: this.gen.difficulty, count: this.gen.count,
             requirement: this.gen.requirement || ''
           }, {
-            onMeta: (d) => { const p = U.$('#genProc', box); if (p) p.textContent = `批次 ${d.batchId} · 共 ${d.count} 题`; },
+            onMeta: (d) => {
+              if (!isCurrent()) return;
+              const p = U.$('#genProc', box); if (p) p.textContent = `批次 ${d.batchId} · 共 ${d.count} 题`;
+            },
             onLog: (d) => {
+              if (!isCurrent()) return;
               const p = U.$('#genProc', box);
               if (p && d.type === 'tool_start') p.textContent = `正在调用 ${d.name} …`;
             },
             onDraft: (d) => {
+              if (!isCurrent()) return;
               this._drafts.push(d);
               const i = this._drafts.length - 1;
               if (!U.$('#genList', box)) {
@@ -194,8 +225,9 @@
               }
               box.scrollTop = box.scrollHeight;
             },
-            onError: (d) => Toast.err('生成出错', (d && d.message) || ''),
+            onError: (d) => { if (isCurrent()) Toast.err('生成出错', (d && d.message) || ''); },
             onDone: (d) => {
+              if (!isCurrent()) return;
               this._genBusy = false;
               const progressStatus = U.$('#genProgressStatus', box);
               if (progressStatus) progressStatus.remove();
@@ -204,6 +236,7 @@
               Toast.ok('AI 出题完成', `${d.count || 0} 道草稿已存入草稿箱`);
             },
           }).catch((e) => {
+            if (!isCurrent()) return;
             this._genBusy = false;
             const progressText = U.$('#genProgressText', box);
             if (progressText) progressText.textContent = '生成已中断，请重试';
@@ -259,8 +292,8 @@
           <span class="badge badge--outline">仅本人可见 · 发布后进入题库</span>
           <span class="spacer"></span>
           <div class="seg" id="draftSeg">
-            <button data-s="all" class="is-active">全部</button><button data-s="draft">待处理</button>
-            <button data-s="invalid">校验未过</button><button data-s="published">已发布</button>
+            <button data-s="draft" class="is-active">待处理</button>
+            <button data-s="published">已发布</button>
           </div>
           <button class="btn btn--sm btn--outline" id="draftRefresh">${icon('refresh')} 刷新</button>
         </div>
@@ -276,8 +309,14 @@
 
     loadDrafts() {
       const list = U.$('#draftList');
+      const renderToken = this._renderToken;
+      const renderCourseId = this._renderCourseId;
+      const isCurrent = () => renderToken === this._renderToken
+        && renderCourseId === API.config.activeCourseId;
+      if (!list) return;
       list.innerHTML = `<div class="fz-12 t-dim" style="padding:14px">加载中…</div>`;
       API.question.drafts({ status: this.draftFilter }).then(r => {
+        if (!isCurrent()) return;
         if (!r.list.length) {
           list.innerHTML = `<div class="fz-12 t-dim" style="padding:20px;text-align:center">
             ${icon('pencil')} 暂无草稿——去「AI 智能出题」生成，草稿会自动出现在这里</div>`;
@@ -320,6 +359,7 @@
           }).catch(err => Toast.err('删除失败', err && err.message));
         }));
       }).catch(err => {
+        if (!isCurrent()) return;
         list.innerHTML = `<div class="fz-12 t-dim" style="padding:14px">加载失败：${U.esc(err.message || '')}</div>`;
       });
     },
@@ -341,9 +381,9 @@
         <div class="gen-q__head">
           <span class="badge badge--brand">${i + 1}</span>
           <b>单选题</b>
-          <span class="badge badge--outline">${U.esc(d.chapter || '')}</span>
+          <span class="badge badge--outline">${U.esc(d.kpName || d.kpId || '')}</span>
           ${statusBadge}
-          <span class="badge badge--outline mono">#${p.id || ''}</span>
+          <span class="badge badge--outline mono">#${U.esc(d.qId || p.q_id || '')}</span>
           <span class="spacer"></span>
           <span class="fz-11 t-dim">${U.esc(d.createdAt || '')}</span>
         </div>
@@ -380,12 +420,14 @@
               <span class="badge badge--brand">草稿</span>
               <div><b>修改后保存会重新校验</b><span>校验未通过仍可保存，但发布前必须通过</span></div>
             </div>
-            <span class="question-edit__summary-id">原始题号 <b class="mono">#${U.esc(p.id || '')}</b></span>
+            <span class="question-edit__summary-id">题号 <b class="mono">#${U.esc(p.q_id || '')}</b></span>
           </div>
           <section class="question-edit__section">
             <div class="edit-grid">
-              <div class="edit-field"><label>章节（王道小节）</label>
-                <input class="input" id="dqChapter" value="${U.esc(p.chapter || '')}" placeholder="如 6.4 图的应用"></div>
+              <div class="edit-field"><label>章节</label>
+                <input class="input" value="${U.esc(p.chapter_id || '')}" disabled placeholder="由出题时定位"></div>
+              <div class="edit-field"><label>知识点</label>
+                <input class="input" value="${U.esc(p.kp_id || '')}" disabled placeholder="由出题时定位"></div>
               <div class="edit-field"><label>答案</label>
                 <input class="input" id="dqAns" value="${U.esc(p.answer || '')}" placeholder="如 B"></div>
             </div>
@@ -432,7 +474,6 @@
               options: newOpts,
               answer: answer || p.answer,
               analysis: U.$('#dqAnalysis', ov).value,
-              chapter: U.$('#dqChapter', ov).value.trim() || p.chapter,
             });
             API.question.draftUpdate({ draftId: d.draftId, payload }).then(res => {
               Toast.ok('草稿已保存', res.status === 'draft' ? '校验通过' : '校验未通过：' + (res.errors || []).join('；'));
@@ -448,13 +489,20 @@
       box.innerHTML = `
       <div class="card">
         <div class="card__head">
-          <h3>${icon('file')} 题库（${U.esc(state.classId)}）</h3>
+          <h3>${icon('file')} 题库${API.config.activeCourseId ? '（' + U.esc(API.config.activeCourseId) + '）' : ''}</h3>
           <span class="spacer"></span>
-          <div class="search" style="width:180px">${icon('search2')}<input class="input" id="bankSearch" placeholder="题号 / 题干 / 知识点"></div>
-          <div class="seg" id="bankSeg">
-            <button data-s="all" class="is-active">全部</button><button data-s="pending">待审核</button>
-            <button data-s="approved">已审</button><button data-s="published">已发布</button><button data-s="archived">归档</button></div>
-          <button class="btn btn--sm btn--primary" id="bankImport">${icon('upload')} 批量导入</button>
+          <div class="search" style="width:180px">${icon('search2')}<input class="input" id="bankSearch" placeholder="题干 / 知识点"></div>
+          <div class="seg" id="bankSeg" title="题库排序">
+            <button data-s="default" class="is-active">默认</button>
+            <button data-s="kp">知识点</button>
+            <button data-s="correctRate">正确率</button>
+            <button data-s="difficulty">难度</button>
+            <button data-s="dir" id="bankDirBtn" class="seg__dir" title="反转当前排序">
+              <span class="seg__dir-arrow"></span>
+              <span class="seg__dir-label">升序</span>
+            </button>
+          </div>
+          <button class="btn btn--sm" id="bankNew">${icon('pencil')} 新建题目</button>
         </div>
         <div class="card__body card__body--flush">
           <div class="tbl-wrap bank-table-scroll"><table class="tbl" id="bankTbl"></table></div>
@@ -462,163 +510,90 @@
         </div>
       </div>`;
 
-      U.$$('#bankSeg button', box).forEach(b => b.addEventListener('click', () => {
-        U.$$('#bankSeg button', box).forEach(x => x.classList.remove('is-active'));
-        b.classList.add('is-active'); this.bankFilter = b.dataset.s; this.bankPage = 1; this.loadBank();
+      const sortBtns = U.$$('#bankSeg button[data-s]:not([data-s="dir"])', box);
+      sortBtns.forEach(b => b.addEventListener('click', () => {
+        sortBtns.forEach(x => x.classList.remove('is-active'));
+        b.classList.add('is-active');
+        this.bankSort = b.dataset.s;
+        this.bankPage = 1;
+        this.loadBank();
       }));
-      U.$('#bankSearch', box).addEventListener('input', e => { this.bankKeyword = e.target.value.trim(); this.bankPage = 1; this.loadBank(); });
-      U.$('#bankImport', box).addEventListener('click', () => {
-        Modal.open({
-          title: '批量导入题目', size: 'wide',
-          body: `
-          <div class="import-tabs">
-            <div class="import-tab is-active" data-tab="file">${icon('upload')} 文件上传</div>
-            <div class="import-tab" data-tab="json">${icon('code')} JSON 粘贴</div>
-          </div>
-
-          <div class="import-panel" data-panel="file">
-            <div class="callout callout--brand" style="margin-bottom:14px">${icon('info')}<div>
-              <b>支持格式</b>：Word (.docx)、PDF (.pdf)、文本 (.txt)、图片 (.png/.jpg/.jpeg)<br/>
-              <b>识别格式</b>：每题以数字开头（如 <code>1.</code> / <code>1)</code> / <code>第1题</code>），含题干、选项（A./B./C./D.）、答案（答案: B）
-            </div></div>
-            <input type="file" id="importFile" accept=".docx,.doc,.pdf,.txt,.png,.jpg,.jpeg,.bmp" style="display:none">
-            <div class="import-dropzone" id="importDrop">
-              <div style="font-size:48px">${icon('upload')}</div>
-              <div style="margin-top:8px"><b>点击选择文件</b> 或将文件拖拽到此处</div>
-              <div class="fz-12 t-dim" style="margin-top:4px">支持 .docx / .pdf / .txt / .png / .jpg / .jpeg</div>
-            </div>
-            <div id="importFileInfo" style="display:none;margin-top:12px"></div>
-          </div>
-
-          <div class="import-panel" data-panel="json" style="display:none">
-            <div class="callout callout--brand" style="margin-bottom:14px">${icon('info')}<div>
-              <b>粘贴 JSON 数组</b> — 适合已准备好结构化数据的场景
-            </div></div>
-            <p class="fz-12 t-dim" style="margin-bottom:6px">格式示例：<code>[{"stem":"题干...","type":"single","difficulty":3,"kp_id":"KP1","options":[{"key":"A","text":"选项A"},{"key":"B","text":"选项B","right":true}],"answer":"B"}]</code></p>
-            <textarea class="code-edit" id="importJson" style="min-height:280px;font-family:monospace;font-size:12px" placeholder='在此粘贴 JSON 数组...'></textarea>
-          </div>
-          `,
-          footer: `<button class="btn" data-close>取消</button>
-            <button class="btn btn--primary" id="importSubmit">${icon('check')} 开始导入</button>`,
-          onMount(ov, close) {
-            let importMode = 'file';  // 'file' 或 'json'
-            let selectedFile = null;
-            let parsedQuestions = null;
-
-            // Tab 切换
-            U.$$('.import-tab', ov).forEach(t => t.addEventListener('click', () => {
-              U.$$('.import-tab', ov).forEach(x => x.classList.remove('is-active'));
-              t.classList.add('is-active');
-              importMode = t.dataset.tab;
-              U.$$('.import-panel', ov).forEach(p => p.style.display = p.dataset.panel === importMode ? '' : 'none');
-            }));
-
-            // ===== 文件上传模式 =====
-            const dropzone = U.$('#importDrop', ov);
-            const fileInput = U.$('#importFile', ov);
-            const fileInfo = U.$('#importFileInfo', ov);
-
-            dropzone.addEventListener('click', () => fileInput.click());
-            ['dragenter', 'dragover'].forEach(ev => dropzone.addEventListener(ev, e => { e.preventDefault(); dropzone.classList.add('is-hover'); }));
-            ['dragleave', 'drop'].forEach(ev => dropzone.addEventListener(ev, e => { e.preventDefault(); dropzone.classList.remove('is-hover'); }));
-            dropzone.addEventListener('drop', e => {
-              if (e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0]);
-            });
-            fileInput.addEventListener('change', e => {
-              if (e.target.files.length) handleFile(e.target.files[0]);
-            });
-
-            function handleFile(f) {
-              selectedFile = f;
-              const ext = f.name.split('.').pop().toLowerCase();
-              const sizeKB = Math.round(f.size / 1024);
-              fileInfo.style.display = '';
-              fileInfo.innerHTML = `<div class="row fz-13" style="align-items:center">
-                ${icon('file')} <b>${f.name}</b> <span class="fz-12 t-dim">· ${sizeKB}KB · .${ext}</span>
-                <span class="spacer"></span><button class="btn btn--sm btn--outline" id="removeFile">移除</button>
-              </div>`;
-              U.$('#removeFile', fileInfo).addEventListener('click', () => {
-                selectedFile = null; fileInfo.style.display = 'none'; fileInput.value = '';
-              });
-            }
-
-            // ===== JSON 粘贴模式 =====
-            U.$('#importJson', ov).addEventListener('input', () => { parsedQuestions = null; });
-
-            // ===== 提交 =====
-            U.$('#importSubmit', ov).addEventListener('click', async () => {
-              U.$('#importSubmit', ov).disabled = true;
-              try {
-                if (importMode === 'file') {
-                  if (!selectedFile) return Toast.warn('请先选择文件');
-                  Toast.loading('正在解析 ' + selectedFile.name + ' ...');
-                  const fd = new FormData();
-                  fd.append('file', selectedFile);
-                  const resp = await fetch('/api/v1/question/import/file', {
-                    method: 'POST', headers: { 'Authorization': 'Bearer ' + (localStorage.getItem('token') || '') },
-                    body: fd
-                  });
-                  const r = await resp.json();
-                  const d = r.data || {};
-                  Toast.ok('导入完成', d.success + ' 成功 / ' + d.failed + ' 失败 · 共 ' + d.total + ' 题');
-                  if (d.errors && d.errors.length) {
-                    Modal.open({ title: '导入错误详情', body: `<pre style="white-space:pre-wrap;font-size:12px">${d.errors.join('\\n')}</pre>`, footer: `<button class="btn btn--primary" data-close>知道了</button>` });
-                  }
-                  if (d.warnings && d.warnings.length) {
-                    Toast.warn(d.warnings.join('; '));
-                  }
-                  close(); Question.loadBank();
-                } else {
-                  let qList = parsedQuestions;
-                  if (!qList) {
-                    const txt = U.$('#importJson', ov).value.trim();
-                    if (!txt) return Toast.warn('请先粘贴 JSON');
-                    try { qList = JSON.parse(txt); } catch (err) { return Toast.warn('JSON 格式错误：' + err.message); }
-                  }
-                  if (!Array.isArray(qList)) return Toast.warn('JSON 必须是数组格式');
-                  if (qList.length === 0) return Toast.warn('没有有效的题目');
-                  const body = qList[0].stem !== undefined ? { questions: qList } : qList;
-                  Toast.loading('正在导入 ' + body.questions.length + ' 道题目...');
-                  const r = await API.question.importBatch(body);
-                  Toast.ok('导入完成', r.success + ' 成功 / ' + r.failed + ' 失败 · 共 ' + r.total + ' 题');
-                  if (r.errors && r.errors.length) {
-                    Modal.open({ title: '导入错误详情', body: `<pre style="white-space:pre-wrap;font-size:12px">${r.errors.join('\\n')}</pre>`, footer: `<button class="btn btn--primary" data-close>知道了</button>` });
-                  }
-                  close(); Question.loadBank();
-                }
-              } catch (err) {
-                Toast.warn('导入失败：' + (err.message || String(err)));
-              } finally {
-                U.$('#importSubmit', ov).disabled = false;
-              }
-            });
-          }
+      // 排序反转按钮：仅切换升降序方向，不改变当前排序键；按钮文案/箭头同步。
+      const dirBtn = U.$('#bankDirBtn', box);
+      if (dirBtn) {
+        dirBtn.addEventListener('click', () => {
+          this.bankDir = this.bankDir === 'asc' ? 'desc' : 'asc';
+          this.bankPage = 1;
+          // 立即刷新按钮箭头与文案，再异步刷新表格（按钮本身不在表格内，loadBank 不会动它）
+          this._renderBankDirBtn(box);
+          this.loadBank();
         });
-      });
+      }
+      this._renderBankDirBtn(box);
+      U.$('#bankSearch', box).addEventListener('input', e => { this.bankKeyword = e.target.value.trim(); this.bankPage = 1; this.loadBank(); });
+      U.$('#bankNew', box).addEventListener('click', () => openNewQuestionModal(() => this.loadBank()));
       this.loadBank();
     },
 
+    bankHighlight(text) {
+      const value = String(text == null ? '' : text);
+      const keyword = (this.bankKeyword || '').trim();
+      if (!keyword) return U.esc(value);
+      const escapedKeyword = U.esc(keyword).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      return U.esc(value).replace(new RegExp(escapedKeyword, 'gi'), hit =>
+        `<mark class="bank-hit">${hit}</mark>`);
+    },
+
+    /** 渲染题库排序方向的开关按钮文案/图标：升序 ↘ 降序 ↗。 */
+    _renderBankDirBtn(box) {
+      // box 可能已被卸载，直接查 document 兜底，保证点击反转后一定能拿到当前 DOM。
+      const btn = (box && U.$('#bankDirBtn', box)) || document.getElementById('bankDirBtn');
+      if (!btn) return;
+      const isAsc = this.bankDir !== 'desc';
+      const arrow = btn.querySelector('.seg__dir-arrow');
+      const label = btn.querySelector('.seg__dir-label');
+      if (arrow) arrow.textContent = isAsc ? '↘' : '↗';
+      if (label) label.textContent = isAsc ? '升序' : '降序';
+      btn.classList.toggle('is-desc', !isAsc);
+      btn.setAttribute('aria-pressed', String(!isAsc));
+    },
+
     loadBank() {
+      const renderToken = this._renderToken;
+      const renderCourseId = this._renderCourseId;
+      const isCurrent = () => renderToken === this._renderToken
+        && renderCourseId === API.config.activeCourseId;
       API.question.bank({
-        status: this.bankFilter, keyword: this.bankKeyword,
+        sort: this.bankSort, dir: this.bankDir, keyword: this.bankKeyword,
         page: this.bankPage, size: this.bankPageSize
       }).then(r => {
+        if (!isCurrent()) return;
         const t = U.$('#bankTbl'); if (!t) return;
         const totalPages = Math.max(1, Math.ceil((r.total || 0) / this.bankPageSize));
         if (this.bankPage > totalPages) { this.bankPage = totalPages; return this.loadBank(); }
         const stMap = { pending: ['待审核', 'badge--warn'], approved: ['已审', 'badge--ok'], published: ['已发布', 'badge--brand'], archived: ['归档', 'badge--outline'] };
+        const TYPE_LABEL = { single: '单选题', multiple: '多选题', blank: '填空题', judge: '判断题', essay: '简答题' };
         t.innerHTML = `
-          <thead><tr><th>题号</th><th>题干</th><th>题型</th><th>知识点</th><th>难度</th><th class="t-right">正确率</th><th>状态</th><th></th></tr></thead>
-          <tbody>${r.list.map(q => {
+          <thead><tr>
+            <th>题号</th><th>题干</th><th>题型</th><th>知识点</th><th>难度</th>
+            <th class="t-center">重难点</th>
+            <th class="t-center">正确率</th><th class="t-center">状态</th><th class="t-center">操作</th>
+          </tr></thead>
+        <tbody>${r.list.map(q => {
             const [lbl, bd] = stMap[q.status] || ['—', 'badge--outline'];
+            const typeLabel = TYPE_LABEL[q.type] || q.type || '—';
+            const kpText = (q.tags && q.tags.length
+              ? q.tags.map(t => t.name || t.kpName || '').filter(Boolean).join('、')
+              : (q.kp || ''));
             return `<tr>
-              <td class="mono fz-12">${q.qId}</td>
-              <td><div class="bank-stem-scroll">${U.esc(q.stem)}</div></td>
-              <td>${q.type}</td><td>${U.esc(q.kp)}</td>
+              <td class="mono fz-12">${this.bankHighlight(q.qId)}</td>
+              <td><div class="bank-stem-scroll">${this.bankHighlight(q.stem)}</div></td>
+              <td>${typeLabel}</td><td>${this.bankHighlight(kpText)}</td>
               <td>${U.stars(q.difficulty)}</td>
-              <td class="t-right num ${q.correctRate === null ? 't-dim' : (q.correctRate < 60 ? 't-danger' : '')}">${q.correctRate === null ? '—' : q.correctRate + '%'}</td>
-              <td><span class="badge ${bd}">${lbl}</span>${q.isKey ? ' <span class="badge badge--warn">◆</span>' : ''}</td>
-              <td class="t-right"><button class="btn btn--xs btn--ghost" data-edit="${q.qId}">编辑</button>
+              <td class="t-center">${q.isKey ? '<span class="badge badge--warn">◆ 重点</span>' : '<span class="t-dim">' + '—' + '</span>'}</td>
+              <td class="t-center num ${q.correctRate === null ? 't-dim' : (q.correctRate < 60 ? 't-danger' : '')}">${q.correctRate === null ? '—' : q.correctRate + '%'}</td>
+              <td class="t-center"><span class="badge ${bd}">${lbl}</span></td>
+              <td class="t-center"><button class="btn btn--xs btn--ghost" data-edit="${q.qId}">编辑</button>
                 <button class="btn btn--xs btn--ghost" data-del="${q.qId}">删除</button></td>
             </tr>`;
           }).join('')}</tbody>`;
@@ -629,30 +604,76 @@
 
         const pager = U.$('#bankPagination');
         if (!pager) return;
+        /* wallpaper 风格紧凑页码：首尾页恒显，当前页前后共 ~7 页，间隔处渲染可点击的「…」 */
+        const WIN = 7; /* 页码窗口宽度 */
+        const pages = [];
+        if (totalPages <= WIN + 2) {
+          for (let p = 1; p <= totalPages; p++) pages.push(p);
+        } else {
+          let lo = Math.max(2, this.bankPage - Math.floor((WIN - 1) / 2));
+          let hi = Math.min(totalPages - 1, lo + WIN - 2);
+          lo = Math.max(2, hi - WIN + 2);
+          pages.push(1);
+          if (lo > 2) pages.push('...');
+          for (let p = lo; p <= hi; p++) pages.push(p);
+          if (hi < totalPages - 1) pages.push('...');
+          pages.push(totalPages);
+        }
         pager.innerHTML = `
-          <button class="bank-page-btn" data-page-action="first" aria-label="第一页" ${this.bankPage === 1 ? 'disabled' : ''}>«</button>
-          <button class="bank-page-btn" data-page-action="prev" aria-label="上一页" ${this.bankPage === 1 ? 'disabled' : ''}>‹</button>
-          ${Array.from({ length: totalPages }, (_, i) => i + 1).map(p =>
-            `<button class="bank-page-btn ${p === this.bankPage ? 'is-active' : ''}" data-page="${p}">${p}</button>`
+          <button class="bank-page-btn" data-page-action="prev" aria-label="上一页" ${this.bankPage === 1 ? 'disabled' : ''}>«</button>
+          ${pages.map(p => p === '...'
+            ? `<button class="bank-page-btn bank-page-ellipsis" data-page-action="jump" title="输入页码跳转">...</button>`
+            : `<button class="bank-page-btn ${p === this.bankPage ? 'is-active' : ''}" data-page="${p}">${p}</button>`
           ).join('')}
-          <button class="bank-page-btn" data-page-action="next" aria-label="下一页" ${this.bankPage === totalPages ? 'disabled' : ''}>›</button>
-          <button class="bank-page-btn" data-page-action="last" aria-label="最后一页" ${this.bankPage === totalPages ? 'disabled' : ''}>»</button>`;
+          <button class="bank-page-btn" data-page-action="next" aria-label="下一页" ${this.bankPage === totalPages ? 'disabled' : ''}>»</button>`;
         const go = page => {
           if (page < 1 || page > totalPages || page === this.bankPage) return;
           this.bankPage = page; this.loadBank();
         };
+        const openJumpModal = () => {
+          Modal.open({
+            title: '输入页码',
+            body: `<input class="input" id="bankJumpInput" type="number" min="1" max="${totalPages}" placeholder="1 - ${totalPages}" style="width:100%">
+              <p class="modal__hint" id="bankJumpHint"></p>`,
+            footer: `<button class="btn btn--ghost" data-close>取消</button>
+              <button class="btn btn--primary" id="bankJumpOk">确认</button>`,
+            onMount(ov, close) {
+              const inp = U.$('#bankJumpInput', ov);
+              const ok = U.$('#bankJumpOk', ov);
+              const hint = U.$('#bankJumpHint', ov);
+              const doJump = () => {
+                const raw = inp.value.trim();
+                const v = parseInt(raw, 10);
+                if (raw === '' || isNaN(v)) {
+                  hint.textContent = '请输入页码数字';
+                  Toast.warn('请输入页码数字');
+                  return;
+                }
+                if (v < 1 || v > totalPages) {
+                  hint.textContent = `页码超出范围，请输入 1 - ${totalPages}`;
+                  Toast.warn(`请输入 1 - ${totalPages} 之间的页码`);
+                  return;
+                }
+                hint.textContent = '';
+                close(); go(v);
+              };
+              ok.addEventListener('click', doJump);
+              inp.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); doJump(); } });
+              setTimeout(() => { inp.focus(); inp.select(); }, 30);
+            }
+          });
+        };
         U.$$('[data-page]', pager).forEach(b => b.addEventListener('click', () => go(+b.dataset.page)));
-        U.$('[data-page-action="first"]', pager).addEventListener('click', () => go(1));
         U.$('[data-page-action="prev"]', pager).addEventListener('click', () => go(this.bankPage - 1));
         U.$('[data-page-action="next"]', pager).addEventListener('click', () => go(this.bankPage + 1));
-        U.$('[data-page-action="last"]', pager).addEventListener('click', () => go(totalPages));
+        U.$$('[data-page-action="jump"]', pager).forEach(b => b.addEventListener('click', openJumpModal));
       });
     },
 
     editQ(qId, list) {
       const q = list.find(x => x.qId === qId);
-      // 先拉取完整数据（bank 返回的字段可能不全）
-      API.question.bank({ status: 'all' }).then(r => {
+      // 先拉取完整数据（bank 返回的字段可能不全）；保留当前排序键/方向，避免列表顺序错乱
+      API.question.bank({ sort: this.bankSort, dir: this.bankDir }).then(r => {
         const full = r.list.find(x => x.qId === qId) || q;
         _openEditModal(qId, full);
       });
@@ -708,6 +729,43 @@
                 <input type="checkbox" id="eqKey" ${q.isKey ? 'checked' : ''}>
                 <span>重点题 <em>高频考点</em></span>
               </label>
+            </div>
+            <div class="edit-field">
+              <label>归属章节目录</label>
+              <select class="select" id="eqChapter"><option value="">（不选章）</option></select>
+            </div>
+            <div class="edit-field" style="grid-column:1/-1">
+              <label>考查知识点标签（可多选）</label>
+              <div id="eqKpTags" class="chips" style="max-height:88px;overflow:auto"></div>
+            </div>
+          </div>
+        </section>
+
+        <section class="question-edit__section" id="eqFigSection" style="display:${q.hasImage || q.figureJson ? '' : 'none'}">
+          <div class="question-edit__section-head">
+            <div><b>图像结构</b><span>与学生端练习同款 SVG 渲染；可编辑节点/边并实时预览</span></div>
+            <label class="question-edit__check"><input type="checkbox" id="eqHasFig" ${q.hasImage || q.figureJson ? 'checked' : ''}> 含图像</label>
+          </div>
+          <div id="eqFigBox" style="display:${q.hasImage || q.figureJson ? '' : 'none'}" class="stack" style="gap:10px">
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+              <label class="stack" style="gap:4px"><span class="fz-12 t-dim">图型</span>
+                <select class="select" id="eqFigType">
+                  <option value="tree">二叉树</option>
+                  <option value="adjacency_matrix">邻接矩阵</option>
+                  <option value="graph">一般图</option>
+                </select></label>
+              <label class="stack" style="gap:4px" id="eqFigTreeRoot"><span class="fz-12 t-dim">根节点</span>
+                <input class="input" id="eqFigRoot" value="A"></label>
+            </div>
+            <label class="stack" style="gap:4px" id="eqFigNodes"><span class="fz-12 t-dim">节点（逗号分隔）</span>
+              <input class="input" id="eqFigNodesInput" value="A,B,C"></label>
+            <label class="stack" style="gap:4px" id="eqFigEdgesTree"><span class="fz-12 t-dim">边（每行：父,子,left|right）</span>
+              <textarea class="input" id="eqFigEdgesTreeInput" style="min-height:56px;font-family:monospace"></textarea></label>
+            <label class="stack" style="gap:4px" id="eqFigEdgesGraph"><span class="fz-12 t-dim">边（每行：起点,终点,权重）</span>
+              <textarea class="input" id="eqFigEdgesGraphInput" style="min-height:56px;font-family:monospace"></textarea></label>
+            <div class="stack" style="gap:6px">
+              <span class="fz-12 t-dim">预览</span>
+              <div style="border:1px solid var(--border);border-radius:8px;padding:8px;background:var(--bg-1)"><div id="eqFigPrev" style="min-height:120px"></div></div>
             </div>
           </div>
         </section>
@@ -773,6 +831,95 @@
             dl.innerHTML = cfg.kpOptions.map(k => `<option value="${U.esc(k.name || k.kpName || '')}" data-id="${U.esc(k.kpId || k.kp_id || '')}"></option>`).join('');
           }
         });
+        const selectedKps = new Set(q.kpIds || (q.kpId ? [q.kpId] : []));
+        let structureData = null;
+        API.teacher.structure().then(d => {
+          structureData = d;
+          const chSel = U.$('#eqChapter', ov);
+          if (chSel) {
+            chSel.innerHTML = '<option value="">（不选章）</option>' +
+              (d.chapterOptions || []).map(c =>
+                `<option value="${U.esc(c.id)}" ${c.id === (q.chapterId || '') ? 'selected' : ''}>${U.esc(c.name)}</option>`).join('');
+            if (q.chapterId) chSel.value = q.chapterId;
+          }
+          const box = U.$('#eqKpTags', ov);
+          if (box) {
+            box.innerHTML = (d.kpOptions || []).map(k =>
+              `<button type="button" class="chip" data-kp="${U.esc(k.id)}">${U.esc(k.name)}</button>`).join('')
+              || '<span class="fz-11 t-dim">暂无知识点</span>';
+            box.querySelectorAll('[data-kp]').forEach(b => {
+              if (selectedKps.has(b.dataset.kp)) {
+                b.classList.add('is-on');
+                b.classList.add('is-active');
+              }
+            });
+            box.addEventListener('click', e => {
+              const b = e.target.closest('[data-kp]');
+              if (!b) return;
+              if (selectedKps.has(b.dataset.kp)) selectedKps.delete(b.dataset.kp);
+              else selectedKps.add(b.dataset.kp);
+              b.classList.toggle('is-on', selectedKps.has(b.dataset.kp));
+              b.classList.toggle('is-active', selectedKps.has(b.dataset.kp));
+            });
+          }
+        }).catch(() => {});
+
+        // 图结构编辑（从已有 figure_json 预填）
+        const fig = q.figureJson || q.figure_json || null;
+        const graph = (fig && (fig.graph || fig)) || null;
+        if (graph) {
+          const t = graph.type || 'tree';
+          const typeSel = U.$('#eqFigType', ov);
+          if (typeSel) typeSel.value = (t === 'tree' || t === 'adjacency_matrix' || t === 'graph') ? t : 'tree';
+          const nodes = (graph.nodes || []).join(',');
+          if (U.$('#eqFigNodesInput', ov)) U.$('#eqFigNodesInput', ov).value = nodes;
+          if (graph.type === 'tree' && U.$('#eqFigRoot', ov)) U.$('#eqFigRoot', ov).value = graph.root || '';
+          if (graph.type === 'tree' && U.$('#eqFigEdgesTreeInput', ov)) {
+            U.$('#eqFigEdgesTreeInput', ov).value = (graph.edges || []).map(e => `${e.from},${e.to},${e.position || 'left'}`).join('\n');
+          }
+          if (graph.type === 'graph' && U.$('#eqFigEdgesGraphInput', ov)) {
+            U.$('#eqFigEdgesGraphInput', ov).value = (graph.edges || []).map(e => `${e.from},${e.to},${e.w ?? ''}`).join('\n');
+          }
+        }
+        const figBox = U.$('#eqFigBox', ov);
+        const hasFig = U.$('#eqHasFig', ov);
+        const syncFigUI = () => {
+          const t = (U.$('#eqFigType', ov) || {}).value;
+          const show = !!(hasFig && hasFig.checked);
+          if (figBox) figBox.style.display = show ? '' : 'none';
+          if (U.$('#eqFigTreeRoot', ov)) U.$('#eqFigTreeRoot', ov).style.display = t === 'tree' ? '' : 'none';
+          if (U.$('#eqFigEdgesTree', ov)) U.$('#eqFigEdgesTree', ov).style.display = t === 'tree' ? '' : 'none';
+          if (U.$('#eqFigEdgesGraph', ov)) U.$('#eqFigEdgesGraph', ov).style.display = t === 'graph' ? '' : 'none';
+          if (!show || !window.DsFigure || !figBox) return;
+          const prev = U.$('#eqFigPrev', ov);
+          let spec = null;
+          if (t === 'tree') {
+            const root = (U.$('#eqFigRoot', ov).value || '').trim();
+            const nodes = (U.$('#eqFigNodesInput', ov).value || '').split(/[,，\s]+/).map(s => s.trim()).filter(Boolean);
+            const edges = (U.$('#eqFigEdgesTreeInput', ov).value || '').split('\n').map(s => s.trim()).filter(Boolean).map(line => {
+              const [from, to, position] = line.split(/[,，]/).map(x => x.trim());
+              return { from, to, position: position === 'right' ? 'right' : 'left' };
+            }).filter(e => e.from && e.to);
+            if (nodes.length) spec = { type: 'tree', root: root || nodes[0], nodes, edges };
+          } else if (t === 'graph') {
+            const nodes = (U.$('#eqFigNodesInput', ov).value || '').split(/[,，\s]+/).map(s => s.trim()).filter(Boolean);
+            const edges = (U.$('#eqFigEdgesGraphInput', ov).value || '').split('\n').map(s => s.trim()).filter(Boolean).map(line => {
+              const [from, to, w] = line.split(/[,，]/).map(x => x.trim());
+              return { from, to, w: w || '' };
+            }).filter(e => e.from && e.to);
+            if (nodes.length) spec = { type: 'graph', nodes, edges, directed: true };
+          } else {
+            // 矩阵：直接沿用原图预览（在线改矩阵格可后续增强）
+            spec = graph;
+          }
+          if (spec) DsFigure.mount(prev, spec); else if (prev) prev.innerHTML = '';
+        };
+        if (hasFig) hasFig.addEventListener('change', syncFigUI);
+        ['#eqFigType', '#eqFigRoot', '#eqFigNodesInput', '#eqFigEdgesTreeInput', '#eqFigEdgesGraphInput'].forEach(sel => {
+          const el = U.$(sel, ov);
+          if (el) el.addEventListener('input', syncFigUI);
+        });
+        syncFigUI();
 
         // 添加选项
         U.$('#eqAddOpt', ov)?.addEventListener('click', () => {
@@ -831,7 +978,40 @@
             score: parseInt(U.$('#eqScore', ov).value) || 5,
             is_key: U.$('#eqKey', ov).checked ? 1 : 0,
             status: U.$('#eqStatus', ov).value,
+            chapterId: U.$('#eqChapter', ov) ? U.$('#eqChapter', ov).value : (q.chapterId || ''),
+            kp_ids: [...selectedKps],
+            kp_id: ([...selectedKps][0] || q.kpId || ''),
           };
+          const hasFigEl = U.$('#eqHasFig', ov);
+          if (hasFigEl && hasFigEl.checked) {
+            // 提交当前编辑器中的图结构（与新建题一致的 spec）
+            const t = U.$('#eqFigType', ov).value;
+            if (t === 'tree') {
+              const root = (U.$('#eqFigRoot', ov).value || '').trim();
+              const nodes = (U.$('#eqFigNodesInput', ov).value || '').split(/[,，\s]+/).map(s => s.trim()).filter(Boolean);
+              const edges = (U.$('#eqFigEdgesTreeInput', ov).value || '').split('\n').map(s => s.trim()).filter(Boolean).map(line => {
+                const [from, to, position] = line.split(/[,，]/).map(x => x.trim());
+                return { from, to, position: position === 'right' ? 'right' : 'left' };
+              }).filter(e => e.from && e.to);
+              body.figure_json = { graph: { type: 'tree', root: root || nodes[0], nodes, edges }, has_image: true };
+              body.has_image = true;
+            } else if (t === 'graph') {
+              const nodes = (U.$('#eqFigNodesInput', ov).value || '').split(/[,，\s]+/).map(s => s.trim()).filter(Boolean);
+              const edges = (U.$('#eqFigEdgesGraphInput', ov).value || '').split('\n').map(s => s.trim()).filter(Boolean).map(line => {
+                const [from, to, w] = line.split(/[,，]/).map(x => x.trim());
+                return { from, to, w: w || '' };
+              }).filter(e => e.from && e.to);
+              body.figure_json = { graph: { type: 'graph', nodes, edges, directed: true }, has_image: true };
+              body.has_image = true;
+            } else if (fig) {
+              // 矩阵暂沿用原 figure
+              body.figure_json = fig;
+              body.has_image = true;
+            }
+          } else {
+            body.figure_json = null;
+            body.has_image = false;
+          }
           Toast.loading('保存中...');
           API.question.update({ qId, ...body }).then(() => {
             Toast.done(); Toast.ok('已保存修订'); close(); Question.loadBank();
@@ -840,5 +1020,238 @@
       }
     });
   }
+
+/* ================= 手动单题表单（含图结构编辑器 + 同款渲染预览） ================= */
+function openNewQuestionModal(onDone) {
+  const PRESETS = [
+    { v: "single", t: "单选题" },
+  ];
+
+  function chOptions(list) {
+    return list.map(c => `<option value="${U.esc(c.id || "")}">${U.esc(c.name)}</option>`).join("");
+  }
+  function kpOptions(list) {
+    return list.map(k => `<option value="${U.esc(k.id)}">${U.esc(k.name)}（${U.esc(k.chapter)}）</option>`).join("");
+  }
+
+  Modal.open({
+    title: "新建题目", size: "wide",
+    body: `
+      <div class="stack" style="gap:12px">
+        <div style="display:grid;grid-template-columns:1fr 1fr 110px 110px;gap:10px">
+          <label class="stack" style="gap:4px"><span class="fz-12 t-dim">归属章节目录</span>
+            <select class="select" id="nqChapter"><option value="">加载中…</option></select></label>
+          <label class="stack" style="gap:4px"><span class="fz-12 t-dim">难度（1~5）</span>
+            <select class="select" id="nqDiff">${[1,2,3,4,5].map(i => `<option ${i===3?"selected":""}>${i}</option>`).join("")}</select></label>
+          <label class="stack" style="gap:4px"><span class="fz-12 t-dim">分值</span>
+            <input class="input" id="nqScore" type="number" min="1" value="5"></label>
+        </div>
+        <div class="stack" style="gap:4px">
+          <span class="fz-12 t-dim">考查知识点标签（可多选；标签=KP）</span>
+          <div id="nqKpTags" class="chips" style="max-height:100px;overflow:auto"></div>
+        </div>
+        <label class="stack" style="gap:4px"><span class="fz-12 t-dim">题干</span>
+          <textarea class="input" id="nqStem" style="min-height:64px" placeholder="输入题干…"></textarea></label>
+        <div class="stack" style="gap:6px">
+          <span class="fz-12 t-dim">选项（单选；勾选圆点为正确答案）</span>
+          <div class="stack" style="gap:6px" id="nqOpts">
+            ${["A","B","C","D"].map((k, i) => `
+              <div class="row" style="gap:8px">
+                <input type="radio" name="nqAns" value="${k}" ${i===0?"checked":""} title="设为正确答案">
+                <span class="fz-12 fw-6" style="width:18px">${k}</span>
+                <input class="input" data-opt="${k}" placeholder="选项 ${k} 内容" style="flex:1">
+                <button class="btn btn--xs btn--ghost" data-delopt="${k}" ${i<2?"disabled":""}>删除</button>
+              </div>`).join("")}
+          </div>
+          <button class="btn btn--xs btn--ghost" id="nqAddOpt" style="align-self:flex-start">+ 添加选项</button>
+        </div>
+        <label class="stack" style="gap:4px"><span class="fz-12 t-dim">解析</span>
+          <textarea class="input" id="nqAnalysis" style="min-height:48px" placeholder="答案解析…"></textarea></label>
+        <label class="row" style="gap:6px"><input type="checkbox" id="nqHasFig">
+          <span class="fz-12">本题含图像（手动编辑图像结构，实时预览）</span></label>
+        <div id="nqFigBox" style="display:none" class="stack" style="gap:10px">
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+            <label class="stack" style="gap:4px"><span class="fz-12 t-dim">图型</span>
+              <select class="select" id="nqFigType">
+                <option value="tree">二叉树</option>
+                <option value="adjacency_matrix">邻接矩阵</option>
+                <option value="graph">一般图</option>
+              </select></label>
+            <label class="stack" style="gap:4px" id="nqFigTreeRoot"><span class="fz-12 t-dim">根节点</span>
+              <input class="input" id="nqFigRoot" value="A"></label>
+          </div>
+          <label class="stack" style="gap:4px" id="nqFigNodes"><span class="fz-12 t-dim">节点（逗号分隔）</span>
+            <input class="input" id="nqFigNodesInput" value="A,B,C,D"></label>
+          <label class="stack" style="gap:4px" id="nqFigEdgesTree"><span class="fz-12 t-dim">边（每行：父,子,left|right）</span>
+            <textarea class="input" id="nqFigEdgesTreeInput" style="min-height:56px;font-family:monospace" placeholder="A,B,left\nA,C,right">A,B,left\nA,C,right</textarea></label>
+          <label class="stack" style="gap:4px" id="nqFigEdgesGraph" style="display:none"><span class="fz-12 t-dim">边（每行：起点,终点,权重）</span>
+            <textarea class="input" id="nqFigEdgesGraphInput" style="min-height:56px;font-family:monospace" placeholder="A,B,4\nB,C,2"></textarea></label>
+          <div id="nqFigMatrix" style="overflow:auto"></div>
+          <div class="stack" style="gap:6px">
+            <span class="fz-12 t-dim">预览（题库同款渲染）</span>
+            <div style="border:1px solid var(--border);border-radius:8px;padding:8px;background:var(--bg-1)"><div id="nqFigPrev" style="min-height:120px"></div></div>
+          </div>
+        </div>
+      </div>`,
+    footer: `<button class="btn" data-close>取消</button>
+      <button class="btn btn--primary" id="nqSubmit">${icon("check")} 保存进题库</button>`,
+    onMount(ov, close) {
+      const $ = (sel) => ov.querySelector(sel);
+      const selectedKps = new Set();
+      let structureData = null;
+
+      API.teacher.structure().then(d => {
+        structureData = d;
+        const chSel = $("#nqChapter");
+        if (chSel) {
+          chSel.innerHTML = '<option value="">（不选章）</option>' +
+            (d.chapterOptions || (d.chapters || []).filter(c => !c.virtual).map(c => ({ id: c.id, name: c.name })))
+              .map(c => `<option value="${U.esc(c.id)}">${U.esc(c.name)}</option>`).join("");
+        }
+        const tagBox = $("#nqKpTags");
+        if (tagBox) {
+          tagBox.innerHTML = (d.kpOptions || (d.chapters || []).flatMap(c => (c.kps || []).map(k => ({ id: k.id, name: k.name, chapter: c.name }))))
+            .map(k => `<button type="button" class="chip" data-kp="${U.esc(k.id)}" data-ch="${U.esc(k.chapter || '')}">${U.esc(k.name)}</button>`).join("")
+            || '<span class="fz-11 t-dim">暂无知识点，请先在目录页创建</span>';
+        }
+      }).catch(() => {});
+
+      const paintKps = () => {
+        ov.querySelectorAll("#nqKpTags [data-kp]").forEach(b => {
+          const on = selectedKps.has(b.dataset.kp);
+          b.classList.toggle("is-on", on);
+          b.classList.toggle("is-active", on);
+        });
+      };
+      ov.querySelector("#nqKpTags")?.addEventListener("click", e => {
+        const b = e.target.closest("[data-kp]");
+        if (!b) return;
+        if (selectedKps.has(b.dataset.kp)) selectedKps.delete(b.dataset.kp); else selectedKps.add(b.dataset.kp);
+        paintKps();
+      });
+      ov.querySelector("#nqChapter")?.addEventListener("change", () => {
+        const chId = ov.querySelector("#nqChapter").value;
+        const ch = (structureData && structureData.chapterOptions || []).find(c => c.id === chId);
+        if (!ch) return;
+        // 选章时自动勾选该章 KP（可再手动取消）
+        ov.querySelectorAll("#nqKpTags [data-kp]").forEach(b => {
+          if (b.dataset.ch === ch.name) selectedKps.add(b.dataset.kp);
+        });
+        paintKps();
+      });
+
+      // 选项增删
+      ov.querySelector("#nqAddOpt").addEventListener("click", () => {
+        const box = $("#nqOpts");
+        const used = [...box.querySelectorAll("[data-opt]")].map(x => x.dataset.opt);
+        const next = "ABCDEFGH".split('').find(k => !used.includes(k));
+        if (!next) { Toast.warn("最多 8 个选项"); return; }
+        const div = document.createElement("div");
+        div.className = "row"; div.style.cssText = "gap:8px";
+        div.innerHTML = `<input type="radio" name="nqAns" value="${next}"><span class="fz-12 fw-6" style="width:18px">${next}</span>
+          <input class="input" data-opt="${next}" placeholder="选项 ${next} 内容" style="flex:1">
+          <button class="btn btn--xs btn--ghost" data-delopt="${next}">删除</button>`;
+        box.appendChild(div);
+        div.querySelector("[data-delopt]").addEventListener("click", () => div.remove());
+      });
+      ov.addEventListener("click", e => {
+        const d = e.target.closest("[data-delopt]");
+        if (d && !d.disabled) d.closest(".row").remove();
+      });
+
+      // 图编辑器
+      const figBox = $("#nqFigBox");
+      $("#nqHasFig").addEventListener("change", e => {
+        figBox.style.display = e.target.checked ? "" : "none";
+        renderPreview();
+      });
+      const figType = () => $("#nqFigType").value;
+      const nodesList = () => ($("#nqFigNodesInput").value || "").split(/[,，\s]+/).map(s => s.trim()).filter(Boolean);
+      function syncFigUI() {
+        const t = figType();
+        $("#nqFigTreeRoot").style.display = t === "tree" ? "" : "none";
+        $("#nqFigEdgesTree").style.display = t === "tree" ? "" : "none";
+        $("#nqFigEdgesGraph").style.display = t === "graph" ? "" : "none";
+        const mWrap = $("#nqFigMatrix");
+        if (t === "adjacency_matrix") {
+          const nodes = nodesList();
+          mWrap.innerHTML = `<table class="ds-matrix"><thead><tr><th></th>${nodes.map(n => `<th>${U.esc(n)}</th>`).join("")}</tr></thead><tbody>${
+            nodes.map((rn, i) => `<tr><th>${U.esc(rn)}</th>${nodes.map((cn, j) =>
+              `<td><input class="input" data-mr="${i}" data-mc="${j}" style="width:52px;padding:2px 4px" value="0"></td>`).join("")}</tr>`).join("")}</tbody></table>`;
+          mWrap.style.display = "";
+        } else {
+          mWrap.style.display = "none";
+        }
+        renderPreview();
+      }
+      function buildSpec() {
+        const t = figType();
+        const nodes = nodesList();
+        if (!nodes.length) return null;
+        if (t === "tree") {
+          const root = ($("#nqFigRoot").value || nodes[0]).trim();
+          const edges = ($("#nqFigEdgesTreeInput").value || "").split("\n").map(s => s.trim()).filter(Boolean).map(line => {
+            const [from, to, position] = line.split(/[,，]/).map(x => x.trim());
+            return { from, to, position: position === "right" ? "right" : "left" };
+          }).filter(e => e.from && e.to);
+          const all = [...new Set([root, ...nodes, ...edges.flatMap(e => [e.from, e.to])])];
+          return { type: "tree", root, nodes: all, edges };
+        }
+        if (t === "adjacency_matrix") {
+          const m = nodes.map((_, i) => nodes.map((__, j) => {
+            const inp = ov.querySelector(`[data-mr="${i}"][data-mc="${j}"]`);
+            return inp ? (parseFloat(inp.value) || 0) : 0;
+          }));
+          return { type: "adjacency_matrix", nodes, matrix: m };
+        }
+        const edges = ($("#nqFigEdgesGraphInput").value || "").split("\n").map(s => s.trim()).filter(Boolean).map(line => {
+          const [from, to, w] = line.split(/[,，]/).map(x => x.trim());
+          return { from, to, w: w || "" };
+        }).filter(e => e.from && e.to);
+        return { type: "graph", nodes, edges, directed: true };
+      }
+      function renderPreview() {
+        if (figBox.style.display === "none" || !window.DsFigure) return;
+        const spec = buildSpec();
+        const prev = $("#nqFigPrev");
+        if (spec) DsFigure.mount(prev, spec); else prev.innerHTML = "";
+      }
+      ["#nqFigType", "#nqFigNodesInput", "#nqFigEdgesTreeInput", "#nqFigEdgesGraphInput"].forEach(sel =>
+        ov.addEventListener("input", e => { if (e.target.matches(sel)) syncFigUI(); }));
+      syncFigUI();
+
+      // 提交
+      ov.querySelector("#nqSubmit").addEventListener("click", () => {
+        const stem = $("#nqStem").value.trim();
+        if (!stem) { Toast.warn("请输入题干"); return; }
+        const opts = [...ov.querySelectorAll("[data-opt]")].map(x => ({ key: x.dataset.opt, text: x.value.trim() }));
+        if (opts.some(o => !o.text)) { Toast.warn("选项内容不能为空"); return; }
+        const answer = (ov.querySelector("input[name=nqAns]:checked") || {}).value || "";
+        const chapterId = $("#nqChapter") ? $("#nqChapter").value : "";
+        const kpIds = [...selectedKps];
+        if (!kpIds.length) { Toast.warn("请至少选择一个考查知识点标签"); return; }
+        const q = {
+          type: "single", difficulty: parseInt($("#nqDiff").value, 10) || 3,
+          score: parseInt($("#nqScore").value, 10) || 5, status: "published",
+          stem, options: opts, answer,
+          analysis: $("#nqAnalysis").value.trim(),
+          chapterId,
+          kp_id: kpIds[0],
+          kp_ids: kpIds,
+        };
+        if ($("#nqHasFig").checked) {
+          const spec = buildSpec();
+          if (!spec) { Toast.warn("图像结构不完整：请填写节点"); return; }
+          q.figure_json = { graph: spec, has_image: true };
+        }
+        API.teacher.importQuestions({ questions: [q] }).then(() => {
+          close();
+          Toast.ok("题目已保存进题库", "可在题库列表查看");
+          if (onDone) onDone();
+        }).catch(err => Toast.error("保存失败", err && err.message || ""));
+      });
+    }
+  });
+}
 
 Router.register('question', { title: 'AI 出题与题库管理', mount: () => Question.render() });

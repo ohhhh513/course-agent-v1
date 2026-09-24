@@ -6,6 +6,8 @@
 <title>登录 · 课程智能体系统</title>
 <link rel="stylesheet" href="assets/css/base.css">
 <link rel="stylesheet" href="assets/css/app.css">
+<link rel="stylesheet" href="assets/css/refresh.css">
+<script src="assets/js/ui-enhancements.js" defer></script>
 </head>
 <body>
 
@@ -23,7 +25,7 @@
       <span class="badge badge--accent">目标图谱</span>
     </div>
     <ul class="auth-aside__feats" id="authFeats"></ul>
-    <div class="auth-aside__copy">前端原型 v1.0 · 演示数据 · 后端就绪即直连</div>
+    <div class="auth-aside__copy">数据实时直连后端 · 学生端 / 教师端 / 管理端</div>
   </aside>
 
   <!-- 右侧登录表单 -->
@@ -35,6 +37,7 @@
       <div class="seg" id="roleSeg">
         <button type="button" class="seg__item is-active" data-role="student">学生</button>
         <button type="button" class="seg__item" data-role="teacher">教师</button>
+        <button type="button" class="seg__item" data-role="admin">管理员</button>
       </div>
 
       <form id="loginForm" novalidate>
@@ -51,7 +54,7 @@
         <button class="btn btn--primary btn--block" id="loginBtn" type="submit">登录</button>
       </form>
 
-      <div class="auth-demo" id="demoHint">演示账号：<b>student</b> / 123456（学生）· <b>teacher</b> / 123456（教师）</div>
+      <div class="auth-demo" id="demoHint">师生账号由管理员在管理端创建；初始管理员 <b>admin</b> / admin（后端首次启动自动创建）</div>
     </div>
   </main>
 </div>
@@ -70,17 +73,45 @@
     ['file',  '一键生成可分享的学情分析报告']
   ].map(([n, t]) => '<li>' + icon(n) + t + '</li>').join('');
 
-  // 角色切换（支持 ?role=teacher 预选）
-  let role = (new URLSearchParams(location.search).get('role') === 'teacher') ? 'teacher' : 'student';
+  // 角色切换（支持 ?role=teacher|admin 预选）—— 真实生效：切换即改表单状态，登录时校验角色匹配
+  const ROLE_LABEL = { student: '学生', teacher: '教师', admin: '管理员' };
+  const DEMO_HINT = {
+    student: '师生账号由管理员在管理端创建；学生示例 <b>student</b> / 123456',
+    teacher: '师生账号由管理员在管理端创建；教师示例 <b>teacher</b> / 123456',
+    admin:   '初始管理员 <b>admin</b> / admin（后端首次启动自动创建）'
+  };
+  const qRole = new URLSearchParams(location.search).get('role') || 'student';
+  let role = ['teacher', 'admin', 'student'].includes(qRole) ? qRole : 'student';
   const seg = U.$('#roleSeg');
-  seg.querySelectorAll('.seg__item').forEach(btn => {
-    btn.classList.toggle('is-active', btn.dataset.role === role);
-    btn.addEventListener('click', () => {
-      seg.querySelectorAll('.seg__item').forEach(b => b.classList.remove('is-active'));
-      btn.classList.add('is-active');
-      role = btn.dataset.role;
-    });
-  });
+  const userInput = U.$('#username');
+  const passInput = U.$('#password');
+
+  function applyRole(r) {
+    role = r;
+    const card = U.$('.auth-card');
+    if (card) card.dataset.role = r;          // 角色主题色随切换变化
+    seg.querySelectorAll('.seg__item').forEach(b => b.classList.toggle('is-active', b.dataset.role === r));
+    // 重放入场动画：先移除 class、强制回流、再加回，确保每次切换都触发一次
+    if (card) {
+      card.classList.remove('role-switch');
+      void card.offsetWidth;
+      card.classList.add('role-switch');
+    }
+    userInput.placeholder = r === 'admin' ? '管理员账号' : '用户名 / 手机号 / 邮箱';
+    if (r === 'admin') {
+      // 进入管理员：预填初始管理员账号（不覆盖用户已输入的其他账号）
+      if (!userInput.value || userInput.value === 'admin') userInput.value = 'admin';
+      passInput.placeholder = '默认 admin';
+    } else {
+      passInput.placeholder = '请输入密码';
+      // 离开管理员：清掉自动预填的 admin，避免残留到学生/教师登录（截图踩过的坑）
+      if (userInput.value === 'admin') userInput.value = '';
+    }
+    U.$('#demoHint').innerHTML = DEMO_HINT[r];
+  }
+  seg.querySelectorAll('.seg__item').forEach(btn =>
+    btn.addEventListener('click', () => applyRole(btn.dataset.role)));
+  applyRole(role);
 
   const form = U.$('#loginForm');
   const errEl = U.$('#loginErr');
@@ -93,8 +124,19 @@
     const btn = U.$('#loginBtn');
     btn.disabled = true; btn.textContent = '登录中…';
     try {
-      await Auth.login({ username, password, role });
-      location.href = (role === 'teacher') ? 'teacher.html' : 'student.html';
+      const session = await Auth.login({ username, password, role });
+      const realRole = (session && session.user && session.user.role) || role;
+      if (realRole !== role) {
+        // 角色选择真实生效：账号与所选角色不符 → 不保留会话，自动切到正确角色并提示
+        Auth.logout();
+        applyRole(realRole);
+        errEl.textContent = `该账号是「${ROLE_LABEL[realRole]}」账号，已为你切换角色，请重新登录`;
+        btn.disabled = false; btn.textContent = '登录';
+        return;
+      }
+      if (realRole === 'teacher') location.href = 'teacher.html';
+      else if (realRole === 'admin') location.href = 'admin.html';
+      else location.href = 'student.html';
     } catch (err) {
       errEl.textContent = (err && err.message) || '登录失败，请重试';
       btn.disabled = false; btn.textContent = '登录';
@@ -103,3 +145,4 @@
 </script>
 </body>
 </html>
+

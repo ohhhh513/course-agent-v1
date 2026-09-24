@@ -2,8 +2,9 @@
 
 在 init_db()+run_seed() 之后调用，依次：
   1) extend_graph_to_nine    图谱从 7 章扩展为 9 章（补 KP401-404 / KP501-502、重排章节、新增前后置）
-  2) sync_resources_from_folder  扫描 resources/ 并登记真实资源
+  2) verify_resources        校验资源记录与磁盘文件的一致性（只报告，不自动处理）
   3) import_questions        从 after_class.json 导入正式题库（KHD 前缀）
+  4) ensure_learning_paths   按扩展后的图谱校正学习路径（旧模板残留整体重建）
 全部幂等，可每次启动调用。
 """
 import json
@@ -12,7 +13,7 @@ from pathlib import Path
 from typing import Optional
 
 from ..config import settings
-from .resource_registry import sync_resources_from_folder, open_conn
+from .resource_registry import verify_resources, open_conn
 
 COURSE_ID = "C2026DS001"
 
@@ -109,6 +110,23 @@ def _ai_samples_path() -> Path:
 
 
 def import_questions(verbose: bool = True) -> int:
+    """[已退役] 从 after_class.json 导入演示题库。
+
+    原实现依赖「王道小节前缀 → KP」映射（`kp_section_mapping.json`）与旧课程
+    `C2026DS001`、旧 KP 编号（KP01/KP11/…），与现行主库规范
+    （章 CH01-09 + 知识点 KP001-026，见 docs/主库数据规范.md）不兼容。
+    正式题库一律由平台产生：教师建课 → 图谱编排 → 前端录题 / AI 出题发布。
+
+    本函数保留占位以免历史调用点报错，实际不做任何写入。
+    """
+    if verbose:
+        print("[bootstrap] import_questions 已退役：题库请由教师端产生，"
+              "不再从 after_class.json 导入（详见 docs/主库数据规范.md）")
+    return 0
+
+
+def _legacy_import_questions(verbose: bool = True) -> int:
+    """退役前的旧实现，仅作历史参考保留，不参与任何调用链。"""
     bank = _bank_path()
     if not bank.exists():
         if verbose:
@@ -125,15 +143,7 @@ def import_questions(verbose: bool = True) -> int:
     created = updated = skipped = 0
     try:
         section_kp: dict = {}
-        mapping = settings.BASE_DIR.parent / "kp_section_mapping.json"
-        if mapping.exists():
-            try:
-                m = json.loads(mapping.read_text(encoding="utf-8"))
-                section_kp = {str(k): v for k, v in m.items()
-                              if not k.startswith("_") and isinstance(v, list) and v}
-            except Exception:
-                section_kp = {}
-        need = {k for kps in section_kp.values() for k in kps} | {c[3] for c in _CHAPTERS}
+        need = {c[3] for c in _CHAPTERS}
         kp_names = dict(db.query(GraphNode.id, GraphNode.name).filter(
             GraphNode.graph_type == "knowledge", GraphNode.id.in_(need)).all())
 
@@ -220,13 +230,46 @@ def import_questions(verbose: bool = True) -> int:
     return created + updated
 
 
+def ensure_learning_paths(verbose: bool = True) -> dict:
+    """按扩展后的图谱校正学习路径（幂等）。
+
+    必须放在 extend_graph_to_nine 之后：学习路径完全由 graph_nodes 派生，
+    图谱还是 7 章时生成出来的就是缺串/数组/排序的旧路径（历史上正是这么踩的坑）。
+    知识点集合与图谱不一致（旧模板残留、图谱扩章后未同步）→ 整体重建；
+    一致则不动，保留 mastered_at 等既有信息。
+    """
+    from ..database import SessionLocal, init_db
+    from ..models.user import User
+    from .learning_path import sync_user
+
+    init_db()
+    db = SessionLocal()
+    stats = {"created": 0, "rebuilt": 0, "ok": 0}
+    try:
+        students = db.query(User).filter(User.role == "student").all()
+        for u in students:
+            action = sync_user(db, u.user_id, COURSE_ID)
+            stats[action] = stats.get(action, 0) + 1
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+    if verbose:
+        print(f"[bootstrap] 学习路径：新建 {stats['created']} 人，重建 {stats['rebuilt']} 人，"
+              f"已一致 {stats['ok']} 人")
+    return stats
+
+
 def bootstrap(conn: Optional[sqlite3.Connection] = None, verbose: bool = True) -> None:
     own = conn is None
     conn = conn or open_conn()
     try:
         extend_graph_to_nine(conn, verbose=verbose)
-        sync_resources_from_folder(conn, verbose=verbose)
+        verify_resources(conn, verbose=verbose)
         import_questions(verbose=verbose)
+        ensure_learning_paths(verbose=verbose)
     finally:
         if own:
             conn.close()

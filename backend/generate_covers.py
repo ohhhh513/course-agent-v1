@@ -7,8 +7,8 @@ generate_covers.py - 为 resources 表里的本地资源生成真实封面缩略
   - ppt   : 用 python-pptx 取第 1 张幻灯片的真实配图；无图则生成占位封面
   - 任何失败都回退到 PIL 生成的带类型/标题占位封面
 
-输出：<project>/assets/resources/covers/{res_id}.jpg  (统一 480x270)
-前端按 res_id 直接引用 /assets/resources/covers/{res_id}.jpg，无需改库/重启。
+输出：<project>/resources/covers/{res_id}.jpg  (统一 480x270)
+前端按 res_id 直接引用 /resources/covers/{res_id}.jpg，无需改库/重启。
 """
 import os
 import sys
@@ -18,10 +18,13 @@ import subprocess
 import tempfile
 
 PROJECT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-ASSETS = os.path.join(PROJECT, "assets")
 DB = os.path.join(PROJECT, "backend", "app", "data", "course_agent.db")
-COVER_DIR = os.path.join(ASSETS, "resources", "covers")
+COVER_DIR = os.path.join(PROJECT, "resources", "covers")
 os.makedirs(COVER_DIR, exist_ok=True)
+
+# 复用统一的 URL → 磁盘路径映射（资源文件位于 resources/{course_id}/{res_id}/ 下）
+sys.path.insert(0, os.path.join(PROJECT, "backend"))
+from app.media_utils import url_to_path  # noqa: E402
 
 W, H = 480, 270
 
@@ -56,10 +59,13 @@ def font(size):
 
 
 def local_path(url):
-    if not url:
-        return None
-    rel = url.split("/assets/", 1)[-1]
-    return os.path.join(ASSETS, rel)
+    """资源 URL → 磁盘路径（统一走 media_utils.url_to_path，勿手写拼接）。
+
+    历史坑：这里曾写 `url.split('/assets/')[-1] + ASSETS`，映射结果永远指向
+    不存在的 assets/resources/...，导致真实封面从未成功过，全部回退占位图。
+    """
+    p = url_to_path(url)
+    return str(p) if p else None
 
 
 def cover_fit(img):

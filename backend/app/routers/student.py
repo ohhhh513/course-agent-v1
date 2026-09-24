@@ -17,6 +17,7 @@ from ..models.graph import GraphNode, LearningPath
 from ..models.practice import AnswerRecord, PracticeSession
 from ..models.checkin import StudyCheckin
 from ..middleware.auth import get_current_user
+from ..dependencies import get_current_course_id
 from ..schemas.common import ok, fail, list_response
 from ..utils import loads, fmt_dt
 
@@ -24,6 +25,11 @@ router = APIRouter(prefix="/api/v1/student", tags=["学生端"])
 
 # 东八区（中国），无夏令时；数据库存的是 UTC，展示前统一转成本地时间
 _CN_TZ = timezone(timedelta(hours=8))
+
+# 学期打卡热力图的锚点：第 1 周从学期开学那一周的周一算起（列 = 周，行 = 周一…周日），
+# 与「成长轨迹」用同一口径；想改学期长度只改这里。
+SEMESTER_START = date(2026, 8, 31)   # 2026 秋季学期第 1 周周一
+SEMESTER_WEEKS = 18                  # 学期周数
 
 
 def _to_local(dt: datetime | None) -> datetime | None:
@@ -50,12 +56,78 @@ def _duration_to_seconds(s: str) -> int:
     return sum(parts[i] * mult[i] for i in range(min(len(parts), 3)))
 
 
+def _fmt_clock(seconds: int) -> str:
+    """秒 → 3:05 / 1:02:30（用于展示「观看至 12:30」）"""
+    s = max(0, int(seconds or 0))
+    h, m, sec = s // 3600, (s % 3600) // 60, s % 60
+    return f"{h}:{m:02d}:{sec:02d}" if h else f"{m}:{sec:02d}"
+
+
+def _local_day_utc_range(day: date) -> tuple:
+    """本地（东八区）某天的 [00:00, 次日 00:00) 对应的库内 UTC naive 区间。
+
+    库里 created_at / finished_at 由 datetime.utcnow() 写入（UTC naive），而「今天」是
+    用户本地日历日，直接拿本地零点去比较会整体偏移 8 小时（凌晨与早上的记录会算错天）。
+    """
+    start = datetime.combine(day, datetime.min.time()).replace(tzinfo=_CN_TZ)
+    end = start + timedelta(days=1)
+    return (
+        start.astimezone(timezone.utc).replace(tzinfo=None),
+        end.astimezone(timezone.utc).replace(tzinfo=None),
+    )
+
+
+def _today_study_seconds(db: Session, uid: str, today: date) -> dict:
+    """当天累计学习时长（秒）= 当天练习用时 + 当天视频（资源）学习时长。
+
+    - 练习：当天开始或结束的会话。已结束取 duration_seconds；进行中的会话按「已作答
+      题目的用时」估算，避免把页面挂机时长也算成学习时长。
+    - 资源：resource_study_log 记录的当日累计观看秒数（视频播放时按前进秒数累加，
+      拖动回退不计），由 /student/resources/{id}/progress 写入。
+    """
+    day_start, day_end = _local_day_utc_range(today)
+    touched_at = func.coalesce(PracticeSession.finished_at, PracticeSession.created_at)
+    sessions = db.query(PracticeSession).filter(
+        PracticeSession.user_id == uid,
+        touched_at >= day_start,
+        touched_at < day_end,
+    ).all()
+
+    practice_seconds = 0
+    for p in sessions:
+        # 优先用会话真实练习用时；未写回（历史会话）时按该会话已作答题目用时汇总，
+        # 避免把「页面挂机 / 中间停顿」的墙钟时长算成学习时长。
+        dur = int(p.duration_seconds or 0)
+        if dur <= 0 and p.session_id:
+            dur = int(db.query(
+                func.coalesce(func.sum(AnswerRecord.duration_seconds), 0)
+            ).filter(AnswerRecord.session_id == p.session_id).scalar() or 0)
+        practice_seconds += max(0, dur)
+
+    resource_seconds = int(db.query(
+        func.coalesce(func.sum(ResourceStudyLog.watch_seconds), 0)
+    ).filter(
+        ResourceStudyLog.user_id == uid,
+        ResourceStudyLog.day == today.isoformat(),
+    ).scalar() or 0)
+
+    practice_seconds = max(0, practice_seconds)
+    resource_seconds = max(0, resource_seconds)
+    return {
+        "todaySeconds": practice_seconds + resource_seconds,
+        "todayMinutes": (practice_seconds + resource_seconds) // 60,
+        "practiceSeconds": practice_seconds,
+        "resourceSeconds": resource_seconds,
+    }
+
+
 def _resolve_class_id(db: Session, user: User) -> str:
+    """无班级时返回空串，避免回退演示班 CL2301"""
     if user.class_name:
         row = db.query(ClassInfo.class_id).filter(ClassInfo.name == user.class_name).first()
         if row:
             return row[0]
-    return "CL2301"
+    return ""
 
 
 # =============================================================================
@@ -66,13 +138,31 @@ def _resolve_class_id(db: Session, user: User) -> str:
 def student_dashboard(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
+    course_id: str = Depends(get_current_course_id),
 ):
     """学习驾驶舱 — 所有指标从用户的 transaction 表动态计算"""
     uid = user.user_id
     today = date.today()
 
+    # 统一预警检测：刷新该生告警（达标→生成/刷新；恢复→关闭；教师忽略后保持正常）
+    try:
+        from ..services.alert_detector import detect_alerts
+        detect_alerts(db, [user])
+    except Exception as e:
+        db.rollback()   # 检测失败必须回滚，否则会话毒化导致后续全部查询 500
+        print(f"[alert-detect] 跳过（{e}）")
+
+    # 综合掌握率（答题正确率 ∪ 资源完成率）→ 资源中心展示用
+    from ..routers.graph import _mastery_for_user
+    from ..services.scoring import quiz_accuracy_by_kp
+    mastery_map = _mastery_for_user(uid, db)
+    acc_by_kp = quiz_accuracy_by_kp(db, uid)   # {kp: (答题正确率, 不同题目数)} —— 靶向/薄弱点用
+
     # --- learning_path（用户专属）---
-    lp_rows = db.query(LearningPath).filter(LearningPath.user_id == uid).order_by(LearningPath.step).all()
+    lp_rows = db.query(LearningPath).filter(
+        LearningPath.user_id == uid,
+        LearningPath.course_id == course_id,   # 课程隔离：只统计当前课程
+    ).order_by(LearningPath.step).all()
     lp_total = len(lp_rows)
     lp_done = [r for r in lp_rows if r.status == "done"]
     lp_doing = [r for r in lp_rows if r.status == "doing"]
@@ -93,32 +183,20 @@ def student_dashboard(
         # 无学习记录时，默认推荐课程第一个知识点，避免前端空指针
         first = db.query(GraphNode).filter(
             GraphNode.graph_type == "knowledge",
-            GraphNode.course_id == "C2026DS001",
+            GraphNode.course_id == course_id,
         ).order_by(GraphNode.id).first()
         if first:
             current_node = {"kpId": first.id, "name": first.name}
         else:
             current_node = {"kpId": "", "name": "暂无"}
 
-    # 知识点学习完成率：全部知识点的平均完成率（含未开始的 0%，与左侧 courseProgress 口径对齐）
-    mastery_rate = round(sum(r.mastery or 0 for r in lp_rows) / lp_total, 1) if lp_total else 0
+    # 知识点掌握率：全部知识点的平均综合掌握率（答题正确率 ∪ 资源完成率）
+    mastery_rate = round(sum(mastery_map.get(r.kp_id, 0) for r in lp_rows) / lp_total, 1) if lp_total else 0
 
-    # --- 今日学习时长：practice_sessions 的 duration_seconds + 资源观看秒数 ---
-    today_start = datetime.combine(today, datetime.min.time())
-    today_ps = db.query(PracticeSession).filter(
-        PracticeSession.user_id == uid,
-        PracticeSession.finished_at >= today_start,
-    ).all()
-    today_seconds = sum(p.duration_seconds or 0 for p in today_ps)
-    # 叠加资源（视频）今日观看秒数
-    today_watch = db.query(
-        func.coalesce(func.sum(ResourceStudyLog.watch_seconds), 0)
-    ).filter(
-        ResourceStudyLog.user_id == uid,
-        ResourceStudyLog.day == today.isoformat(),
-    ).scalar() or 0
-    today_seconds += int(today_watch)
-    today_minutes = today_seconds // 60
+    # --- 今日学习时长：累计当天学习时长（练习用时 + 视频观看时长，按本地日历日统计）---
+    today_study = _today_study_seconds(db, uid, today)
+    today_seconds = today_study["todaySeconds"]
+    today_minutes = today_study["todayMinutes"]
 
     # --- streakDays：answer_records 日期去重后算连续天数（从今天往前数）---
     ans_dates = db.query(func.date(AnswerRecord.created_at)).filter(
@@ -177,11 +255,14 @@ def student_dashboard(
 
     weak_points = []
     for r in lp_rows:
-        if (r.mastery or 0) < 60 and (r.status != "todo" or (r.mastery or 0) > 0):
-            level = "danger" if (r.mastery or 0) < 40 else "warn"
+        q = acc_by_kp.get(r.kp_id)
+        # 薄弱点 = 有作答记录、且【答题正确率】< 60（靶向练习盯的是做题，不看资源进度）
+        if q and q[0] < 60:
+            level = "danger" if q[0] < 40 else "warn"
             weak_points.append({
                 "kpId": r.kp_id, "name": r.name,
-                "masteryRate": round(r.mastery or 0),
+                "accuracyRate": round(q[0]),
+                "masteryRate": round(mastery_map.get(r.kp_id, 0)),
                 "chapter": r.chapter,
                 "errorCount": db.query(AnswerRecord).filter(
                     AnswerRecord.user_id == uid, AnswerRecord.kp_id == r.kp_id,
@@ -190,15 +271,19 @@ def student_dashboard(
                 "level": level,
                 "trend": _trend_pp(r.kp_id),
             })
-    weak_points.sort(key=lambda x: x["masteryRate"])
+    weak_points.sort(key=lambda x: x["accuracyRate"])
     weak_points = weak_points[:5]
 
-    # --- alerts 相关（open + read 都算需要关注，closed 排除）---
-    all_alerts = db.query(Alert).filter(Alert.user_id == uid, Alert.status != "closed").all()
-    open_alerts = [a for a in all_alerts if a.status == "open"]
-    open_red = [a for a in open_alerts if a.level == "red"]
-    open_yellow = [a for a in open_alerts if a.level == "yellow"]
-    need_attention = sum(1 for a in all_alerts if a.level in ("red", "yellow"))
+    # --- alerts 相关：系统当前有效的红/黄预警才算需要关注 ---
+    # 教师“确认”不会改变预警等级；“忽略”与无有效预警均按正常处理。
+    active_alerts = db.query(Alert).filter(
+        Alert.user_id == uid,
+        Alert.level.in_(("red", "yellow")),
+        Alert.status.notin_(("closed", "ignored")),
+    ).all()
+    active_red = [a for a in active_alerts if a.level == "red"]
+    active_yellow = [a for a in active_alerts if a.level == "yellow"]
+    need_attention = len(active_alerts)
 
     # --- todos：doing 的 kp + 最紧急的 alert ---
     todos = []
@@ -206,15 +291,39 @@ def student_dashboard(
         todos.append({
             "id": f"TD_LP_{n.kp_id}", "type": "recommend", "level": "brand",
             "title": f"继续学习：{n.name}", "desc": f"当前进度 {n.progress or 0:.0f}%",
-            "action": "继续学习", "target": "learn", "kpId": n.kp_id,
+            # target 必须是前端已注册的视图名：resource = 学习资源中心（进去后按 kpName 定位知识点）
+            "action": "继续学习", "target": "resource",
+            "kpId": n.kp_id, "kpName": n.name,
         })
-    for a in open_alerts[:2]:
+    for a in active_alerts[:2]:
         lv = "danger" if a.level == "red" else "warn"
         todos.append({
             "id": f"TD_ALERT_{a.alert_id}", "type": "alert", "level": lv,
             "title": a.title[:30], "desc": a.desc[:40] if a.desc else "",
             "action": "去处理", "target": "alerts",
         })
+
+    # 进行中的练习「存档」→ 待办「继续挑战」（检查会话历史；同一模式最多一条，需有作答进度）
+    _mode_cn = {"weak": "薄弱点强化", "order": "顺序练习", "random": "随机练习", "wrong": "错题重练"}
+    _ps_todos, _seen_modes = [], set()
+    for ps in db.query(PracticeSession).filter(
+        PracticeSession.user_id == uid,
+        PracticeSession.status == "running",
+    ).order_by(desc(PracticeSession.created_at)).all():
+        if ps.mode in _seen_modes:
+            continue
+        _seen_modes.add(ps.mode)
+        answered = db.query(func.count(AnswerRecord.id)).filter(
+            AnswerRecord.session_id == ps.session_id).scalar() or 0
+        if 0 < answered < (ps.total or 0):
+            _ps_todos.append({
+                "id": f"TD_PS_{ps.session_id}", "type": "practice", "level": "brand",
+                "title": f"继续练习：{_mode_cn.get(ps.mode, ps.mode)}",
+                "desc": f"已完成 {answered}/{ps.total} 题，点击继续挑战",
+                "action": "继续挑战", "target": "practice", "sessionId": ps.session_id,
+                "mode": ps.mode,
+            })
+    todos = _ps_todos + todos
 
     if not todos:
         node_name = current_node.get("name") if current_node else "课程学习"
@@ -225,39 +334,83 @@ def student_dashboard(
             "action": "去学习", "target": "graph",
         })
 
-    # --- recentActivities：answer_records + practice_sessions + chat_sessions 最近 5 条 ---
+    # --- recentActivities：练习会话 + 资源学习（视频/课件/文献）合并，按时间倒序 ---
+    # mode 用中文，时间取完成时间（未完成取创建时间）
+    MODE_CN = {"weak": "薄弱点强化", "order": "顺序练习", "random": "随机练习", "wrong": "错题重练"}
     recent = []
-    for ar in db.query(AnswerRecord).filter(AnswerRecord.user_id == uid).order_by(desc(AnswerRecord.created_at)).limit(3).all():
-        recent.append({
-            "id": f"A_AR_{ar.id}", "type": "practice",
-            "title": f"完成 {ar.kp_id or '未知'} 相关题目",
-            "meta": f"{'正确' if ar.is_correct else '错误'}",
-            "time": _fmt_time(ar.created_at),
-            "time_sort": ar.created_at,
-            "level": "ok" if ar.is_correct else "warn",
-        })
-    for ps in db.query(PracticeSession).filter(PracticeSession.user_id == uid).order_by(desc(PracticeSession.created_at)).limit(2).all():
+    ps_rows = (
+        db.query(PracticeSession)
+        .filter(PracticeSession.user_id == uid)
+        .order_by(desc(func.coalesce(PracticeSession.finished_at, PracticeSession.created_at)))
+        .limit(50)
+        .all()
+    )
+    for ps in ps_rows:
+        ts = ps.finished_at or ps.created_at
+        dur = ps.duration_seconds or 0
+        if not dur and ps.finished_at and ps.created_at:
+            dur = int((ps.finished_at - ps.created_at).total_seconds())
+        mins = dur // 60 if dur else 0
+        acc = ps.accuracy if ps.accuracy else (round(ps.correct / ps.total * 100) if ps.total else 0)
         recent.append({
             "id": f"A_PS_{ps.session_id}", "type": "practice",
-            "title": f"{ps.mode}练习",
-            "meta": f"{ps.correct}/{ps.total} 正确 · {ps.duration_seconds//60}分钟",
-            "time": _fmt_time(ps.created_at),
-            "time_sort": ps.created_at,
-            "level": "ok" if ps.accuracy and ps.accuracy >= 70 else "warn",
+            "title": MODE_CN.get(ps.mode, f"{ps.mode}练习"),
+            "meta": f"{ps.correct}/{ps.total} 正确" + (f" · {mins}分钟" if mins else ""),
+            "time": _fmt_time(ts),
+            "time_sort": ts,
+            "level": "ok" if acc >= 70 else "warn",
         })
-    recent.sort(key=lambda x: x.get("time_sort", datetime.min), reverse=True)
-    recent = recent[:5]
 
-    # --- streakHistoryStart + streakHistory：52 周 × 7 天热力图 ---
-    # 从今天往前推 364 天（=52×7），每天有答题记录则为 1 否则 0
-    WEEKS = 52
+    # 资源学习记录：视频观看、课件/文献学习（此前只统计练习，导致看了视频动态里看不到）
+    RES_VERB = {"video": "观看课程视频", "ppt": "学习课堂课件", "doc": "阅读课程文献"}
+    res_rows = (
+        db.query(ResourceProgress, Resource)
+        .join(Resource, Resource.res_id == ResourceProgress.res_id)
+        .filter(
+            ResourceProgress.user_id == uid,
+            Resource.course_id == course_id,       # 课程隔离：只展示当前课程的资源学习记录
+        )
+        .all()
+    )
+    # 同一资源若有多行（历史并发写入）只保留数据最优的一行，避免同一条视频刷出两条动态
+    from ..services.resource_progress import progress_map as _progress_map
+    _best = _progress_map(db, uid, [r.res_id for _p, r in res_rows])
+    for r in sorted({r.res_id: r for _p, r in res_rows}.values(), key=lambda x: x.res_id):
+        p = _best.get(r.res_id)
+        if p is None or not p.updated_at:
+            continue
+        prog = int(p.progress or 0)
+        pos = int(p.position or 0)
+        extra = ""
+        if r.type == "video" and pos:
+            extra = f" · 观看至 {_fmt_clock(pos)}"
+        elif r.type in ("ppt", "doc") and pos:
+            extra = f" · 已读 {pos} 页"
+        recent.append({
+            "id": f"A_RES_{r.res_id}", "type": "resource",
+            "title": f"{RES_VERB.get(r.type, '学习资源')}：{r.title}",
+            "meta": ("已完成 100%" if prog >= 100 else f"进度 {prog}%") + extra,
+            "time": _fmt_time(p.updated_at),
+            "time_sort": p.updated_at,
+            "level": "ok" if prog >= 100 else "warn",
+        })
+
+    recent.sort(key=lambda x: x.get("time_sort") or datetime.min, reverse=True)
+    recent = recent[:50]
+
+    # --- streakHistoryStart + streakHistory：学期内的「周 × 日」热力图 ---
+    # 起点固定为学期第 1 周周一（不再从今天倒推 52 周），列 = 周、行 = 周一…周日，
+    # 覆盖到学期末；若学期已结束则延伸到今天所在周，保证当前打卡不会被切掉。
+    # 每天有答题记录则为 1 否则 0。
+    WEEKS = max(SEMESTER_WEEKS, (today - SEMESTER_START).days // 7 + 1)
     DAYS = WEEKS * 7
-    streak_start = today - timedelta(days=DAYS - 1)
+    streak_start = SEMESTER_START
     # 构建日期→值的集合（streak 用 answer_records，练习活跃用 practice_sessions 也行，这里统一用 answer_records）
     streak_history = []
     for i in range(DAYS):
         d = streak_start + timedelta(days=i)
         streak_history.append(1 if d in study_date_set else 0)
+    today_index = (today - streak_start).days   # 今天在网格中的下标；不在区间内时越界（前端按越界处理）
 
     # --- suggestedQuestions：从薄弱点自动生成 AI 推荐问题 ---
     suggested_questions = []
@@ -268,7 +421,7 @@ def student_dashboard(
 
     # --- 能力目标达成度：达标知识点数（完成率>=60%）/ 总知识点数 ---
     goal_achieve_rate = round(
-        sum(1 for r in lp_rows if (r.mastery or 0) >= 60) / lp_total * 100, 1
+        sum(1 for r in lp_rows if mastery_map.get(r.kp_id, 0) >= 60) / lp_total * 100, 1
     ) if lp_total else 0
 
     # 用户名：取 user.name 或 user.username 的 "下午好，XXX" 形式
@@ -284,17 +437,23 @@ def student_dashboard(
             "maxStreak": max_streak,
             "totalDays": total_study_days,
             "todayStudyMinutes": today_minutes,
+            "todayStudySeconds": today_seconds,
+            "todayPracticeSeconds": today_study["practiceSeconds"],
+            "todayResourceSeconds": today_study["resourceSeconds"],
             "needAttention": need_attention,
-            "status": "danger" if open_red else ("warn" if need_attention else "ok"),
+            "status": "danger" if active_red else ("warn" if active_yellow else "ok"),
             "streakHistoryStart": streak_start.strftime("%Y-%m-%d"),
             "streakHistory": streak_history,
+            "streakWeeks": WEEKS,
+            "streakTodayIndex": today_index,
+            "semesterLabel": f"{streak_start.year}-{streak_start.year + 1}",
         },
         "coreMetrics": {
             "completionRate": course_progress,
             "masteryRate": mastery_rate,
             "goalAchieveRate": round(goal_achieve_rate, 1),
             "totalKpCount": lp_total,
-            "masteredKpCount": sum(1 for r in lp_rows if (r.mastery or 0) >= 60),
+        "masteredKpCount": sum(1 for r in lp_rows if mastery_map.get(r.kp_id, 0) >= 60),
             "completedKpCount": len(lp_done),
             "updatedAt": datetime.now().strftime("%Y-%m-%d %H:%M"),
         },
@@ -304,6 +463,19 @@ def student_dashboard(
         "recentActivities": recent,
         "suggestedQuestions": suggested_questions,
     })
+
+
+@router.get("/study-duration")
+def study_duration(
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """当天累计学习时长（练习用时 + 视频观看时长）。
+
+    驾驶舱「今日累计学习时长」的轻量刷新接口：只读 practice_sessions /
+    answer_records / resource_study_log 三张真实业务表，不做任何估算或造数。
+    """
+    return ok(_today_study_seconds(db, user.user_id, date.today()))
 
 
 def _calc_max_streak(date_set: set) -> int:
@@ -351,35 +523,47 @@ def student_resources(
     size: int = Query(20),
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
+    course_id: str = Depends(get_current_course_id),
 ):
-    q = db.query(Resource)
+    # 课程隔离：只返回当前课程下的资源（X-Course-Id 头，缺省回退默认课程）
+    q = db.query(Resource).filter(Resource.course_id == course_id)
     if type and type != "all":
         q = q.filter(Resource.type == type)
-    if kpId:
-        q = q.filter(Resource.kp_id == kpId)
     if category:
         q = q.filter(Resource.category == category)
     if keyword:
         like = f"%{keyword}%"
         q = q.filter(Resource.title.like(like) | Resource.kp.like(like) | Resource.source.like(like))
     all_items = q.all()
+    # 知识点过滤放在「取回列表后」做，且与学习路径的资源计数同源：
+    # 主 kp_id 和 kp_ids 多标签都算命中。此前用 SQL 只匹配 Resource.kp_id == kpId，
+    # 会把「主挂载在别的知识点、但 kp_ids 里带上本知识点」的资源凭空丢掉
+    # （典型现象：左侧标 6 个资源、点进去只有 4 张卡片）。
+    if kpId:
+        from ..services.catalog_helpers import filter_resources_by_kp
+        all_items = filter_resources_by_kp(all_items, kpId)
     total = len(all_items)
     start = (page - 1) * size
     end = start + size
     page_items = all_items[start:end]
 
     # 用户真实学习进度（视频秒 / 文档页 → 百分比）
-    prog_map = {
-        p.res_id: p for p in db.query(ResourceProgress).filter(
-            ResourceProgress.user_id == user.user_id,
-            ResourceProgress.res_id.in_([r.res_id for r in page_items]),
-        ).all()
-    }
+    # 用 progress_map：同一资源若存在重复行（历史并发写入）只取数据最优的一行，
+    # 否则这里「最后一行覆盖前面」会把 10% 显示成 0%。
+    from ..services.resource_progress import progress_map as _progress_map
+    prog_map = _progress_map(db, user.user_id, [r.res_id for r in page_items])
+
+    from ..services.catalog_helpers import resource_kp_ids, resolve_kp_labels, kp_name_map
+    name_map = kp_name_map(db, course_id)
 
     items = [
         {
             "resId": r.res_id, "type": r.type, "title": r.title,
+            "chapterId": getattr(r, "chapter_id", "") or "",
+            "chapter": getattr(r, "chapter", "") or "",
             "kpId": r.kp_id, "kp": r.kp, "category": r.category,
+            "kpIds": resource_kp_ids(r),
+            "tags": resolve_kp_labels(db, resource_kp_ids(r), name_map),
             "source": r.source, "views": r.views,
             "progress": prog_map[r.res_id].progress if r.res_id in prog_map else 0,
             "position": prog_map[r.res_id].position if r.res_id in prog_map else 0,
@@ -392,13 +576,11 @@ def student_resources(
 
 
 @router.get("/resources/{res_id}/progress")
-def get_resource_progress(res_id: str, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+def get_resource_progress(res_id: str, db: Session = Depends(get_db), user: User = Depends(get_current_user), course_id: str = Depends(get_current_course_id)):
     """获取某个资源的真实学习进度（视频：秒；文档：页码/百分比）"""
-    p = db.query(ResourceProgress).filter(
-        ResourceProgress.user_id == user.user_id,
-        ResourceProgress.res_id == res_id,
-    ).first()
-    r = db.query(Resource).filter(Resource.res_id == res_id).first()
+    from ..services.resource_progress import progress_map as _progress_map
+    p = _progress_map(db, user.user_id, [res_id]).get(res_id)
+    r = db.query(Resource).filter(Resource.res_id == res_id, Resource.course_id == course_id).first()
     if not r:
         return fail("资源不存在", 404)
     dur_sec = _duration_to_seconds(r.duration) if r.duration else 0
@@ -428,9 +610,14 @@ def save_resource_progress(
     body: dict,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
+    course_id: str = Depends(get_current_course_id),
 ):
-    """保存学习进度：body = {progress: 0~100, position: 秒/页码}"""
-    r = db.query(Resource).filter(Resource.res_id == res_id).first()
+    """保存学习进度：body = {progress: 0~100, position: 秒/页码, watchedDelta?: 秒}
+
+    watchedDelta 仅供视频使用：本次上报周期内**真正播放**的秒数（由前端按播放
+    时间轴累加，缓冲/拖动不计），服务端据此累计当日观看时长；缺省时退回位置增量。
+    """
+    r = db.query(Resource).filter(Resource.res_id == res_id, Resource.course_id == course_id).first()
     if not r:
         return fail("资源不存在", 404)
     progress = int(body.get("progress", 0) or 0)
@@ -447,10 +634,9 @@ def save_resource_progress(
     if r.type in ("ppt", "doc") and not progress and r.pages:
         progress = min(100, int(round(position / r.pages * 100)))
 
-    p = db.query(ResourceProgress).filter(
-        ResourceProgress.user_id == user.user_id,
-        ResourceProgress.res_id == res_id,
-    ).first()
+    # 取该资源的进度行：若有重复行（历史并发写入）先合并成一行，避免后续读到 0 那行
+    from ..services.resource_progress import consolidate as _consolidate
+    p = _consolidate(db, user.user_id, res_id)
     prev_progress = p.progress if p else 0
     prev_position = p.position if p else 0
     if not p:
@@ -462,9 +648,18 @@ def save_resource_progress(
     p.position = max(prev_position or 0, position)
     p.updated_at = datetime.utcnow()
 
-    # 视频：把本次「前进的秒数」累计进今日观看时长（后退/拖动不计）
+    # 视频：把本次「真实播放的秒数」累计进今日观看时长（后退/拖动/缓冲都不计）
+    # 优先用前端累计的 watchedDelta（只在真正播放时按时间轴增量累加）；
+    # 老客户端没传时退回「位置增量」，并做单次上限保护，避免拖动进度条虚增学习时长。
     if r.type == "video":
-        delta = max(0, position - prev_position)
+        if body.get("watchedDelta") is not None:
+            try:
+                delta = int(body.get("watchedDelta") or 0)
+            except (TypeError, ValueError):
+                delta = 0
+            delta = max(0, min(delta, 600))
+        else:
+            delta = max(0, min(position - prev_position, 300))
         _add_watch_seconds(db, user.user_id, date.today(), delta)
 
     # 同步刷新该资源所属知识点在学习路径中的掌握率与状态
@@ -507,36 +702,36 @@ def _sync_lp_from_resource_progress(db: Session, user_id: str, kp_id: str):
         lp.status = status
         return
 
-    # 知识点尚无 LP 记录时，自动创建一条（与 _ensure_learning_path 保持一致）
+    # 知识点尚无 LP 记录时，自动创建一条（字段构造与 _ensure_learning_path 共用同一份）
     node = db.query(GraphNode).filter(
         GraphNode.id == kp_id, GraphNode.graph_type == "knowledge"
     ).first()
     if not node:
         return
+    from ..services.learning_path import make_row
     max_step = db.query(func.max(LearningPath.step)).filter(
         LearningPath.user_id == user_id,
         LearningPath.course_id == node.course_id,
     ).scalar() or 0
-    res_count = db.query(Resource).filter(Resource.kp_id == kp_id).count()
-    db.add(LearningPath(
+    # 资源数与 /graph/path 保持同一口径：主 kp_id + kp_ids 多标签都计入，
+    # 否则这里建出来的行 res_count 只统计主绑定，章节资源数会对不上。
+    from ..services.learning_path import resource_count_map
+    res_count = resource_count_map(db, node.course_id or "C2026DS001").get(kp_id, 0)
+    db.add(make_row(
         user_id=user_id,
         course_id=node.course_id or "C2026DS001",
         step=max_step + 1,
-        kp_id=kp_id,
-        name=node.name,
-        chapter=node.chapter,
-        status=status,
-        hours=node.hours or 1,
-        mastery=mastery,
+        node=node,
         res_count=res_count,
-        progress=mastery,
-        locked=0,
-        lock_reason="",
+        state=(mastery, status),
     ))
 
 
 def _add_watch_seconds(db: Session, uid: str, day: date, delta: int):
-    """把 delta 秒累计到 user 当日 resource_study_log（不存在则新建）"""
+    """把 delta 秒累计到 user 当日 resource_study_log（不存在则新建）
+
+    该表有 (user_id, day) 唯一约束，天然不会出现重复行。
+    """
     if delta <= 0:
         return
     row = db.query(ResourceStudyLog).filter(
@@ -551,9 +746,9 @@ def _add_watch_seconds(db: Session, uid: str, day: date, delta: int):
 
 
 @router.post("/resources/{res_id}/view")
-def resource_view(res_id: str, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+def resource_view(res_id: str, db: Session = Depends(get_db), user: User = Depends(get_current_user), course_id: str = Depends(get_current_course_id)):
     """记录一次资源查看，返回最新观看次数"""
-    r = db.query(Resource).filter(Resource.res_id == res_id).first()
+    r = db.query(Resource).filter(Resource.res_id == res_id, Resource.course_id == course_id).first()
     if not r:
         return fail("资源不存在", 404)
     r.views = (r.views or 0) + 1
@@ -562,13 +757,15 @@ def resource_view(res_id: str, db: Session = Depends(get_db), user: User = Depen
 
 
 @router.get("/resource-stats")
-def resource_stats(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
-    """学习资源进度统计 — 从 ResourceProgress 聚合"""
+def resource_stats(db: Session = Depends(get_db), user: User = Depends(get_current_user), course_id: str = Depends(get_current_course_id)):
+    """学习资源进度统计 — 从 ResourceProgress 聚合（仅统计当前课程）"""
     uid = user.user_id
-    resources = db.query(Resource).all()
+    resources = db.query(Resource).filter(Resource.course_id == course_id).all()
     res_map = {r.res_id: r for r in resources}
-    progress_rows = db.query(ResourceProgress).filter(ResourceProgress.user_id == uid).all()
-    progress_map = {p.res_id: p for p in progress_rows}
+    # 同一资源多行时只取最优行，避免「开始数/完成数/平均进度」被重复行失真
+    from ..services.resource_progress import progress_map as _progress_map
+    progress_map = _progress_map(db, uid, [r.res_id for r in resources])
+    progress_rows = list(progress_map.values())
 
     total = len(resources)
     started = 0
@@ -804,17 +1001,22 @@ def growth(
             "kp_count": len(w["kps"]),
         })
 
-    # 累计完成率：每周学了多少新 kp
-    cumulative_kps = set()
+    # 累计完成率：已掌握知识点占比。
+    # 原实现依赖 learning_paths.mastered_at，但该字段只有 seed 会写（seed 不再生成
+    # 学习路径后恒为 NULL），故改为按真实掌握率统计；分母也不再写死 28（图谱已是 34 个）。
+    total_kp = db.query(GraphNode).filter(
+        GraphNode.graph_type == "knowledge",
+    ).count() or 1
+    mastered_kps = db.query(LearningPath).filter(
+        LearningPath.user_id == uid,
+        LearningPath.mastery >= 80,
+    ).count()
+    mastered_ratio = round(min(mastered_kps, total_kp) / total_kp * 100, 1)
+
     completion_series = []
     mastery_series = []
     for w in weeks:
-        # 这里简化：用累计 kp 学习数 / 总 28 个 kp
-        lp_for_kps = db.query(LearningPath).filter(
-            LearningPath.user_id == uid,
-            LearningPath.mastered_at != None,
-        ).count()
-        completion_series.append(round(lp_for_kps / 28 * 100, 1))  # 28 个 knowledge kp 固定
+        completion_series.append(mastered_ratio)
         if w["total"] > 0:
             mastery_series.append(round(w["correct"] / w["total"] * 100, 1))
         else:

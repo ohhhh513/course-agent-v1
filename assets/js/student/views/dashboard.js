@@ -3,8 +3,51 @@
   /* ================================================================
      视图 1 · 学习驾驶舱
      ================================================================ */
+  /* 「今日累计学习时长」= 后端按本地日历日统计的「当天练习用时 + 当天视频观看秒数」，
+     页面每 30 秒静默刷新一次（只读真实业务表，不做本地累加或估算）。 */
+  let _todayDurationTimer = null;
+
+  function _stopTodayDurationTimer() {
+    if (_todayDurationTimer !== null) {
+      clearInterval(_todayDurationTimer);
+      _todayDurationTimer = null;
+    }
+  }
+
+  /** 秒 → 「X 时 X 分」/「X 分」 */
+  function _fmtStudyDuration(seconds) {
+    const s = Math.max(0, Math.floor(seconds || 0));
+    const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60);
+    return h > 0 ? `${h} 时 ${m} 分` : `${m} 分`;
+  }
+
+  /** 渲染「今日累计学习时长」徽标；extra 存在时把练习 / 视频明细写进 title */
+  function _paintTodayDuration(seconds, extra) {
+    const el = U.$('#todayStudyDuration');
+    if (!el) return;
+    el.textContent = `今日累计学习 ${_fmtStudyDuration(seconds)}`;
+    if (extra) {
+      el.title = `练习 ${_fmtStudyDuration(extra.practiceSeconds)} · 视频观看 ${_fmtStudyDuration(extra.resourceSeconds)}`;
+    }
+  }
+
+  function _startTodayDurationTimer() {
+    _stopTodayDurationTimer();
+    _todayDurationTimer = setInterval(() => {
+      if (!U.$('#todayStudyDuration')) { _stopTodayDurationTimer(); return; }
+      API.student.studyDuration()
+        .then(r => _paintTodayDuration(r.todaySeconds, r))
+        .catch(() => {});
+    }, 30000);
+  }
+
   function renderDashboard() {
+    _stopTodayDurationTimer();
     const el = U.$('#view-dashboard');
+    if (!API.config.activeCourseId) {
+      if (window.renderStudentNoCourse) window.renderStudentNoCourse(el);
+      return;
+    }
     el.innerHTML = U.skeleton(400);
     API.student.dashboard().then(d => {
       const o = d.overview, m = d.coreMetrics;
@@ -16,12 +59,19 @@
         warn: `有 ${o.needAttention} 项需要关注`,
         danger: '存在紧急预警',
       };
+      const alertState = {
+        ok: { label: '正常', dot: 'ok' },
+        warn: { label: '需关注', dot: 'warn' },
+        danger: { label: '预警', dot: 'danger' },
+      }[o.status] || { label: '正常', dot: 'ok' };
 
-      // 以本月为中心向前推 12 个月（含本月）所涉及的年份，动态生成年份区间标签
+      // 年份区间标签的兜底值（正常取后端给的学期标签，如 2026-2027）
       const _now = new Date();
       const _endY = _now.getFullYear();
       const _startY = new Date(_now.getFullYear(), _now.getMonth() - 11, 1).getFullYear();
       const _yrLabel = _startY === _endY ? `${_endY}` : `${_startY}-${_endY}`;
+      // 打卡热力图：列 = 周，周数由后端按「学期第 1 周（8/31）起算」给出
+      const _calWeeks = o.streakWeeks || Math.ceil(((o.streakHistory || []).length) / 7) || 52;
 
       el.innerHTML = `
       <!-- Hero -->
@@ -29,7 +79,8 @@
         <div class="hero__main">
           <div class="row" style="margin-bottom:6px">
             ${R.lamp(o.status === 'danger' ? 'red' : o.status === 'warn' ? 'yellow' : 'ok', lampText[o.status])}
-            <span class="badge badge--outline">今日已学 ${o.todayStudyMinutes} 分钟</span>
+            <span class="badge badge--outline" id="todayStudyDuration"
+              title="练习 ${_fmtStudyDuration(o.todayPracticeSeconds || 0)} · 视频观看 ${_fmtStudyDuration(o.todayResourceSeconds || 0)}">今日累计学习 ${_fmtStudyDuration(o.todayStudySeconds != null ? o.todayStudySeconds : (o.todayStudyMinutes || 0) * 60)}</span>
           </div>
           <h2>${greeting}，${U.esc(userName)} 👋</h2>
           <p>当前学习节点：<b class="t-brand">${U.esc(currentNodeName)}</b> · 课程总进度 ${o.courseProgress}%</p>
@@ -57,14 +108,15 @@
                   </div>
                 </div>
                 <div class="cal-legend">
-                  <span class="cal-legend__year">${_yrLabel}</span>
+                  <span class="cal-legend__year">${o.semesterLabel || _yrLabel}</span>
                 </div>
               </div>
               <div class="cal-grid-wrap">
-                <div class="cal-grid" id="streakCalGrid">
+                <div class="cal-grid" id="streakCalGrid" style="--cal-weeks:${_calWeeks}">
                   ${o.streakHistoryStart && o.streakHistory.length ? (() => {
-                    const WEEKS = 52, DAYS = WEEKS * 7;
+                    const DAYS = o.streakHistory.length;
                     const p = o.streakHistoryStart.split('-').map(Number);
+                    const todayIdx = (typeof o.streakTodayIndex === 'number') ? o.streakTodayIndex : DAYS - 1;
                     let cells = '';
                     for (let i = 0; i < DAYS; i++) {
                       const v = o.streakHistory[i];
@@ -72,7 +124,9 @@
                       dt.setDate(dt.getDate() + i);
                       const dateStr = `${dt.getMonth() + 1}/${dt.getDate()}`;
                       let cls, tip;
-                      if (i === DAYS - 1) {
+                      if (i > todayIdx) {
+                        cls = 'is-future'; tip = `${dateStr} · 未到`;
+                      } else if (i === todayIdx) {
                         cls = (v > 0 ? 'is-on ' : '') + 'is-today';
                         tip = `今天（${dateStr}）· ${v > 0 ? '已学习' : '未学习'}`;
                       } else if (v === 0) {
@@ -85,28 +139,16 @@
                     return cells;
                   })() : ''}
                 </div>
-                <div class="cal-months">
-                  ${o.streakHistoryStart && o.streakHistory.length ? (() => {
-                    const WEEKS = 52, DAYS = WEEKS * 7;
-                    const p = o.streakHistoryStart.split('-').map(Number);
-                    let lastM = -1, labels = '';
-                    for (let w = 0; w < WEEKS; w++) {
-                      let labelMonth = -1;
-                      for (let d = 0; d < 7; d++) {
-                        const idx = w * 7 + d;
-                        if (idx >= DAYS) break;
-                        const dt = new Date(p[0], p[1] - 1, p[2]);
-                        dt.setDate(dt.getDate() + idx);
-                        if (dt.getDate() === 1) { labelMonth = dt.getMonth(); break; }
-                      }
-                      if (labelMonth === -1) continue;
-                      if (labelMonth !== lastM) {
-                        labels += `<span class="cal-month-label" style="grid-column-start:${w + 1}">${labelMonth + 1}月</span>`;
-                        lastM = labelMonth;
-                      }
+                <div class="cal-weeks" style="--cal-weeks:${_calWeeks}">
+                  ${(() => {
+                    // 横轴标签写「第N周」而不是月份；列宽只有 10px、字宽约 31px（列距 12px），
+                    // 逐周都写会压字，所以每 3 周标一次（第1、4、7…周）
+                    let labels = '';
+                    for (let w = 0; w < _calWeeks; w += 3) {
+                      labels += `<span class="cal-week-label" style="grid-column-start:${w + 1}">第${w + 1}周</span>`;
                     }
                     return labels;
-                  })() : ''}
+                  })()}
                 </div>
               </div>
             </div>
@@ -120,10 +162,8 @@
           <div class="card__head">
             <h3>${icon('bell')} 待办与提醒</h3>
             <span class="spacer"></span>
-            <span class="row fz-11 t-dim" style="gap:10px">
-              <span class="row" style="gap:4px"><i class="dot dot--ok"></i>正常</span>
-              <span class="row" style="gap:4px"><i class="dot dot--warn"></i>需关注</span>
-              <span class="row" style="gap:4px"><i class="dot dot--danger"></i>预警</span>
+            <span class="row fz-11 t-dim" style="gap:4px">
+              <i class="dot dot--${alertState.dot}"></i>${alertState.label}
             </span>
           </div>
           <div class="card__body stack" style="gap:10px">${d.todos.map(R.todo).join('')}</div>
@@ -165,9 +205,9 @@
                 <div class="row" style="margin-bottom:5px">
                   <b class="fz-13 ${w.level === 'danger' ? 't-danger' : 't-warn'}">${U.esc(w.name)}</b>
                   <span class="spacer"></span>
-                  <span class="mono fz-12 fw-6">${w.masteryRate}%</span>
+                  <span class="mono fz-12 fw-6">${w.accuracyRate}%</span>
                 </div>
-                ${U.bar(w.masteryRate)}
+                ${U.bar(w.accuracyRate)}
                 <div class="row fz-11 t-dim" style="margin-top:5px">
                   <span>${U.esc(w.chapter)} · 错 ${w.errorCount} 题</span>
                   <span class="spacer"></span>
@@ -179,37 +219,55 @@
         </div>
 
         <div class="card">
-          <div class="card__head"><h3>${icon('clock')} 最近学习动态</h3><span class="spacer"></span><button class="btn btn--xs btn--ghost" data-goto="mastery">全部</button></div>
+          <div class="card__head"><h3>${icon('clock')} 最近学习动态</h3></div>
           <div class="card__body">
-            <div class="timeline">
-              ${d.recentActivities.map(a => `
-                <div class="tl-item tl-item--${a.level}">
-                  <time>${a.time}</time>
-                  <b>${U.esc(a.title)}</b>
-                  <p>${U.esc(a.meta)}</p>
-                </div>`).join('')}
+            <div class="tl-scroll">
+              <div class="timeline">
+                ${d.recentActivities.map(a => `
+                  <div class="tl-item tl-item--${a.level}">
+                    <time>${a.time}</time>
+                    <b>${U.esc(a.title)}</b>
+                    <p>${U.esc(a.meta)}</p>
+                  </div>`).join('')}
+              </div>
             </div>
           </div>
         </div>
       </div>`;
 
+      _startTodayDurationTimer();
+
       // 交互绑定
       U.$$('[data-goto]', el).forEach(b => b.addEventListener('click', () => Router.go(b.dataset.goto)));
       U.$$('[data-ask]', el).forEach(b => b.addEventListener('click', () => {
-        Router.go('ai');
-        setTimeout(() => Chat.ask(b.dataset.ask), 260);
+        // 不自动发送：新建会话并把问题填入答疑输入框，由用户确认后自行发送
+        Chat.draft(b.dataset.ask);
       }));
       U.$$('[data-practice-kp]', el).forEach(b => b.addEventListener('click', () => {
         Router.go('practice');
         Toast.info('已定位薄弱知识点', '可直接开始靶向强化练习');
       }));
       U.$$('.todo', el).forEach(t => t.addEventListener('click', () => {
+        // 「继续练习」待办：带上会话 id + 模式 → 进入练习页后自动打开对应存档
+        if (t.dataset.session && typeof Practice !== 'undefined') {
+          Practice._pendingResume = { sessionId: t.dataset.session, mode: t.dataset.mode || 'order' };
+          Router.go('practice');
+          return;
+        }
+        // 「继续学习」待办：跳转资源中心并定位到该知识点（与「我的学情」下钻同一机制）
+        if (t.dataset.target === 'resource' && t.dataset.kpName && typeof ResourceView !== 'undefined') {
+          ResourceView._pendingKp = t.dataset.kpName;
+          Router.go('resource');
+          return;
+        }
         if (t.dataset.target) Router.go(t.dataset.target);
       }));
     });
   }
 
-Router.register('dashboard', { title: '学习驾驶舱', mount: renderDashboard });
+// update：视图已 mount 过时再次进入也要刷新 —— 驾驶舱指标（尤其今日累计学习时长）
+// 必须反映最新数据，不能停留在首次进入的快照上。
+Router.register('dashboard', { title: '学习驾驶舱', mount: renderDashboard, update: renderDashboard });
 
 function _greetingByTime() {
   const h = new Date().getHours();

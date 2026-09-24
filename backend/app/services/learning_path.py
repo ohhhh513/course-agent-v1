@@ -1,0 +1,172 @@
+"""学习路径（learning_paths）的生成与校正。
+
+学习路径是「图谱 + 资源」的派生数据，唯一事实来源是 graph_nodes，所以生成逻辑
+只留这一份，供三处共用：
+  - routers/graph.py     GET /graph/path      首次访问时按需生成
+  - routers/student.py   资源进度上报          补齐单个知识点
+  - services/bootstrap.py 启动引导            图谱扩展到 9 章后校正全量路径
+
+历史坑：seed_data 曾用手写模板（mock_data.KP_STEPS_TEMPLATE）灌 25 条 6 章路径，
+与图谱（34 个知识点 9 章）不一致，章名还写成「第3章 栈与队列」，和资源的
+「第3章 栈和队列」差一个字，导致资源中心按章筛选为空。改为完全由图谱派生后，
+章名、章号、知识点集合永远和资源/学情一致。
+"""
+from typing import Callable, Dict, List, Optional, Tuple
+
+from sqlalchemy import and_
+from sqlalchemy.orm import Session
+
+from ..models.course import Resource
+from ..models.graph import GraphNode, LearningPath
+
+DEFAULT_COURSE_ID = "C2026DS001"
+
+# state_of(kp_id) -> (mastery, status)；不传则一律 (0.0, "todo")，
+# 由后续访问 /graph/path 时用真实答题/资源数据刷新。
+StateFn = Callable[[str], Tuple[float, str]]
+
+
+def _chapter_order_key(chapter: str, node_id: str = "") -> tuple:
+    """章排序：按「第N章」编号；无编号垫底。"""
+    import re
+    s = chapter or ""
+    m = re.search(r"第\s*([0-9]+)\s*[章讲]", s)
+    if m:
+        return (0, int(m.group(1)), s)
+    m2 = re.search(r"(\d+)", node_id or "")
+    return (1, int(m2.group(1)) if m2 else 10**9, s)
+
+
+def graph_nodes(db: Session, course_id: str = DEFAULT_COURSE_ID) -> List[GraphNode]:
+    """知识节点：按章编号 → 节点 id（保证第10章在第9章之后）。"""
+    nodes = db.query(GraphNode).filter(
+        and_(GraphNode.graph_type == "knowledge", GraphNode.course_id == course_id)
+    ).all()
+    nodes.sort(key=lambda n: _chapter_order_key(n.chapter or "", n.id or ""))
+    return nodes
+
+
+def resource_count_map(db: Session, course_id: str = DEFAULT_COURSE_ID) -> Dict[str, int]:
+    """每个知识点实际挂载的资源数（主 kp_id + kp_ids 多标签都计）。
+
+    注意：同一资源对同一知识点**只计一次** —— kp_id 往往也出现在 kp_ids 里，
+    直接拼接会把它重复计数（历史上章节资源数偏大就是这个原因）。
+    """
+    from .catalog_helpers import resource_kp_ids
+
+    rows = db.query(Resource).filter(
+        and_(Resource.course_id == course_id)
+    ).all()
+    counts: Dict[str, int] = {}
+    for r in rows:
+        for kid in set(resource_kp_ids(r)):
+            if kid:
+                counts[kid] = counts.get(kid, 0) + 1
+    return counts
+
+
+def make_row(
+    user_id: str,
+    course_id: str,
+    step: int,
+    node: GraphNode,
+    res_count: int,
+    state: Tuple[float, str],
+) -> LearningPath:
+    mastery, status = state
+    return LearningPath(
+        user_id=user_id,
+        course_id=course_id,
+        step=step,
+        kp_id=node.id,
+        name=node.name,
+        chapter=node.chapter,
+        status=status,
+        hours=node.hours or 1,
+        mastery=mastery,
+        res_count=res_count,
+        progress=mastery,
+        locked=0,
+        lock_reason="",
+    )
+
+
+def build_rows(
+    db: Session,
+    user_id: str,
+    course_id: str = DEFAULT_COURSE_ID,
+    state_of: Optional[StateFn] = None,
+) -> List[LearningPath]:
+    """按图谱生成该学生的完整学习路径（不写库，返回待 add 的行）。"""
+    counts = resource_count_map(db, course_id)
+    rows: List[LearningPath] = []
+    for step, node in enumerate(graph_nodes(db, course_id), start=1):
+        state = state_of(node.id) if state_of else (0.0, "todo")
+        rows.append(make_row(user_id, course_id, step, node, counts.get(node.id, 0), state))
+    return rows
+
+
+def sync_res_count(
+    db: Session,
+    course_id: str = DEFAULT_COURSE_ID,
+    kp_ids: Optional[List[str]] = None,
+) -> int:
+    """把 resources 的实际挂载数同步到 learning_paths.res_count。
+
+    上传 / 删除资源后必须调用：sync_user() 只在「知识点集合」变化时才重建路径，
+    资源增减不影响集合，所以 res_count 不会自动跟随，学习路径上显示的资源数会过时。
+    kp_ids 只传受影响的单个知识点即可（不传则全量）。返回被更新的行数。
+    """
+    counts = resource_count_map(db, course_id)
+    q = db.query(LearningPath).filter(LearningPath.course_id == course_id)
+    if kp_ids:
+        targets = [k for k in kp_ids if k]
+        if not targets:
+            return 0
+        q = q.filter(LearningPath.kp_id.in_(targets))
+    changed = 0
+    for row in q.all():
+        want = counts.get(row.kp_id, 0)
+        if (row.res_count or 0) != want:
+            row.res_count = want
+            changed += 1
+    return changed
+
+
+def sync_user(
+    db: Session,
+    user_id: str,
+    course_id: str = DEFAULT_COURSE_ID,
+    state_of: Optional[StateFn] = None,
+) -> str:
+    """保证该学生的学习路径与当前图谱一致，返回 'ok' / 'created' / 'rebuilt'。
+
+    - 没有记录 → 生成；
+    - 知识点集合与图谱不一致（历史模板残留、图谱扩章后未同步）→ 整体重建；
+    - 一致 → 不动（保留 mastered_at 等既有信息）。
+    """
+    nodes = graph_nodes(db, course_id)
+    if not nodes:
+        return "ok"
+
+    existing = db.query(LearningPath).filter(
+        LearningPath.user_id == user_id,
+        LearningPath.course_id == course_id,
+    ).all()
+
+    if existing:
+        same_set = {r.kp_id for r in existing} == {n.id for n in nodes}
+        path_order = [r.kp_id for r in sorted(existing, key=lambda x: x.step or 0)]
+        graph_order = [n.id for n in nodes]
+        if same_set and path_order == graph_order:
+            return "ok"
+        for row in existing:
+            db.delete(row)
+        db.flush()
+        action = "rebuilt"
+    else:
+        action = "created"
+
+    for row in build_rows(db, user_id, course_id, state_of):
+        db.add(row)
+    return action

@@ -205,9 +205,28 @@ svg:not([width]):not([height]) { width: 1em; height: 1em; flex-shrink: 0; vertic
 .topbar__title { min-width: 0; flex: 1; }
 .topbar__title h1 { font-size: 16.5px; font-weight: 650; }
 .topbar__title p { font-size: 12px; color: var(--text-3); }
-.topbar__actions { display: flex; align-items: center; gap: 8px; }
+.topbar__actions { display: flex; align-items: center; gap: 14px; }
+/* 更新角标没有内容时不要渲染成空白框（退出按钮旁的"白框"就是它） */
+#updateTag:empty { display: none; }
 
-.content { flex: 1; padding: 22px; max-width: 1560px; width: 100%; }
+/* 顶栏图标按钮：扩大可点击热区（不影响视觉尺寸与布局） */
+#msgBtn, #logoutBtn { position: relative; }
+#msgBtn::after, #logoutBtn::after {
+  content: ""; position: absolute; inset: -10px; border-radius: var(--r-full);
+}
+/* 私信未读角标（红点 + 数字，真实未读数） */
+.topbar-badge {
+  position: absolute; top: -3px; right: -3px;
+  min-width: 16px; height: 16px; padding: 0 4px;
+  border-radius: var(--r-full);
+  background: var(--danger); color: #fff;
+  font-size: 10.5px; font-weight: 700; line-height: 16px;
+  text-align: center; box-shadow: 0 0 0 2px var(--surface);
+  pointer-events: none;
+}
+.topbar-badge[hidden] { display: none; }
+
+.content { flex: 1; padding: 22px; max-width: 1560px; width: 100%; margin: 0 auto; }
 .view { display: none; animation: fade-up .32s var(--ease); }
 .view.is-active { display: block; }
 @keyframes fade-up { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
@@ -349,7 +368,8 @@ a.badge--outline:hover { border-color: var(--brand-400); color: var(--brand-300)
   transition: all var(--t-fast);
 }
 .chip:hover { border-color: var(--brand-400); color: var(--text); }
-.chip.is-active { background: var(--brand-500); border-color: var(--brand-500); color: #fff; }
+.chip.is-active,
+.chip.is-on { background: var(--brand-500); border-color: var(--brand-500); color: #fff; }
 
 /* segmented 分段控制器 */
 .seg {
@@ -364,9 +384,20 @@ a.badge--outline:hover { border-color: var(--brand-400); color: var(--brand-300)
 }
 .seg button:hover { color: var(--text); }
 .seg button.is-active { background: var(--surface); color: var(--text); box-shadow: var(--shadow-sm); font-weight: 600; }
+/* 2026-09-24 题库排序方向反转按钮：与其它 seg 按钮风格统一，仅追加前缀 ↘/↗ 与文案。 */
+.seg button.seg__dir {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-feature-settings: "tnum";
+}
+.seg button.seg__dir .seg__dir-arrow {
+  font-size: 11px; opacity: .8; line-height: 1;
+}
+.seg button.seg__dir .seg__dir-label { font-size: 12px; }
+.seg button.seg__dir.is-desc { color: var(--brand-500); }
 
 /* Tabs 下划线式 */
-.tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--border); overflow-x: auto; }
+.tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--border); overflow-x: auto; overflow-y: hidden; scrollbar-width: none; }
+.tabs::-webkit-scrollbar { display: none; }
 .tabs button {
   padding: 10px 14px; font-size: 13.5px; font-weight: 550; color: var(--text-3);
   border-bottom: 2px solid transparent; margin-bottom: -1px; white-space: nowrap;
@@ -504,6 +535,11 @@ a.badge--outline:hover { border-color: var(--brand-400); color: var(--brand-300)
 .tl-item time { font-size: 11.5px; color: var(--text-3); font-family: var(--font-num); }
 .tl-item b { display: block; font-size: 13.5px; font-weight: 600; }
 .tl-item p { font-size: 12.5px; color: var(--text-2); }
+/* 最近学习动态：独立滚动条，便于查看全部练习记录 */
+.tl-scroll { max-height: 420px; overflow-y: auto; padding-right: 8px; scrollbar-width: thin; scrollbar-color: var(--brand-300) var(--surface-3); }
+.tl-scroll::-webkit-scrollbar { width: 6px; }
+.tl-scroll::-webkit-scrollbar-track { background: var(--surface-3); border-radius: var(--r-full); }
+.tl-scroll::-webkit-scrollbar-thumb { background: var(--brand-300); border-radius: var(--r-full); }
 
 /* ---------- 12. Modal / Drawer ---------- */
 .overlay {
@@ -529,6 +565,7 @@ a.badge--outline:hover { border-color: var(--brand-400); color: var(--brand-300)
 .modal__head h3 svg { width: 18px; height: 18px; flex-shrink: 0; color: var(--brand-600); }
 .modal__body { padding: 20px; overflow-y: auto; flex: 1; }
 .modal__foot { padding: 14px 20px; border-top: 1px solid var(--border-soft); display: flex; gap: 10px; justify-content: flex-end; }
+.modal__hint { margin: 8px 0 0; min-height: 1em; font-size: 12.5px; color: var(--danger, #e5484d); }
 
 .drawer-wrap { position: fixed; inset: 0; z-index: 100; }
 .drawer {

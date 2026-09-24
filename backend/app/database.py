@@ -34,44 +34,62 @@ def get_db():
         db.close()
 
 
-def init_db():
-    """初始化数据库表"""
-    from .models import user, course, graph, question, practice, ai, alert, intervention, checkin
-    from .models import agent_st  # noqa: F401  智能出题草稿表
-    Base.metadata.create_all(bind=engine)
-    _migrate()
+def _add_missing_columns(engine):
+    """仅 ADD COLUMN 的幂等补列（不改已有列/不删数据）。
 
-
-def _add_col(conn, table: str, col: str, ddl: str) -> None:
-    """给已存在的表补列（SQLite 无 ADD COLUMN IF NOT EXISTS，用 PRAGMA 守卫，幂等）"""
-    from sqlalchemy import text
-    cols = [r[1] for r in conn.execute(text(f"PRAGMA table_info({table})")).fetchall()]
-    if col not in cols:
-        conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} {ddl}"))
-
-
-def _normalize_resource_category(conn) -> None:
-    """资源分类规范化（幂等）。
-
-    语义：挂到具体知识点（kp_id 非空）→ knowledge（知识点挂载）；
-          章节级/教材（kp_id 为空）→ other（课外/教材）。
-    修复历史库/旧交付备份中 category 曾被写死为 other 的问题，保证各环境启动后一致。
+    项目约定旧完整迁移已退役；此处只为「章目录 + 多 KP」「课程隔离」等
+    新增列在已有库上可运行。删库重建仍是最干净路径。
     """
     from sqlalchemy import text
-    conn.execute(text(
-        "UPDATE resources SET category = CASE "
-        "WHEN kp_id IS NOT NULL AND kp_id <> '' THEN 'knowledge' ELSE 'other' END"
-    ))
 
-
-def _migrate():
-    """agent_st 集成的列迁移：兼容已有旧库（create_all 不会给旧表加列）"""
+    # 表 → {列名: 列定义}。新增列只在这里登记，勿在别处散落 ALTER。
+    want = {
+        "resources": {
+            "chapter_id": "VARCHAR(64) DEFAULT ''",
+            "chapter": "VARCHAR(64) DEFAULT ''",
+            "kp_ids": "TEXT DEFAULT '[]'",
+        },
+        "questions": {
+            "chapter_id": "VARCHAR(64) DEFAULT ''",
+            "chapter": "VARCHAR(64) DEFAULT ''",
+            "kp_ids": "TEXT DEFAULT '[]'",
+        },
+        "graph_nodes": {
+            "pos_x": "FLOAT",
+            "pos_y": "FLOAT",
+        },
+        # 课程隔离：出题草稿补课程维度（存量行保持 NULL，由运维显式归属）
+        "st_question_drafts": {
+            "course_id": "VARCHAR(32)",
+        },
+        # 课程隔离：会话表补课程维度（存量 28 行曾回填默认课程，新行为 NULL）
+        "chat_sessions": {
+            "course_id": "VARCHAR(32)",
+        },
+    }
     with engine.connect() as conn:
-        _add_col(conn, "chat_sessions", "flow_id", "VARCHAR(16) DEFAULT 'explain'")
-        _add_col(conn, "chat_messages", "tool_log", "TEXT DEFAULT '[]'")
-        _add_col(conn, "chat_messages", "draft_id", "VARCHAR(32) DEFAULT ''")
-        _add_col(conn, "questions", "figure_json", "TEXT")
-        _add_col(conn, "questions", "has_image", "BOOLEAN DEFAULT 0")
-        _add_col(conn, "answer_records", "mastered", "BOOLEAN DEFAULT 0")
-        _normalize_resource_category(conn)
+        for table, cols in want.items():
+            rows = conn.execute(text(f"PRAGMA table_info({table})")).fetchall()
+            existing = {r[1] for r in rows}
+            if not existing:
+                continue
+            for col, ddl in cols.items():
+                if col in existing:
+                    continue
+                conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} {ddl}"))
         conn.commit()
+
+
+def init_db():
+    """初始化数据库表。
+
+    数据库结构的唯一事实来源是 models/ 的模型定义（面向删库重建）：
+    create_all 会按当前模型建出完整结构。
+    """
+    from .models import user, course, graph, question, practice, ai, alert, intervention, checkin
+    from .models import agent_st  # noqa: F401  智能出题草稿表
+    from .models import user_course  # noqa: F401  用户-课程关联（多课程数据地基）
+    from .models import tag  # noqa: F401  课程多标签（历史保留；产品语义已并入 KP）
+    Base.metadata.create_all(bind=engine)
+    _add_missing_columns(engine)
+

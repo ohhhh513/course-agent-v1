@@ -1,7 +1,7 @@
 """
 智能练习接口：/practice/*
 """
-import json, uuid
+import json, re, uuid
 from datetime import datetime
 from fastapi import APIRouter, Depends, Query, Body
 from sqlalchemy.orm import Session
@@ -16,6 +16,7 @@ from ..models.user import User
 from ..models.intervention import TeacherClassDashboard
 from ..models.course import Resource
 from ..middleware.auth import get_current_user
+from ..dependencies import get_current_course_id
 from ..schemas.common import ok, fail, list_response
 from ..utils import loads, fmt_dt
 from sqlalchemy import func
@@ -23,7 +24,7 @@ from sqlalchemy import func
 router = APIRouter(prefix="/api/v1/practice", tags=["智能练习"])
 
 
-def _expand_kp_ids(db: Session, kp_ids: list[str]) -> set[str]:
+def _expand_kp_ids(db: Session, kp_ids: list[str], course_id: str) -> set[str]:
     """把细粒度知识点扩展到同章节的其它知识点。
 
     课后题库（KHD）按“章代表知识点”挂载，细分知识点（如 KP02 时间复杂度）题量很少，
@@ -34,12 +35,16 @@ def _expand_kp_ids(db: Session, kp_ids: list[str]) -> set[str]:
         return set()
     kps = set(kp_ids)
     rows = db.query(GraphNode).filter(
-        GraphNode.graph_type == "knowledge", GraphNode.id.in_(kp_ids)
+        GraphNode.graph_type == "knowledge",
+        GraphNode.course_id == course_id,
+        GraphNode.id.in_(kp_ids),
     ).all()
     chapters = {r.chapter for r in rows if r.chapter}
     if chapters:
         extra = db.query(GraphNode.id).filter(
-            GraphNode.graph_type == "knowledge", GraphNode.chapter.in_(chapters)
+            GraphNode.graph_type == "knowledge",
+            GraphNode.course_id == course_id,
+            GraphNode.chapter.in_(chapters),
         ).all()
         kps |= {r[0] for r in extra}
     return kps
@@ -58,13 +63,16 @@ def _figure_of(q: Question):
 
 
 # ===== 工具函数：从真实答题记录计算题目统计 =====
-def _calc_question_stats(db: Session, q_id: str):
+def _calc_question_stats(db: Session, q_id: str, course_id: str = ""):
     """基于 answer_records 返回班级正确率、平均用时、错误数、总答题数"""
+    filters = [AnswerRecord.q_id == q_id]
+    if course_id:
+        filters.append(AnswerRecord.course_id == course_id)
     total, correct, avg_dur = db.query(
         func.count(AnswerRecord.id),
         func.sum(AnswerRecord.is_correct),
         func.avg(AnswerRecord.duration_seconds),
-    ).filter(AnswerRecord.q_id == q_id).first()
+    ).filter(*filters).first()
     total = total or 0
     correct = correct or 0
     class_rate = round(correct / total * 100, 1) if total else 0
@@ -104,12 +112,17 @@ _BASE_COUNTS = {"weak": 10, "order": 20, "random": 15, "wrong": 12}
 def practice_modes(
     db: Session = Depends(get_db),
     user=Depends(get_current_user),
+    course_id: str = Depends(get_current_course_id),
 ):
     # 题库总题数
-    total_qs = db.query(Question).filter(Question.status == "published").count()
+    total_qs = db.query(Question).filter(
+        Question.course_id == course_id,
+        Question.status == "published",
+    ).count()
     # 当前用户错题数（答题记录中 is_correct=0）
     wrong_count = db.query(AnswerRecord).filter(
         AnswerRecord.user_id == user.user_id,
+        AnswerRecord.course_id == course_id,
         AnswerRecord.is_correct == 0,
     ).count()
 
@@ -133,14 +146,18 @@ def create_session(
     req: CreateSessionReq,
     db: Session = Depends(get_db),
     user=Depends(get_current_user),
+    course_id: str = Depends(get_current_course_id),
 ):
     """创建练习会话（组卷）"""
-    q = db.query(Question).filter(Question.status == "published")
+    q = db.query(Question).filter(
+        Question.course_id == course_id,
+        Question.status == "published",
+    )
     if req.qIds:
         # 重做指定题目（错题本“重做本题”）
         q = q.filter(Question.q_id.in_(req.qIds))
     elif req.kpIds:
-        expanded = _expand_kp_ids(db, req.kpIds)
+        expanded = _expand_kp_ids(db, req.kpIds, course_id)
         if expanded:
             q = q.filter(Question.kp_id.in_(expanded))
         else:
@@ -149,10 +166,10 @@ def create_session(
         # 错题重练：只抽该用户错过的题
         wrong_q_ids = [r[0] for r in db.query(AnswerRecord.q_id).filter(
             AnswerRecord.user_id == user.user_id,
+            AnswerRecord.course_id == course_id,
             AnswerRecord.is_correct == 0,
         ).distinct().all()]
-        if wrong_q_ids:
-            q = q.filter(Question.q_id.in_(wrong_q_ids))
+        q = q.filter(Question.q_id.in_(wrong_q_ids))
     if req.difficulty:
         q = q.filter(Question.difficulty == req.difficulty)
     # 简单随机抽样（真实环境按 mode 智能组卷）
@@ -161,10 +178,19 @@ def create_session(
     count = min(req.count, len(all_qs))
     picked = random.sample(all_qs, count) if all_qs else []
 
+    # 同一模式只保留一个进行中「存档」：新开练习时，把旧的 running 会话标记为 abandoned
+    db.query(PracticeSession).filter(
+        PracticeSession.user_id == user.user_id,
+        PracticeSession.course_id == course_id,
+        PracticeSession.mode == req.mode,
+        PracticeSession.status == "running",
+    ).update({"status": "abandoned"})
+
     session_id = "PS" + uuid.uuid4().hex[:10]
     session = PracticeSession(
         session_id=session_id,
         user_id=user.user_id,
+        course_id=course_id,
         mode=req.mode,
         total=count,
         status="running",
@@ -192,18 +218,77 @@ def create_session(
     })
 
 
+@router.get("/sessions/current")
+def current_session(
+    mode: str = Query("order"),
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user),
+    course_id: str = Depends(get_current_course_id),
+):
+    """取当前进行中的练习存档（用于「继续挑战」）；无则返回 null"""
+    session = (
+        db.query(PracticeSession)
+        .filter(PracticeSession.user_id == user.user_id,
+                PracticeSession.course_id == course_id,
+                PracticeSession.mode == mode,
+                PracticeSession.status == "running")
+        .order_by(PracticeSession.created_at.desc())
+        .first()
+    )
+    if not session:
+        return ok(None)
+    q_ids = [x.get("qId") for x in (loads(session.questions_snapshot) or []) if x.get("qId")]
+    rows = {q.q_id: q for q in db.query(Question).filter(
+        Question.course_id == course_id,
+        Question.q_id.in_(q_ids),
+    ).all()}
+    answered = {r.q_id: r for r in db.query(AnswerRecord).filter(
+        AnswerRecord.session_id == session.session_id,
+        AnswerRecord.course_id == course_id,
+    ).all()}
+    questions = []
+    for qid in q_ids:
+        q = rows.get(qid)
+        if not q:
+            continue
+        ar = answered.get(qid)
+        questions.append({
+            "qId": q.q_id, "type": q.type, "difficulty": q.difficulty, "score": q.score,
+            "stem": q.stem, "options": loads(q.options) or [],
+            "kpPath": loads(q.kp_path) or [], "kpId": q.kp_id, "preKp": loads(q.pre_kp) or [],
+            "isKey": bool(q.is_key), "figure": _figure_of(q),
+            "answered": ar is not None,
+            "myAnswer": (ar.my_answer if ar else ""),
+            "correct": (bool(ar.is_correct) if ar else None),
+        })
+    answered_count = sum(1 for x in questions if x["answered"])
+    return ok({
+        "sessionId": session.session_id, "mode": session.mode,
+        "total": len(questions), "answered": answered_count,
+        "questions": questions,
+    })
+
+
 @router.get("/sessions/{session_id}/questions")
 def get_session_questions(
     session_id: str,
     db: Session = Depends(get_db),
     user=Depends(get_current_user),
+    course_id: str = Depends(get_current_course_id),
 ):
     """取题"""
-    session = db.query(PracticeSession).filter(PracticeSession.session_id == session_id).first()
+    session = db.query(PracticeSession).filter(
+        PracticeSession.session_id == session_id,
+        PracticeSession.user_id == user.user_id,
+        PracticeSession.course_id == course_id,
+    ).first()
     if not session:
         return fail("会话不存在", 404)
     q_ids = [x["qId"] for x in loads(session.questions_snapshot) or []]
-    rows = db.query(Question).filter(Question.q_id.in_(q_ids)).all()
+    rows = db.query(Question).filter(
+        Question.course_id == course_id,
+        Question.q_id.in_(q_ids),
+    ).all()
     items = [
         {
             "qId": q.q_id, "type": q.type, "difficulty": q.difficulty, "score": q.score,
@@ -221,14 +306,21 @@ def submit_answer(
     req: SubmitAnswerReq,
     db: Session = Depends(get_db),
     user=Depends(get_current_user),
+    course_id: str = Depends(get_current_course_id),
 ):
     """提交单题作答 —— 即时判分 + 解析"""
-    question = db.query(Question).filter(Question.q_id == req.qId).first()
+    question = db.query(Question).filter(
+        Question.q_id == req.qId,
+        Question.course_id == course_id,
+    ).first()
     if not question:
         return fail("题目不存在", 404)
 
     # 越权校验：作答必须属于当前登录用户的练习会话
-    session = db.query(PracticeSession).filter(PracticeSession.session_id == req.sessionId).first()
+    session = db.query(PracticeSession).filter(
+        PracticeSession.session_id == req.sessionId,
+        PracticeSession.course_id == course_id,
+    ).first()
     if not session:
         return fail("练习会话不存在", 404)
     if session.user_id != user.user_id:
@@ -237,9 +329,12 @@ def submit_answer(
     correct = req.answer == question.answer
 
     # 保存答题记录
+    # ⚠️ course_id 必须显式写入：模型里的默认值是早期演示课 "C2026DS001"，
+    # 而真实库里只有学生实际加入的课程，靠默认值会直接外键约束失败（提交答案整体 500）。
     record = AnswerRecord(
         session_id=req.sessionId,
         user_id=user.user_id,
+        course_id=session.course_id or question.course_id or course_id,
         q_id=req.qId,
         kp_id=question.kp_id,
         my_answer=req.answer,
@@ -250,16 +345,23 @@ def submit_answer(
     )
     db.add(record)
     # 更新会话 correct/wrong
-    session = db.query(PracticeSession).filter(PracticeSession.session_id == req.sessionId).first()
-    if session:
-        if correct:
-            session.correct = (session.correct or 0) + 1
-        else:
-            session.wrong = (session.wrong or 0) + 1
+    if correct:
+        session.correct = (session.correct or 0) + 1
+    else:
+        session.wrong = (session.wrong or 0) + 1
     db.commit()
 
+    # 每次产生新的真实作答后立即重算该生预警，教师端刷新即可看到最新红/黄状态；
+    # 检测失败不影响本次答题结果的正常返回。
+    try:
+        from ..services.alert_detector import detect_alerts
+        detect_alerts(db, [user])
+    except Exception as e:
+        db.rollback()   # 检测失败必须回滚，否则会话毒化导致后续判分/统计查询 500
+        print(f"[alert-detect] 作答后刷新跳过（{e}）")
+
     # 动态统计：该题真实班级正确率、平均用时
-    class_rate, avg_sec, _, _ = _calc_question_stats(db, question.q_id)
+    class_rate, avg_sec, _, _ = _calc_question_stats(db, question.q_id, course_id)
     delta = _mastery_delta(correct, question.difficulty, question.score)
 
     return ok({
@@ -271,7 +373,6 @@ def submit_answer(
         "classCorrectRate": class_rate,
         "avgSeconds": avg_sec,
         "masteryDelta": delta,
-        "errorType": None if correct else question.error_type,
     })
 
 
@@ -280,10 +381,14 @@ def finish_session(
     session_id: str,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
+    course_id: str = Depends(get_current_course_id),
 ):
     """结束练习，返回练习报告"""
     from ..models.graph import LearningPath
-    session = db.query(PracticeSession).filter(PracticeSession.session_id == session_id).first()
+    session = db.query(PracticeSession).filter(
+        PracticeSession.session_id == session_id,
+        PracticeSession.course_id == course_id,
+    ).first()
     if not session:
         return fail("会话不存在", 404)
     # 越权校验：只能结束本人练习会话
@@ -295,16 +400,34 @@ def finish_session(
         session.accuracy = round(session.correct / session.total * 100, 1)
 
     # 答题记录
-    records = db.query(AnswerRecord).filter(AnswerRecord.session_id == session_id).all()
+    records = db.query(AnswerRecord).filter(
+        AnswerRecord.session_id == session_id,
+        AnswerRecord.user_id == user.user_id,
+        AnswerRecord.course_id == course_id,
+    ).all()
 
-    # 汇总错误类型
-    err_map = {}
+    # 错题知识点分布（题库无「错误类型」字段，改用真实数据：错题按 kp_id 汇总）
+    wrong_by_kp = {}
     for r in records:
-        if r.error_type:
-            err_map[r.error_type] = err_map.get(r.error_type, 0) + 1
+        if not r.is_correct and r.kp_id:
+            wrong_by_kp[r.kp_id] = wrong_by_kp.get(r.kp_id, 0) + 1
+    wrong_kp_names = {}
+    if wrong_by_kp:
+        wrong_kp_names = dict(db.query(GraphNode.id, GraphNode.name).filter(
+            GraphNode.graph_type == "knowledge",
+            GraphNode.course_id == course_id,
+            GraphNode.id.in_(list(wrong_by_kp.keys())),
+        ).all())
+    wrong_by_kp_list = [
+        {"kpId": k, "name": wrong_kp_names.get(k, k), "count": c}
+        for k, c in sorted(wrong_by_kp.items(), key=lambda kv: -kv[1])
+    ]
 
     # 真实用时：所有 answer_records.duration_seconds 求和
     duration_seconds = sum((r.duration_seconds or 0) for r in records)
+    # 写回会话字段：此前该字段从未写入、恒为 0，导致学生端「学习时长」漏计练习用时、
+    # 练习动态卡片显示墙钟时长。这里用真实练习用时回填，供学生端统计复用（非伪造）。
+    session.duration_seconds = duration_seconds
     total_answered = len(records) or 1
     avg_seconds = round(duration_seconds / total_answered, 1)
 
@@ -314,6 +437,7 @@ def finish_session(
     if kp_ids_in_session:
         lps = db.query(LearningPath).filter(
             LearningPath.user_id == user.user_id,
+            LearningPath.course_id == course_id,
             LearningPath.kp_id.in_(kp_ids_in_session),
         ).all()
         lp_map = {lp.kp_id: lp for lp in lps}
@@ -324,7 +448,10 @@ def finish_session(
             delta = 0
             for r in records:
                 if r.kp_id == kp_id:
-                    q = db.query(Question).filter(Question.q_id == r.q_id).first()
+                    q = db.query(Question).filter(
+                        Question.q_id == r.q_id,
+                        Question.course_id == course_id,
+                    ).first()
                     if q:
                         delta += _mastery_delta(bool(r.is_correct), q.difficulty, q.score)
             before_m = max(0, min(100, cur_m - delta))
@@ -339,13 +466,17 @@ def finish_session(
     # 班级正确率：按本次练习涉及题目的真实 answer_records 计算
     q_ids = [r.q_id for r in records]
     qid_total = db.query(func.count(AnswerRecord.id), func.sum(AnswerRecord.is_correct)).filter(
+        AnswerRecord.course_id == course_id,
         AnswerRecord.q_id.in_(q_ids)
     ).first()
     total_ans, correct_ans = qid_total or (0, 0)
     class_acc = round((correct_ans or 0) / (total_ans or 1) * 100, 1)
 
     # 得分变化：按每题分值累加（答对+score，答错0）
-    q_score_map = {q.q_id: q.score for q in db.query(Question).filter(Question.q_id.in_(q_ids)).all()}
+    q_score_map = {q.q_id: q.score for q in db.query(Question).filter(
+        Question.course_id == course_id,
+        Question.q_id.in_(q_ids),
+    ).all()}
     score_gain = 0
     for r in records:
         if r.is_correct:
@@ -358,6 +489,7 @@ def finish_session(
         for qid in correct_qids:
             res = db.query(AnswerRecord).filter(
                 AnswerRecord.user_id == user.user_id,
+                AnswerRecord.course_id == course_id,
                 AnswerRecord.q_id == qid,
                 AnswerRecord.is_correct == 0,
             ).update({"mastered": True})
@@ -376,7 +508,7 @@ def finish_session(
         "classAccuracy": class_acc,
         "scoreGain": round(score_gain, 1),
         "kpChanges": kp_changes,
-        "errorTypes": [{"type": t, "count": c} for t, c in err_map.items()],
+        "wrongByKp": wrong_by_kp_list,
         "masteredCount": mastered_count,
         "nextSuggestion": "建议先回顾错题对应的知识点，再进行薄弱点强化。",
     })
@@ -385,24 +517,26 @@ def finish_session(
 @router.get("/wrong-book")
 def wrong_book(
     kpId: str = Query(None),
-    errorType: str = Query("all"),
+    chapter: str = Query(None),
     mastered: str = Query(None),   # 'true' / 'false'
     page: int = Query(1),
     size: int = Query(20),
     db: Session = Depends(get_db),
     user=Depends(get_current_user),
+    course_id: str = Depends(get_current_course_id),
 ):
-    """错题本"""
+    """错题本（按题目聚合 + 按「章节 → 知识点」归纳统计）
+
+    返回 `groups`：当前分类（待攻克/已掌握/全部）下每个章节的错题数与章节内各知识点错题数，
+    供前端做「按章节知识点归纳」筛选；`kpId` / `chapter` 只影响列表本身，
+    不影响 groups（这样选中某个知识点时章节导航不会跳变）。
+    """
     # 从答题记录中取错题
-    q = db.query(AnswerRecord).filter(
+    records = db.query(AnswerRecord).filter(
         AnswerRecord.user_id == user.user_id,
+        AnswerRecord.course_id == course_id,
         AnswerRecord.is_correct == 0,
-    )
-    if kpId:
-        q = q.filter(AnswerRecord.kp_id == kpId)
-    if errorType and errorType != "all":
-        q = q.filter(AnswerRecord.error_type == errorType)
-    records = q.order_by(AnswerRecord.created_at.desc()).all()
+    ).order_by(AnswerRecord.created_at.desc()).all()
 
     # 按题目聚合；records 已按时间倒序，首条即最近一次作答
     wrong_map = {}
@@ -412,7 +546,7 @@ def wrong_book(
                 "wrongCount": 0, "lastTime": r.created_at,
                 # 最近一次错题的状态决定该题归属“待攻克/已掌握”
                 "mastered": bool(r.mastered),
-                "myAnswer": r.my_answer, "errorType": r.error_type,
+                "myAnswer": r.my_answer,
             }
         wrong_map[r.q_id]["wrongCount"] += 1
         if r.created_at > wrong_map[r.q_id]["lastTime"]:
@@ -423,30 +557,67 @@ def wrong_book(
     if mastered in ("true", "false"):
         filter_flag = mastered == "true"
 
+    # 知识点元信息：名称 + 章节（图谱为准，题库 chapter 兜底，最后兜到 kp_id）
+    kp_meta = {
+        n.id: {"name": n.name, "chapter": n.chapter or "未分章"}
+        for n in db.query(GraphNode).filter(
+            GraphNode.graph_type == "knowledge", GraphNode.course_id == course_id,
+        ).all()
+    }
+
+    items = []
     if wrong_map:
-        q_ids = list(wrong_map.keys())
-        questions = db.query(Question).filter(Question.q_id.in_(q_ids)).all()
-        items = []
+        questions = db.query(Question).filter(
+            Question.course_id == course_id,
+            Question.q_id.in_(list(wrong_map.keys())),
+        ).all()
         for q in questions:
             w = wrong_map[q.q_id]
             if filter_flag is not None and w["mastered"] != filter_flag:
                 continue
+            meta = kp_meta.get(q.kp_id) or {}
             items.append({
                 "qId": q.q_id, "stem": q.stem, "myAnswer": w["myAnswer"],
                 "answer": q.answer,
                 "wrongCount": w["wrongCount"],
-                "errorType": w["errorType"],
-                "kp": q.kp_id, "kpId": q.kp_id,
+                "kp": meta.get("name") or q.kp_id or "未标注",
+                "kpId": q.kp_id,
+                "kpName": meta.get("name") or q.kp_id or "未标注",
+                "chapter": meta.get("chapter") or q.chapter or "未分章",
                 "difficulty": q.difficulty,
                 "lastTime": fmt_dt(w["lastTime"], "%m-%d %H:%M"),
                 "mastered": w["mastered"],
             })
-    else:
-        items = []
+
+    # ---- 按章节 → 知识点归纳（章按「第N章」排序，知识点按错题数倒序）----
+    def _ch_order(ch: str):
+        m = re.search(r"第\s*(\d+)\s*[章讲]", ch or "")
+        return (0, int(m.group(1)), ch or "") if m else (1, 10**9, ch or "")
+
+    agg = {}
+    for it in items:
+        g = agg.setdefault(it["chapter"], {"chapter": it["chapter"], "total": 0, "kps": {}})
+        g["total"] += 1
+        k = g["kps"].setdefault(it["kpId"], {"kpId": it["kpId"], "name": it["kpName"], "count": 0})
+        k["count"] += 1
+    groups = []
+    for ch in sorted(agg.keys(), key=_ch_order):
+        g = agg[ch]
+        kps = sorted(g["kps"].values(), key=lambda x: (-x["count"], x["name"] or ""))
+        groups.append({"chapter": ch, "total": g["total"], "kpCount": len(kps), "kps": kps})
+
+    # 列表筛选：先按知识点，再按章节
+    if kpId:
+        items = [it for it in items if it["kpId"] == kpId]
+    if chapter:
+        items = [it for it in items if it["chapter"] == chapter]
 
     total = len(items)
     start = (page - 1) * size
-    return ok(list_response(items[start:start + size], total))
+    payload = list_response(items[start:start + size], total)
+    payload["groups"] = groups
+    payload["totalWrong"] = len(items)
+    return ok(payload)
 
 
 @router.get("/wrong-book/{q_id}/detail")
@@ -454,12 +625,16 @@ def wrong_detail(
     q_id: str,
     db: Session = Depends(get_db),
     user=Depends(get_current_user),
+    course_id: str = Depends(get_current_course_id),
 ):
     """错题详情"""
-    q = db.query(Question).filter(Question.q_id == q_id).first()
+    q = db.query(Question).filter(
+        Question.q_id == q_id,
+        Question.course_id == course_id,
+    ).first()
     if not q:
         return fail("错题不存在或已移除", 404)
-    class_rate, avg_sec, wrong_count, total_count = _calc_question_stats(db, q.q_id)
+    class_rate, avg_sec, wrong_count, total_count = _calc_question_stats(db, q.q_id, course_id)
 
     # 推荐资源：按知识点所属章节匹配本地资源
     kp_path = loads(q.kp_path) or []
@@ -489,7 +664,6 @@ def wrong_detail(
         "figure": _figure_of(q),
         "classCorrectRate": class_rate, "avgSeconds": avg_sec,
         "wrongCount": wrong_count, "totalCount": total_count,
-        "errorType": q.error_type,
         "history": [], "similar": [], "resources": resources,
         "tips": "",
     })
@@ -500,10 +674,12 @@ def remove_wrong(
     q_id: str,
     db: Session = Depends(get_db),
     user=Depends(get_current_user),
+    course_id: str = Depends(get_current_course_id),
 ):
     """标记已掌握：把该题的错题记录置为 mastered=True（保留历史，不再移出）"""
     db.query(AnswerRecord).filter(
         AnswerRecord.user_id == user.user_id,
+        AnswerRecord.course_id == course_id,
         AnswerRecord.q_id == q_id,
         AnswerRecord.is_correct == 0,
     ).update({"mastered": True})

@@ -19,18 +19,15 @@ _PLAN_FIELDS = (
 
 
 def _collect_references(ctx: ToolContext) -> list[dict]:
+    course_id = (ctx.extra or {}).get("courseId") or ""
     refs: list[dict] = []
-    seen: set[int] = set()
+    seen: set[str] = set()
 
     def add(item: dict | None) -> None:
         if not isinstance(item, dict):
             return
-        raw_id = item.get("id") if item.get("id") is not None else item.get("question_id")
-        try:
-            qid = int(raw_id) if raw_id is not None else None
-        except (TypeError, ValueError):
-            qid = None
-        if qid is not None:
+        qid = str(item.get("q_id") or "").strip()
+        if qid:
             if qid in seen:
                 return
             seen.add(qid)
@@ -40,21 +37,19 @@ def _collect_references(ctx: ToolContext) -> list[dict]:
         add(item)
     extra = ctx.extra or {}
     for raw_id in extra.get("example_question_ids") or []:
-        try:
-            qid = int(raw_id)
-        except (TypeError, ValueError):
+        qid = str(raw_id or "").strip()
+        if not qid or qid in seen:
             continue
-        if qid in seen:
-            continue
-        loaded = load_one(qid, include_answer=True)
-        add(loaded)
+        add(load_one(course_id, qid, include_answer=True))
     for item in ctx.turn.get("similar") or []:
         add(item)
     if not refs:
         topic = ctx.turn.get("topic") or {}
         auto_hits = search_similar(
-            course_chapter=topic.get("course_chapter"),
-            section_prefix=topic.get("section_prefix"),
+            course_id=course_id,
+            chapter_id=topic.get("chapter_id"),
+            kp_ids=[str(x) for x in (topic.get("kp_ids") or []) if str(x).strip()]
+            or ([topic["kp_id"]] if topic.get("kp_id") else None),
             limit=3,
             include_answer=False,
         )
@@ -75,7 +70,7 @@ def _collect_references(ctx: ToolContext) -> list[dict]:
             "correct_answer_content": {"type": "string", "description": "正确结论（内容，不只是字母）"},
             "distractor_rationale": {"type": "string", "description": "三个错误选项分别对应哪类易错"},
             "change_note": {"type": "string", "description": "相对例题/题库对照题的较大变动说明"},
-            "kp_or_section": {"type": "string", "description": "目标知识点或王道小节"},
+            "kp_or_section": {"type": "string", "description": "目标知识点 id 或名称，如 KP014"},
         },
         "required": [
             "asked_target",

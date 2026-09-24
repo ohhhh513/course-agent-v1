@@ -12,6 +12,7 @@ class PracticeSession(Base):
 
     session_id = Column(String(32), primary_key=True)          # PS...
     user_id = Column(String(64), ForeignKey("users.user_id"), index=True)
+    course_id = Column(String(32), ForeignKey("courses.course_id"), default="C2026DS001", index=True)  # 课程隔离（旧库由 _migrate 补列）
     mode = Column(String(16), default="weak")                  # weak/order/random/wrong
     total = Column(Integer, default=0)
     correct = Column(Integer, default=0)
@@ -31,6 +32,7 @@ class AnswerRecord(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     session_id = Column(String(32), ForeignKey("practice_sessions.session_id"), index=True)
     user_id = Column(String(64), ForeignKey("users.user_id"), index=True)
+    course_id = Column(String(32), ForeignKey("courses.course_id"), default="C2026DS001", index=True)  # 课程隔离（旧库由 _migrate 补列）
     q_id = Column(String(32), ForeignKey("questions.q_id"), index=True)
     kp_id = Column(String(32), index=True)
 

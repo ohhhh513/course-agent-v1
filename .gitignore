@@ -1,6 +1,6 @@
 # ============================================================
-#  Course Agent · Git 忽略规则
-#  重点：1.7GB 课程资源、数据库、密钥一律不入仓库
+#  Course Agent · Git 忽略规则（精简上传版）
+#  目标：只提交代码与文档；不提交数据库、密钥、GB 级资源
 # ============================================================
 
 # ---------- Python ----------
@@ -26,48 +26,10 @@ ENV/
 !.env.example
 *.key
 *.pem
+
+# ---------- 编辑器 / 本地工具 ----------
 /.workbuddy
 /.cursor
-
-# ---------- 数据库 ----------
-backend/app/data/*.db
-backend/app/data/*.db-*
-backend/app/data/*.db.*      # 覆盖 .bak.* 与 before_*_20260906 等历史备份命名
-backend/app/data/*.sqlite
-backend/app/data/*.sqlite3
-# 基准快照需要入仓库，供团队恢复/同步（日常 db 改动不入仓库）
-!backend/app/data/course_agent.db.bak.final_delivery
-!backend/app/data/course_agent.db.bak.baseline
-# 教师个人出题草稿 sidecar（个人数据，不入仓库）
-backend/app/data/st/drafts/
-
-# ---------- 向量库 / AI 索引（由 P1 生成，不入仓库） ----------
-backend/app/data/vector/
-backend/app/data/st/*.db
-*.faiss
-*.index
-
-# ---------- 课程资源（1.7GB，禁止入仓库！） ----------
-assets/resources/data-structures-1-9/
-assets/resources/covers/
-assets/resources/uploads/*
-assets/resources/data-structures-1-9
-!assets/resources/uploads/.gitkeep
-# 课程资源实际存放目录（项目根，由 main.py 静态挂载到 /assets/resources）
-resources/
-
-# ---------- 日志 ----------
-*.log
-logs/
-
-# ---------- 测试产物 ----------
-.pytest_cache/
-backend/tests/results/
-backend/tests/*.png
-!backend/tests/e2e_smoke.js
-backend/data/.pytest-tmp-*/
-
-# ---------- 编辑器 / 系统 ----------
 .vscode/
 .idea/
 *.swp
@@ -76,6 +38,95 @@ backend/data/.pytest-tmp-*/
 Thumbs.db
 desktop.ini
 
-# ---------- Node（仅测试用） ----------
+# ---------- 数据库与备份（禁止入库） ----------
+# 注意：gitignore 只对「未被跟踪」的文件生效。
+# 下列规则早已存在，但 rag.db / course_agent.db.bak.* 等在本规则加入前就已
+# 提交进仓库，必须由仓库负责人手动执行一次 `git rm --cached <path>`
+# （见文末「已跟踪文件脱管清单」），否则它们会继续参与每次提交。
+*.db
+*.db-*
+*.db.*
+*.sqlite
+*.sqlite3
+*.db.bak
+*.db.bak.*
+*.bak
+*.backup
+*.tmp
+backend/app/data/vector/
+backend/app/data/st/uploads/
+backend/.tmp_cid
+
+# 资源清单快照：一次性迁移产物，无任何运行时代码引用（可随时重建）
+backend/app/data/resource_registry_snapshot.json
+
+# 向量库
+*.faiss
+*.index
+
+# 垃圾临时文件
+111.txt
+**/111.txt
+
+# ---------- 课程资源（约 10GB，禁止入仓库） ----------
+# 用 resources/* 而非 resources/，否则 .gitkeep 会被一并忽略
+resources/*
+!resources/.gitkeep
+
+# ---------- 日志 / 测试产物 ----------
+*.log
+logs/
+.pytest_cache/
+backend/tests/results/
+backend/tests/*.png
+backend/data/
+**/.pytest-tmp-*/
+# pytest 默认临时根（同名时会被反复复用，且含各测试的 rag.db/main.db 副产物）
+**/pytest-of-*/
+**/pytest-*/
+
+# ---------- Node（仅本地测试用） ----------
 node_modules/
 package-lock.json
+
+# ---------- 调试页 / 旧维护脚本 / 本地 main 备份（不上传） ----------
+graph_editor_design_*.html
+graph_editor_preview.html
+backend/app/main.py.bak
+backend/app/main.py.backup
+backend/rebuild_clean_db.py
+backend/restore_resources_from_snapshot.py
+backend/migrate_resource_paths.py
+backend/generate_covers.py
+backend/import_st_bank.py
+backend/regression_test.py
+backend/regression_multicourse.py
+backend/e2e_full_flow.py
+backend/e2e_catalog_flow.py
+backend/test_tag_gapfill.py
+
+# ============================================================
+#  已跟踪文件脱管清单（gitignore 管不到「已入库」的文件）
+# ------------------------------------------------------------
+#  下列文件在 .gitignore 规则生效前就已被提交，会继续参与每次提交，
+#  导致团队成员 git pull 时本地 rag.db 被覆盖、切片数据互相冲掉。
+#  请由仓库负责人执行一次（只需一次，之后 gitignore 即生效）：
+#
+#    git rm -r --cached backend/app/data/st/rag.db
+#    git rm -r --cached backend/data
+#    git rm --cached backend/app/data/course_agent.db.bak.baseline
+#    git rm --cached backend/app/data/course_agent.db.bak.final_delivery
+#    git rm --cached backend/app/data/course_agent.db.before_path_unify_20260911
+#    git rm --cached backend/app/data/course_agent.db.before_resource_url_fix_20260906
+#    git rm --cached backend/app/data/course_agent.db.before_restore_20260906
+#    git rm --cached backend/app/data/course_agent.db.before_url_unify_20260911
+#    git rm --cached backend/app/data/resource_registry_snapshot.json
+#
+#  校验：git ls-files | grep -E "\.db|pytest-tmp|_snapshot\.json"  应当无输出。
+#
+#  注意：请保留这两个（它们是种子数据，代码会读取，删了别人跑不起来）：
+#    backend/app/data/st/st_bank/after_class.json
+#    backend/app/data/st/st_bank/ai_samples.json
+#  rag.db 不入库后，团队成员各自用下面命令在本地重建：
+#    cd backend && python run_st_ingest.py <course_id>
+# ============================================================

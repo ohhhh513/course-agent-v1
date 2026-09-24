@@ -1,0 +1,637 @@
+{
+  "baseUrl": "http://127.0.0.1:8000",
+  "teacher": {
+    "username": "teacher7",
+    "password": "123456"
+  },
+  "course": {
+    "name": "数据结构与算法6",
+    "term": "2026 秋",
+    "useCourseId": null
+  },
+  "chapters": [
+    {
+      "name": "第1章 绪论",
+      "kps": [
+        "数据结构概述",
+        "算法与算法评价"
+      ]
+    },
+    {
+      "name": "第2章 线性表",
+      "kps": [
+        "线性表",
+        "顺序表",
+        "链表"
+      ]
+    },
+    {
+      "name": "第3章 栈和队列",
+      "kps": [
+        "栈",
+        "队列",
+        "栈与队列的应用"
+      ]
+    },
+    {
+      "name": "第4章 串",
+      "kps": [
+        "串",
+        "串的模式匹配"
+      ]
+    },
+    {
+      "name": "第5章 数组和广义表",
+      "kps": [
+        "多维数组与矩阵",
+        "广义表"
+      ]
+    },
+    {
+      "name": "第6章 树和二叉树",
+      "kps": [
+        "树与二叉树",
+        "二叉树遍历",
+        "树的应用"
+      ]
+    },
+    {
+      "name": "第7章 图",
+      "kps": [
+        "图的存储与遍历",
+        "最短路径与生成树",
+        "拓扑与关键路径"
+      ]
+    },
+    {
+      "name": "第8章 查找",
+      "kps": [
+        "查找",
+        "树形查找",
+        "哈希表"
+      ]
+    },
+    {
+      "name": "第9章 排序",
+      "kps": [
+        "排序算法概述",
+        "交换排序",
+        "插入排序",
+        "选择排序",
+        "归并排序"
+      ]
+    }
+  ],
+  "resources": [
+    {
+      "file": "{textbooksRoot}/DOC_Ch01_数据结构第1章_绪论.pdf",
+      "chapter": "第1章 绪论",
+      "kps": [
+        "数据结构概述",
+        "算法与算法评价"
+      ],
+      "title": "第1章 绪论（教材）"
+    },
+    {
+      "file": "{slidesRoot}/PPT_Ch01_绪论.pptx",
+      "chapter": "第1章 绪论",
+      "kps": [
+        "数据结构概述"
+      ],
+      "title": "第1章 绪论（课件）"
+    },
+    {
+      "file": "{slidesRoot}/PPT_Ch01_算法与复杂度.pptx",
+      "chapter": "第1章 绪论",
+      "kps": [
+        "算法与算法评价"
+      ],
+      "title": "算法与复杂度（课件）"
+    },
+    {
+      "file": "{videosRoot}/VID_Ch01_为什么要学数据结构.mp4",
+      "chapter": "第1章 绪论",
+      "kps": [
+        "数据结构概述"
+      ],
+      "title": "为什么要学数据结构"
+    },
+    {
+      "file": "{videosRoot}/VID_Ch01_算法复杂度渐进分析.mp4",
+      "chapter": "第1章 绪论",
+      "kps": [
+        "算法与算法评价"
+      ],
+      "title": "算法复杂度渐进分析"
+    },
+    {
+      "file": "{textbooksRoot}/DOC_Ch02_数据结构第2章_线性表.pdf",
+      "chapter": "第2章 线性表",
+      "kps": [
+        "线性表",
+        "顺序表",
+        "链表"
+      ],
+      "title": "第2章 线性表（教材）"
+    },
+    {
+      "file": "{slidesRoot}/PPT_Ch02_线性表定义与顺序表.pptx",
+      "chapter": "第2章 线性表",
+      "kps": [
+        "线性表",
+        "顺序表"
+      ],
+      "title": "线性表定义与顺序表（课件）"
+    },
+    {
+      "file": "{slidesRoot}/PPT_Ch02_链式存储_单链表.pptx",
+      "chapter": "第2章 线性表",
+      "kps": [
+        "链表"
+      ],
+      "title": "链式存储 · 单链表（课件）"
+    },
+    {
+      "file": "{slidesRoot}/PPT_Ch02_双链表循环链表.pptx",
+      "chapter": "第2章 线性表",
+      "kps": [
+        "链表"
+      ],
+      "title": "双链表与循环链表（课件）"
+    },
+    {
+      "file": "{slidesRoot}/PPT_Ch02_线性表应用.pptx",
+      "chapter": "第2章 线性表",
+      "kps": [
+        "线性表"
+      ],
+      "title": "线性表应用（课件）"
+    },
+    {
+      "file": "{videosRoot}/VID_Ch02_顺序表插入删除演示.mp4",
+      "chapter": "第2章 线性表",
+      "kps": [
+        "顺序表"
+      ],
+      "title": "顺序表插入删除演示"
+    },
+    {
+      "file": "{videosRoot}/VID_Ch02_顺序表VS链表如何选择.mp4",
+      "chapter": "第2章 线性表",
+      "kps": [
+        "顺序表",
+        "链表"
+      ],
+      "title": "顺序表 VS 链表如何选择"
+    },
+    {
+      "file": "{videosRoot}/VID_Ch02_单链表反转.mp4",
+      "chapter": "第2章 线性表",
+      "kps": [
+        "链表"
+      ],
+      "title": "单链表反转"
+    },
+    {
+      "file": "{videosRoot}/VID_Ch02_单链表头插法与尾插法.mp4",
+      "chapter": "第2章 线性表",
+      "kps": [
+        "链表"
+      ],
+      "title": "单链表头插法与尾插法"
+    },
+    {
+      "file": "{textbooksRoot}/DOC_Ch03_数据结构第3章_栈和队列.pdf",
+      "chapter": "第3章 栈和队列",
+      "kps": [
+        "栈",
+        "队列",
+        "栈与队列的应用"
+      ],
+      "title": "第3章 栈和队列（教材）"
+    },
+    {
+      "file": "{slidesRoot}/PPT_Ch03_栈的定义与实现.pptx",
+      "chapter": "第3章 栈和队列",
+      "kps": [
+        "栈"
+      ],
+      "title": "栈的定义与实现（课件）"
+    },
+    {
+      "file": "{slidesRoot}/PPT_Ch03_栈的应用.pptx",
+      "chapter": "第3章 栈和队列",
+      "kps": [
+        "栈与队列的应用"
+      ],
+      "title": "栈的应用（课件）"
+    },
+    {
+      "file": "{slidesRoot}/PPT_Ch03_队列.pptx",
+      "chapter": "第3章 栈和队列",
+      "kps": [
+        "队列"
+      ],
+      "title": "队列（课件）"
+    },
+    {
+      "file": "{videosRoot}/VID_Ch03_递归与栈帧.mp4",
+      "chapter": "第3章 栈和队列",
+      "kps": [
+        "栈",
+        "栈与队列的应用"
+      ],
+      "title": "递归与栈帧"
+    },
+    {
+      "file": "{videosRoot}/VID_Ch03_表达式求值_后缀表达式.mp4",
+      "chapter": "第3章 栈和队列",
+      "kps": [
+        "栈与队列的应用"
+      ],
+      "title": "表达式求值（后缀表达式）"
+    },
+    {
+      "file": "{videosRoot}/VID_Ch03_循环队列判空判满.mp4",
+      "chapter": "第3章 栈和队列",
+      "kps": [
+        "队列"
+      ],
+      "title": "循环队列判空判满"
+    },
+    {
+      "file": "{textbooksRoot}/DOC_Ch04_数据结构第4章_串.pdf",
+      "chapter": "第4章 串",
+      "kps": [
+        "串",
+        "串的模式匹配"
+      ],
+      "title": "第4章 串（教材）"
+    },
+    {
+      "file": "{slidesRoot}/PPT_Ch04_串与模式匹配.pptx",
+      "chapter": "第4章 串",
+      "kps": [
+        "串",
+        "串的模式匹配"
+      ],
+      "title": "串与模式匹配（课件）"
+    },
+    {
+      "file": "{videosRoot}/VID_Ch04_BF与KMP对比.mp4",
+      "chapter": "第4章 串",
+      "kps": [
+        "串的模式匹配"
+      ],
+      "title": "BF 与 KMP 对比"
+    },
+    {
+      "file": "{videosRoot}/VID_Ch04_KMP算法next数组推导.mp4",
+      "chapter": "第4章 串",
+      "kps": [
+        "串的模式匹配"
+      ],
+      "title": "KMP 算法 next 数组推导"
+    },
+    {
+      "file": "{textbooksRoot}/DOC_Ch05_数据结构第5章_数组和广义表.pdf",
+      "chapter": "第5章 数组和广义表",
+      "kps": [
+        "多维数组与矩阵",
+        "广义表"
+      ],
+      "title": "第5章 数组和广义表（教材）"
+    },
+    {
+      "file": "{slidesRoot}/PPT_Ch05_数组与矩阵压缩.pptx",
+      "chapter": "第5章 数组和广义表",
+      "kps": [
+        "多维数组与矩阵"
+      ],
+      "title": "数组与矩阵压缩（课件）"
+    },
+    {
+      "file": "{slidesRoot}/PPT_Ch05_广义表.pptx",
+      "chapter": "第5章 数组和广义表",
+      "kps": [
+        "广义表"
+      ],
+      "title": "广义表（课件）"
+    },
+    {
+      "file": "{videosRoot}/VID_Ch05_稀疏矩阵转置.mp4",
+      "chapter": "第5章 数组和广义表",
+      "kps": [
+        "多维数组与矩阵"
+      ],
+      "title": "稀疏矩阵转置"
+    },
+    {
+      "file": "{videosRoot}/VID_Ch05_广义表头尾链表存储.mp4",
+      "chapter": "第5章 数组和广义表",
+      "kps": [
+        "广义表"
+      ],
+      "title": "广义表头尾链表存储"
+    },
+    {
+      "file": "{textbooksRoot}/DOC_Ch06_数据结构第6章_树和二叉树.pdf",
+      "chapter": "第6章 树和二叉树",
+      "kps": [
+        "树与二叉树",
+        "二叉树遍历",
+        "树的应用"
+      ],
+      "title": "第6章 树和二叉树（教材）"
+    },
+    {
+      "file": "{slidesRoot}/PPT_Ch06_树与二叉树基本概念.pptx",
+      "chapter": "第6章 树和二叉树",
+      "kps": [
+        "树与二叉树"
+      ],
+      "title": "树与二叉树基本概念（课件）"
+    },
+    {
+      "file": "{slidesRoot}/PPT_Ch06_二叉树遍历.pptx",
+      "chapter": "第6章 树和二叉树",
+      "kps": [
+        "二叉树遍历"
+      ],
+      "title": "二叉树遍历（课件）"
+    },
+    {
+      "file": "{slidesRoot}/PPT_Ch06_树森林与二叉树转换.pptx",
+      "chapter": "第6章 树和二叉树",
+      "kps": [
+        "树与二叉树"
+      ],
+      "title": "树森林与二叉树转换（课件）"
+    },
+    {
+      "file": "{slidesRoot}/PPT_Ch06_线索二叉树.pptx",
+      "chapter": "第6章 树和二叉树",
+      "kps": [
+        "二叉树遍历"
+      ],
+      "title": "线索二叉树（课件）"
+    },
+    {
+      "file": "{slidesRoot}/PPT_Ch06_哈夫曼树与编码.pptx",
+      "chapter": "第6章 树和二叉树",
+      "kps": [
+        "树的应用"
+      ],
+      "title": "哈夫曼树与编码（课件）"
+    },
+    {
+      "file": "{videosRoot}/VID_Ch06_二叉树递归遍历.mp4",
+      "chapter": "第6章 树和二叉树",
+      "kps": [
+        "二叉树遍历"
+      ],
+      "title": "二叉树递归遍历"
+    },
+    {
+      "file": "{videosRoot}/VID_Ch06_由遍历序列重建二叉树.mp4",
+      "chapter": "第6章 树和二叉树",
+      "kps": [
+        "二叉树遍历"
+      ],
+      "title": "由遍历序列重建二叉树"
+    },
+    {
+      "file": "{videosRoot}/VID_Ch06_树与二叉树转换.mp4",
+      "chapter": "第6章 树和二叉树",
+      "kps": [
+        "树与二叉树"
+      ],
+      "title": "树与二叉树转换"
+    },
+    {
+      "file": "{videosRoot}/VID_Ch06_哈夫曼编码.mp4",
+      "chapter": "第6章 树和二叉树",
+      "kps": [
+        "树的应用"
+      ],
+      "title": "哈夫曼编码"
+    },
+    {
+      "file": "{textbooksRoot}/DOC_Ch07_数据结构第7章_图.pdf",
+      "chapter": "第7章 图",
+      "kps": [
+        "图的存储与遍历",
+        "最短路径与生成树",
+        "拓扑与关键路径"
+      ],
+      "title": "第7章 图（教材）"
+    },
+    {
+      "file": "{slidesRoot}/PPT_Ch07_图的存储与遍历.pptx",
+      "chapter": "第7章 图",
+      "kps": [
+        "图的存储与遍历"
+      ],
+      "title": "图的存储与遍历（课件）"
+    },
+    {
+      "file": "{slidesRoot}/PPT_Ch07_最小生成树.pptx",
+      "chapter": "第7章 图",
+      "kps": [
+        "最短路径与生成树"
+      ],
+      "title": "最小生成树（课件）"
+    },
+    {
+      "file": "{slidesRoot}/PPT_Ch07_最短路径.pptx",
+      "chapter": "第7章 图",
+      "kps": [
+        "最短路径与生成树"
+      ],
+      "title": "最短路径（课件）"
+    },
+    {
+      "file": "{slidesRoot}/PPT_Ch07_拓扑排序与关键路径.pptx",
+      "chapter": "第7章 图",
+      "kps": [
+        "拓扑与关键路径"
+      ],
+      "title": "拓扑排序与关键路径（课件）"
+    },
+    {
+      "file": "{videosRoot}/VID_Ch07_DFS与BFS动画.mp4",
+      "chapter": "第7章 图",
+      "kps": [
+        "图的存储与遍历"
+      ],
+      "title": "DFS 与 BFS 动画"
+    },
+    {
+      "file": "{videosRoot}/VID_Ch07_Dijkstra算法动画.mp4",
+      "chapter": "第7章 图",
+      "kps": [
+        "最短路径与生成树"
+      ],
+      "title": "Dijkstra 算法动画"
+    },
+    {
+      "file": "{videosRoot}/VID_Ch07_Prim与Kruskal对比.mp4",
+      "chapter": "第7章 图",
+      "kps": [
+        "最短路径与生成树"
+      ],
+      "title": "Prim 与 Kruskal 对比"
+    },
+    {
+      "file": "{videosRoot}/VID_Ch07_拓扑排序与关键路径.mp4",
+      "chapter": "第7章 图",
+      "kps": [
+        "拓扑与关键路径"
+      ],
+      "title": "拓扑排序与关键路径"
+    },
+    {
+      "file": "{textbooksRoot}/DOC_Ch08_数据结构第8章_查找.pdf",
+      "chapter": "第8章 查找",
+      "kps": [
+        "查找",
+        "树形查找",
+        "哈希表"
+      ],
+      "title": "第8章 查找（教材）"
+    },
+    {
+      "file": "{slidesRoot}/PPT_Ch08_静态与动态查找.pptx",
+      "chapter": "第8章 查找",
+      "kps": [
+        "查找"
+      ],
+      "title": "静态与动态查找（课件）"
+    },
+    {
+      "file": "{slidesRoot}/PPT_Ch08_B树与B+树.pptx",
+      "chapter": "第8章 查找",
+      "kps": [
+        "树形查找"
+      ],
+      "title": "B 树与 B+ 树（课件）"
+    },
+    {
+      "file": "{slidesRoot}/PPT_Ch08_哈希表.pptx",
+      "chapter": "第8章 查找",
+      "kps": [
+        "哈希表"
+      ],
+      "title": "哈希表（课件）"
+    },
+    {
+      "file": "{videosRoot}/VID_Ch08_折半查找.mp4",
+      "chapter": "第8章 查找",
+      "kps": [
+        "查找"
+      ],
+      "title": "折半查找"
+    },
+    {
+      "file": "{videosRoot}/VID_Ch08_AVL树旋转调整.mp4",
+      "chapter": "第8章 查找",
+      "kps": [
+        "树形查找"
+      ],
+      "title": "AVL 树旋转调整"
+    },
+    {
+      "file": "{videosRoot}/VID_Ch08_B树插入删除.mp4",
+      "chapter": "第8章 查找",
+      "kps": [
+        "树形查找"
+      ],
+      "title": "B 树插入删除"
+    },
+    {
+      "file": "{videosRoot}/VID_Ch08_哈希冲突解决_开放定址与链地址.mp4",
+      "chapter": "第8章 查找",
+      "kps": [
+        "哈希表"
+      ],
+      "title": "哈希冲突解决（开放定址与链地址）"
+    },
+    {
+      "file": "{textbooksRoot}/DOC_Ch09_数据结构第9章_排序.pdf",
+      "chapter": "第9章 排序",
+      "kps": [
+        "排序算法概述",
+        "交换排序",
+        "插入排序",
+        "选择排序",
+        "归并排序"
+      ],
+      "title": "第9章 排序（教材）"
+    },
+    {
+      "file": "{slidesRoot}/PPT_Ch09_基数排序与排序比较.pptx",
+      "chapter": "第9章 排序",
+      "kps": [
+        "排序算法概述"
+      ],
+      "title": "基数排序与排序比较（课件）"
+    },
+    {
+      "file": "{slidesRoot}/PPT_Ch09_插入与交换排序.pptx",
+      "chapter": "第9章 排序",
+      "kps": [
+        "插入排序",
+        "交换排序"
+      ],
+      "title": "插入与交换排序（课件）"
+    },
+    {
+      "file": "{slidesRoot}/PPT_Ch09_选择与归并排序.pptx",
+      "chapter": "第9章 排序",
+      "kps": [
+        "选择排序",
+        "归并排序"
+      ],
+      "title": "选择与归并排序（课件）"
+    },
+    {
+      "file": "{videosRoot}/VID_Ch09_八大排序对比总结.mp4",
+      "chapter": "第9章 排序",
+      "kps": [
+        "排序算法概述"
+      ],
+      "title": "八大排序对比总结"
+    },
+    {
+      "file": "{videosRoot}/VID_Ch09_快速排序partition过程.mp4",
+      "chapter": "第9章 排序",
+      "kps": [
+        "交换排序"
+      ],
+      "title": "快速排序 partition 过程"
+    },
+    {
+      "file": "{videosRoot}/VID_Ch09_堆排序建堆与调整.mp4",
+      "chapter": "第9章 排序",
+      "kps": [
+        "选择排序"
+      ],
+      "title": "堆排序建堆与调整"
+    },
+    {
+      "file": "{videosRoot}/VID_Ch09_归并排序.mp4",
+      "chapter": "第9章 排序",
+      "kps": [
+        "归并排序"
+      ],
+      "title": "归并排序"
+    }
+  ],
+  "graph": {
+    "edges": []
+  },
+  "questionsFile": null,
+  "textbooksRoot": "D:\\桌面\\stuco\\course-agent-v1\\resources\\data-structures-1-9\\textbooks",
+  "videosRoot": "D:\\桌面\\stuco\\course-agent-v1\\resources\\data-structures-1-9\\videos",
+  "slidesRoot": "D:\\桌面\\stuco\\course-agent-v1\\resources\\data-structures-1-9\\slides"
+}

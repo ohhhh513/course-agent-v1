@@ -10,8 +10,8 @@ from app.agent_st.agent.config import get_settings
 from app.agent_st.agent.context import ToolContext
 from app.agent_st.agent.loader import build_system_prompt, load_flow, load_persona
 from app.agent_st.agent.registry import execute, openai_tools
-from app.agent_st.agent.store import AgentStore, allocate_question_id
-from app.agent_st.rag.bank import get_question, search_similar
+from app.agent_st.agent.store import AgentStore
+from app.agent_st.rag.bank import get_question, next_ai_q_id, search_similar
 from app.agent_st.rag.ingest import ensure_bank_indexed
 from app.agent_st.rag.topic import looks_like_course_question
 from app.agent_st.rag.validate import validate_question
@@ -29,10 +29,11 @@ def _citations_from_turn(turn: dict) -> list[dict]:
         out.append(
             {
                 "chunk_id": hit.get("chunk_id"),
-                "section": hit.get("section"),
+                "chapter_id": hit.get("chapter_id"),
+                "kp_id": hit.get("kp_id"),
                 "source_type": hit.get("source_type"),
                 "source_id": hit.get("source_id"),
-                "question_id": hit.get("question_id"),
+                "q_id": hit.get("q_id"),
                 "snippet": hit.get("text"),
                 "score": hit.get("score"),
             }
@@ -59,21 +60,22 @@ def _demo_explain(message: str, ctx: ToolContext) -> str:
     retrieval = ctx.turn.get("retrieval") or {}
     hits = retrieval.get("hits") or []
     topic = ctx.turn.get("topic") or {}
+    where = " ".join(filter(None, [topic.get("chapter_name") or "", topic.get("kp_name") or ""]))
     lines = [
         "【演示模式，未配置 LLM_API_KEY】",
         "",
-        f"结论：该问题对应 {topic.get('course_title') or '本课'} {topic.get('section') or ''}。",
+        f"结论：该问题对应 {topic.get('course_title') or '本课'} {where}。",
         "",
     ]
     if retrieval.get("empty") or not hits:
         lines.append("未检索到课程原文。")
         lines.append("【补充】以下内容基于课程常识，并非教材或题库原文，请以课堂材料为准。")
-        lines.append("请补充章节、题号或换一种问法，以便引用原文。")
+        lines.append("请补充章节、知识点或题号，或换一种问法，以便引用原文。")
         return "\n".join(lines)
     lines.insert(1, "以下讲解根据检索片段整理。")
     for hit in hits[:3]:
-        qid = hit.get("question_id")
-        cite = f"[题号 {qid}]" if qid else f"[小节 {hit.get('section')}]"
+        qid = hit.get("q_id")
+        cite = f"[题号 {qid}]" if qid else f"[知识点 {hit.get('kp_id') or '未标注'}]"
         lines.append(f"依据：{hit.get('text', '')[:220]} {cite}")
         lines.append("")
     lines.append("易错点：请以引用片段为准；若需课外说明请看【补充】并自行核对教材。")
@@ -81,6 +83,7 @@ def _demo_explain(message: str, ctx: ToolContext) -> str:
 
 
 def _demo_generate(message: str, ctx: ToolContext) -> str:
+    course_id = (ctx.extra or {}).get("courseId") or ""
     topic = ctx.turn.get("topic") or {}
     examples = [x for x in (ctx.turn.get("example_questions") or []) if isinstance(x, dict)]
     similar = ctx.turn.get("similar") or []
@@ -88,8 +91,10 @@ def _demo_generate(message: str, ctx: ToolContext) -> str:
     if src is None:
         if not similar:
             similar = search_similar(
-                course_chapter=topic.get("course_chapter"),
-                section_prefix=topic.get("section_prefix"),
+                course_id=course_id,
+                chapter_id=topic.get("chapter_id"),
+                kp_ids=[str(x) for x in (topic.get("kp_ids") or []) if str(x).strip()]
+                or ([topic["kp_id"]] if topic.get("kp_id") else None),
                 limit=1,
                 include_answer=True,
             )
@@ -97,22 +102,28 @@ def _demo_generate(message: str, ctx: ToolContext) -> str:
             return "未找到可复用的同章题目骨架。请指定章节、知识点或源题号。"
         src = similar[0]
     full = src
-    if src.get("id") is not None:
-        full = get_question(src["id"], include_answer=True) or src
+    if src.get("q_id"):
+        full = get_question(course_id, src["q_id"], include_answer=True) or src
     payload = {
-        "id": allocate_question_id(ctx.store),
-        "chapter": full.get("section") or src.get("chapter"),
+        "q_id": next_ai_q_id(course_id, reserved=ctx.store.reserved_q_ids()),
+        # 结构归属以「本轮定位到的知识点」为准（教师指定），而不是复制骨架题的；
+        # 只有定位不到时才退回骨架题的归属
+        "chapter_id": topic.get("chapter_id") or full.get("chapter_id") or "",
+        "kp_id": topic.get("kp_id") or full.get("kp_id") or "",
+        "kp_ids": [str(x) for x in (topic.get("kp_ids") or []) if str(x).strip()]
+        or ([topic["kp_id"]] if topic.get("kp_id") else [])
+        or ([full["kp_id"]] if full.get("kp_id") else []),
         "question": full.get("question") or src.get("question"),
-        "options": full.get("options") or src.get("options"),
+        "options": full.get("options") or src.get("options") or {},
         "answer": full.get("answer") or "A",
-        "analysis": "【演示模式】此草稿复制自原题骨架，仅更换了 id。配置 LLM_API_KEY 后将改写题面并重算答案。",
+        "analysis": "【演示模式】此草稿复制自原题骨架，仅更换了题号。配置 LLM_API_KEY 后将改写题面并重算答案。",
         "has_image": bool(full.get("has_image") or src.get("has_image")),
     }
     if full.get("graph") or src.get("graph"):
         payload["graph"] = full.get("graph") or src.get("graph")
     if full.get("options_graph") or src.get("options_graph"):
         payload["options_graph"] = full.get("options_graph") or src.get("options_graph")
-    check = validate_question(payload)
+    check = validate_question(payload, course_id=course_id)
     saved = ctx.store.save_draft(payload, batch_id=ctx.extra.get("batch_id") or "")
     saved["payload"] = payload  # demo 分支同样携带完整题面，供前端草稿卡渲染
     ctx.turn["drafts"] = [saved]
@@ -129,33 +140,34 @@ def _demo_turn(flow_id: str, message: str, ctx: ToolContext) -> Iterator[Event]:
     extra = ctx.extra or {}
     events, topic = _run_tool(
         "resolve_topic",
-        {"text": message, "chapter": extra.get("chapter"), "question_id": extra.get("question_id")},
+        {"text": message, "kp_id": extra.get("kpId"), "q_id": extra.get("q_id")},
         ctx,
     )
     yield from events
     example_ids = extra.get("example_question_ids") or []
-    if isinstance(topic, dict) and topic.get("question_id") and topic["question_id"] not in example_ids:
-        ev, _ = _run_tool("get_question", {"question_id": topic["question_id"]}, ctx)
+    topic_q = (topic or {}).get("q_id") if isinstance(topic, dict) else None
+    if topic_q and str(topic_q) not in [str(x) for x in example_ids]:
+        ev, _ = _run_tool("get_question", {"q_id": str(topic_q)}, ctx)
         yield from ev
     if flow_id == "generate_items":
         for qid in example_ids:
             ev, _ = _run_tool(
                 "get_question",
-                {"question_id": qid, "include_answer": True},
+                {"q_id": str(qid), "include_answer": True},
                 ctx,
             )
             yield from ev
 
     query = message
-    if isinstance(topic, dict) and topic.get("section"):
-        query = f"{topic.get('section')} {message}"
+    if isinstance(topic, dict) and topic.get("kp_name"):
+        query = f"{topic['kp_name']} {message}"
     ev, retrieval = _run_tool("retrieve_chunks", {"query": query}, ctx)
     yield from ev
 
     if flow_id == "generate_items":
         args = {
-            "course_chapter": (topic or {}).get("course_chapter") if isinstance(topic, dict) else None,
-            "section_prefix": (topic or {}).get("section_prefix") if isinstance(topic, dict) else None,
+            "chapter_id": (topic or {}).get("chapter_id") if isinstance(topic, dict) else None,
+            "kp_id": (topic or {}).get("kp_id") if isinstance(topic, dict) else None,
         }
         ev, _ = _run_tool("search_similar_questions", args, ctx)
         yield from ev
@@ -187,7 +199,7 @@ def _explain_out_of_scope(ctx: ToolContext, message: str) -> bool:
     topic = ctx.turn.get("topic") or {}
     if not topic.get("uncertain", True):
         return False
-    if looks_like_course_question(message):
+    if looks_like_course_question(message, course_id=(ctx.extra or {}).get("courseId") or ""):
         return False
     retrieval = ctx.turn.get("retrieval") or {}
     max_score = float(retrieval.get("max_score") or 0.0)
@@ -201,6 +213,7 @@ def run_turn(
     context: dict | None = None,
     store: AgentStore | None = None,
     user_id: str = "",
+    course_id: str = "",
     stream: bool = True,
 ) -> Iterator[Event]:
     """执行一轮对话，产出事件 dict 流。
@@ -209,8 +222,11 @@ def run_turn(
     live 模式下文本 delta 来自 LLM 的真实 token 流（stream=True，两段式：
     工具编排轮的过渡文本照常转发，最终回答轮逐 token 转发）；
     demo 模式回退为 chunk_text 假流式。
+
+    course_id 是本轮的数据隔离边界：写入侧进 chat_sessions/草稿，
+    读取侧经 context['courseId'] 传给 RAG 检索工具。缺失时检索一律返回空。
     """
-    ensure_bank_indexed()
+    ensure_bank_indexed(course_id=course_id or (context or {}).get("courseId") or None)
     persona = load_persona()
     flow_id = flow_id or persona.get("default_flow", "explain")
     if flow_id in {"qa", "tutoring"}:
@@ -222,14 +238,19 @@ def run_turn(
         yield {"type": "done"}
         return
 
-    store = store or AgentStore(user_id=user_id)
+    store = store or AgentStore(user_id=user_id, course_id=course_id)
     if user_id and not store.user_id:
         store.user_id = user_id
+    if course_id and not store.course_id:
+        store.course_id = course_id
     session_id = store.ensure_session(session_id, flow_id)
     yield {"type": "session", "session_id": session_id, "flow_id": flow_id}
 
     extra = dict(context or {})
     extra["message"] = message
+    # 检索工具统一从 extra['courseId'] 取课程，这里保证它一定被填上
+    if store.course_id:
+        extra.setdefault("courseId", store.course_id)
     store.add_message(session_id, "user", message)
     ctx = ToolContext(store=store, flow_id=flow_id, extra=extra, user_id=user_id or store.user_id)
 
@@ -249,7 +270,14 @@ def run_turn(
         return
 
     history = store.history(session_id, limit=12)
-    messages = [{"role": "system", "content": build_system_prompt(persona, flow, extra)}]
+    # 术语清单来自主库（换课程自动换），提示词里不写死任何课程知识点名称
+    from app.agent_st.rag import structure as _structure
+
+    catalog = _structure.kp_catalog_text(store.course_id) if store.course_id else ""
+    messages = [{
+        "role": "system",
+        "content": build_system_prompt(persona, flow, extra, course_catalog=catalog),
+    }]
     messages.extend(history)
     whitelist = flow.get("tools") or persona.get("tools") or []
     tools = openai_tools(flow_id, whitelist)

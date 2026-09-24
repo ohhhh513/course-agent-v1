@@ -11,16 +11,31 @@ window.API = (function () {
     mode: 'http',                 // 'mock' | 'http'
     baseURL: '/api/v1',
     token: 'Bearer <JWT>',
+    activeCourseId: '', // 当前课程上下文；空=未选课（不发 X-Course-Id，后端取用户第一门课或报错）
     latency: [120, 380]           // mock 模拟网络延迟区间(ms)
   };
 
-  /* 从 localStorage 恢复 token（页面刷新后保持登录） */
+  /* 从 localStorage 恢复 token 与当前课程（页面刷新后保持） */
   try {
     const s = JSON.parse(localStorage.getItem('ca_session') || 'null');
     if (s && s.token) {
       config.token = s.token.startsWith('Bearer ') ? s.token : ('Bearer ' + s.token);
     }
+    if (s && s.activeCourseId) config.activeCourseId = s.activeCourseId;
   } catch (e) {}
+
+  /**
+   * 切换当前课程上下文（多课程）。
+   * 只更新请求头来源并持久化；调用方负责在切换后刷新当前视图数据。
+   */
+  function setActiveCourse(courseId) {
+    config.activeCourseId = courseId || '';
+    try {
+      const s = JSON.parse(localStorage.getItem('ca_session') || 'null') || {};
+      s.activeCourseId = config.activeCourseId;
+      localStorage.setItem('ca_session', JSON.stringify(s));
+    } catch (e) {}
+  }
 
   /* ---------- 底层请求 ---------- */
   function delay() {
@@ -50,14 +65,29 @@ window.API = (function () {
         if (qs) url += '?' + qs;
       }
       const isFormData = payload instanceof FormData;
+      const headers = isFormData
+        ? { Authorization: config.token }
+        : { 'Content-Type': 'application/json', Authorization: config.token };
+      if (config.activeCourseId) headers['X-Course-Id'] = config.activeCourseId;
       return fetch(url, {
         method,
-        headers: isFormData ? { Authorization: config.token } : { 'Content-Type': 'application/json', Authorization: config.token },
+        headers,
         body: isGet ? undefined : (isFormData ? payload : JSON.stringify(payload || {}))
       })
-        .then(r => r.json())
+        .then(async r => {
+          let res;
+          try { res = await r.json(); } catch (e) { res = { code: r.status, message: r.statusText }; }
+          // FastAPI HTTPException 只有 detail，没有信封
+          if (!r.ok || (res && res.detail && res.code === undefined)) {
+            const msg = (res && (res.detail || res.message)) || ('HTTP ' + r.status);
+            const err = new Error(typeof msg === 'string' ? msg : '接口异常');
+            err.status = r.status;
+            throw err;
+          }
+          if (res.code !== 0) throw new Error(res.message || res.detail || '接口异常');
+          return res;
+        })
         .then(res => {
-          if (res.code !== 0) throw new Error(res.message || '接口异常');
           // 登录等接口返回 token，自动存进 config + localStorage
           if (res.data && res.data.token) {
             const bearer = res.data.token.startsWith('Bearer ') ? res.data.token : ('Bearer ' + res.data.token);
@@ -93,7 +123,10 @@ window.API = (function () {
       }
       return fetch(url, {
         method,
-        headers: { 'Content-Type': 'application/json', Authorization: config.token },
+        headers: Object.assign(
+          { 'Content-Type': 'application/json', Authorization: config.token },
+          config.activeCourseId ? { 'X-Course-Id': config.activeCourseId } : {}
+        ),
         body: isGet ? undefined : JSON.stringify(payload || {})
       }).then(async res => {
         const contentType = res.headers.get('content-type') || '';
@@ -141,7 +174,7 @@ window.API = (function () {
     let url = config.baseURL + path;
     return fetch(url, {
       method: method || 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: config.token },
+      headers: { 'Content-Type': 'application/json', Authorization: config.token, 'X-Course-Id': config.activeCourseId },
       body: JSON.stringify(payload || {})
     }).then(res => {
       if (!res.ok || !res.body) return res.json().then(r => { throw new Error(r.message || ('HTTP ' + res.status)); });
@@ -212,6 +245,17 @@ window.API = (function () {
   /* ======================================================================
      一、认证与公共
      ====================================================================== */
+  const admin = {
+    /** GET /admin/users  管理员列表账号 params: { role, keyword } */
+    listUsers: (p) => request('GET', '/admin/users', p),
+    /** POST /admin/users  创建教师/学生账号 */
+    createUser: (p) => request('POST', '/admin/users', p),
+    /** PUT /admin/users/{userId}  编辑账号（name/username/密码/班级/部门等，角色不可改） */
+    updateUser: (userId, p) => request('PUT', `/admin/users/${userId}`, p),
+    /** DELETE /admin/users/{userId}  删除账号（级联清理个人数据） */
+    deleteUser: (userId, p) => request('DELETE', `/admin/users/${userId}`, p || {}),
+  };
+
   const auth = {
     /** POST /auth/login  账号密码登录，返回 token 与用户信息（mock 模式校验本地账号表） */
     login: (p) => request('POST', '/auth/login', p, (q) => {
@@ -254,7 +298,7 @@ window.API = (function () {
     }),
 
     /** GET /course/{courseId}  获取课程基本信息 */
-    course: (p) => request('GET', '/course/' + (p && p.courseId || 'C2026DS001'), p, () => M().course)
+    course: (p) => request('GET', '/course/' + (p && p.courseId), p, () => M().course)
   };
 
   /* ======================================================================
@@ -267,9 +311,8 @@ window.API = (function () {
       return map[q.type || 'knowledge'];
     }),
 
-    /** GET /graph/kp/{kpId}  知识点详情（含前后置、资源、习题统计） */
-    kpDetail: (p) => request('GET', '/graph/kp/' + p.kpId, p, (q) =>
-      M().kpDetail[q.kpId] || M().kpDetail.KP52),
+    /** GET /graph/kp/{kpId}  知识点详情（含前后置、资源、习题统计、真实学情与课程均值） */
+    kpDetail: (p) => request('GET', '/graph/kp/' + p.kpId, p),
 
     /** GET /graph/path  基于知识图谱前后置关系生成的推荐学习路径 */
     learningPath: (p) => request('GET', '/graph/path', p, () => M().learningPath)
@@ -281,6 +324,13 @@ window.API = (function () {
   const stu = {
     /** GET /student/dashboard  学习驾驶舱聚合数据 */
     dashboard: (p) => request('GET', '/student/dashboard', p, () => M().studentDashboard),
+
+    /**
+     * GET /student/study-duration  当天累计学习时长
+     * 返回 { todaySeconds, todayMinutes, practiceSeconds, resourceSeconds }
+     * 供驾驶舱「今日累计学习时长」轻量轮询刷新（不触发预警重算）
+     */
+    studyDuration: () => request('GET', '/student/study-duration'),
 
     /** GET /student/resources  资源中心列表  params: { type, kpId, keyword, page, size } */
     resources: (p) => request('GET', '/student/resources', p, (q) => {
@@ -469,6 +519,9 @@ window.API = (function () {
       questions: M().practiceQuestions
     })),
 
+    /** GET /practice/sessions/current  当前进行中的练习存档（无则 null）  params: { mode } */
+    current: (p) => request('GET', '/practice/sessions/current', p, () => null),
+
     /** GET /practice/sessions/{sessionId}/questions  取题 */
     questions: (p) => request('GET', `/practice/sessions/${p.sessionId}/questions`, p, () => M().practiceQuestions),
 
@@ -483,19 +536,18 @@ window.API = (function () {
         qId: question.qId, correct, rightAnswer: question.answer,
         analysis: question.analysis, kpPath: question.kpPath,
         classCorrectRate: question.classCorrectRate, avgSeconds: question.avgSeconds,
-        masteryDelta: correct ? +2.1 : -1.4, errorType: correct ? null : question.errorType
+        masteryDelta: correct ? +2.1 : -1.4
       };
     }),
 
     /** POST /practice/sessions/{sessionId}/finish  结束练习，返回练习报告 */
     finish: (p) => request('POST', `/practice/sessions/${p.sessionId}/finish`, p, () => M().practiceReport),
 
-    /** GET /practice/wrong-book  错题本  params: { kpId, errorType, mastered, page } */
+    /** GET /practice/wrong-book  错题本  params: { kpId, mastered, page } */
     wrongBook: (p) => request('GET', '/practice/wrong-book', p, (q) => {
       let list = M().wrongBook.slice();
       if (q.mastered === 'false') list = list.filter(w => !w.mastered);
       if (q.mastered === 'true') list = list.filter(w => w.mastered);
-      if (q.errorType && q.errorType !== 'all') list = list.filter(w => w.errorType === q.errorType);
       return { total: list.length, list };
     }),
 
@@ -562,11 +614,56 @@ window.API = (function () {
     /** GET /teacher/resources/kps  上传时可选择的知识点（按章节分组） */
     resourceKps: () => request('GET', '/teacher/resources/kps'),
 
-    /** POST /teacher/resources/upload  上传资源  body: FormData { file, title, kp, category } */
+    /** POST /teacher/resources/upload  上传资源  body: FormData { file, title, kp, category, tagIds? } */
     uploadResource: (formData) => request('POST', '/teacher/resources/upload', formData),
 
+    /** PUT /teacher/resources/{res_id}  编辑资源（标题/知识点/标签） */
+    updateResource: (resId, p) => request('PUT', `/teacher/resources/${resId}`, p),
+
     /** DELETE /teacher/resources/{res_id}  删除资源 */
-    deleteResource: (resId) => request('DELETE', `/teacher/resources/${resId}`)
+    deleteResource: (resId) => request('DELETE', `/teacher/resources/${resId}`),
+
+    /** GET /teacher/tags  当前课程标签列表 */
+    tags: () => request('GET', '/teacher/tags'),
+    /** POST /teacher/tags  新建（或复用）标签 */
+    createTag: (p) => request('POST', '/teacher/tags', p),
+    /** DELETE /teacher/tags/{tagId}  删除标签 */
+    deleteTag: (tagId) => request('DELETE', `/teacher/tags/${tagId}`),
+
+    /** GET /teacher/resources/{res_id}/rag-status  查询上传后的 RAG 切片进度 */
+    resourceRagStatus: (resId) => request('GET', `/teacher/resources/${resId}/rag-status`),
+
+    /** POST /teacher/courses  新建课程（生成邀请码，教师自动成为成员） */
+    createCourse: (p) => request('POST', '/teacher/courses', p),
+
+    /** GET /teacher/structure  课程结构（章节树 + 知识点 + 统计） */
+    structure: () => request('GET', '/teacher/structure'),
+    /** POST /teacher/structure/chapters  新建章节 */
+    createChapter: (p) => request('POST', '/teacher/structure/chapters', p),
+    /** PUT /teacher/structure/chapters/{id}  改章节（重命名同步章下知识点） */
+    updateChapter: (id, p) => request('PUT', `/teacher/structure/chapters/${id}`, p),
+    /** DELETE /teacher/structure/chapters/{id}  删空章节 */
+    deleteChapter: (id) => request('DELETE', `/teacher/structure/chapters/${id}`),
+    /** GET /teacher/graph/kp-detail  知识点详情（结构 + 图谱关系 + 课程学情，全部真实表计算） */
+    kpDetail: (p) => request('GET', '/teacher/graph/kp-detail', p),
+    /** GET /teacher/graph/kp-topology  知识图谱拓扑（节点=课程KP，边=关系） */
+    kpTopology: () => request('GET', '/teacher/graph/kp-topology'),
+    /** PUT /teacher/graph/kp-topology  保存坐标与边 */
+    saveKpTopology: (p) => request('PUT', '/teacher/graph/kp-topology', p),
+
+    /** POST /teacher/structure/kps  新建知识点（自动重建全员学习路径） */
+    createKp: (p) => request('POST', '/teacher/structure/kps', p),
+    /** PUT /teacher/structure/kps/{id}  改知识点 */
+    updateKp: (id, p) => request('PUT', `/teacher/structure/kps/${id}`, p),
+    /** DELETE /teacher/structure/kps/{id}  删知识点（有资源/题目时 400 拒绝） */
+    deleteKp: (id) => request('DELETE', `/teacher/structure/kps/${id}`),
+    /** GET /teacher/structure/kps/{id}/relations  前置列表 + 候选 */
+    kpRelations: (id) => request('GET', `/teacher/structure/kps/${id}/relations`),
+    /** PUT /teacher/structure/kps/{id}/relations  覆盖保存前置（环检测） */
+    saveKpRelations: (id, p) => request('PUT', `/teacher/structure/kps/${id}/relations`, p),
+
+    /** POST /question/import  批量导入题目（含单题；支持 figure_json 图结构） */
+    importQuestions: (p) => request('POST', '/question/import', p)
   };
 
   /* ======================================================================
@@ -613,7 +710,7 @@ window.API = (function () {
     /** GET /agent/ingest/stats  RAG 知识库切片统计（教师） */
     ingestStats: (p) => request('GET', '/agent/ingest/stats', p, () => ({ chunks: 0 })),
 
-    /** GET /question/drafts  我的出题草稿箱  params: { status: all|draft|invalid|published } */
+    /** GET /question/drafts  我的出题草稿箱  params: { status: draft|published }（2026-09-24 移除 all/invalid） */
     drafts: (p) => request('GET', '/question/drafts', p, () => ({ total: 0, list: [] })),
 
     /** PUT /question/drafts/{draftId}  编辑草稿（保存时后端重新校验） */
@@ -625,15 +722,12 @@ window.API = (function () {
     /** POST /question/drafts/{draftId}/publish  发布草稿 → 正式题库 */
     draftPublish: (p) => request('POST', '/question/drafts/' + p.draftId + '/publish', p, () => ({ published: true })),
 
-    /** GET /question/bank  题库列表  params: { kpId, type, status, difficulty, keyword, page } */
-    bank: (p) => request('GET', '/question/bank', p, (q) => {
-      let list = M().questionBank.slice();
-      if (q.status && q.status !== 'all') list = list.filter(x => x.status === q.status);
-      if (q.keyword) list = list.filter(x => (x.stem + x.kp + x.qId).includes(q.keyword));
-      return { total: list.length, list };
-    }),
+    /** GET /question/bank  题库列表  params: { kpId, type, difficulty, keyword, page, sort, dir }
+     *  2026-09-24：去掉 status 维度，改为按正确率/难度/知识点/默认 排序（sort=correctRate|difficulty|kp|default, dir=asc|desc）。
+     *  mock 数据不可用（questionBank 为空数组），仅保留兜底空结果。 */
+    bank: (p) => request('GET', '/question/bank', p, () => ({ total: 0, list: [] })),
 
-    /** PUT /question/{qId}  编辑习题（人工校验后修正） */
+    /** PUT /question/{qId}  编辑习题（含 figureJson/hasImage/tagIds） */
     update: (p) => request('PUT', '/question/' + p.qId, p, (q) => ({ qId: q.qId, updated: true })),
 
     /** POST /question/review  批量审核发布  body: { qIds[], action: approve|reject|publish } */
@@ -710,5 +804,14 @@ window.API = (function () {
 
 
 
-  return { config, request, download, auth, graph, student: stu, ai, practice, teacher: tea, analysis, question, intervention, report };
+  /* ---------- 课程（多课程上下文） ---------- */
+  const course = {
+    /** GET /course/my  当前用户的课程列表（含 role，课程教师另带 inviteCode） */
+    my: () => request('GET', '/course/my'),
+
+    /** POST /course/join  凭邀请码加入课程  body: { inviteCode } */
+    join: (p) => request('POST', '/course/join', p),
+  };
+
+  return { config, request, download, setActiveCourse, course, auth, admin, graph, student: stu, ai, practice, teacher: tea, analysis, question, intervention, report };
 })();

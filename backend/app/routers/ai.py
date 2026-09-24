@@ -16,6 +16,7 @@ from ..database import get_db
 from ..models.ai import ChatSession, ChatMessage
 from ..models.intervention import TeacherClassDashboard
 from ..middleware.auth import get_current_user
+from ..dependencies import get_current_course_id
 from ..schemas.common import ok, fail
 from ..utils import loads, fmt_dt
 from ..agent_st.agent.runtime import run_turn
@@ -29,7 +30,9 @@ class ChatReq(BaseModel):
     question: str
     method: str = "guided"
     kpId: Optional[str] = None
-    courseId: str = "C2026DS001"
+    # 课程上下文以请求头 X-Course-Id 为准（get_current_course_id 依赖）。
+    # 这里的 body 字段仅作无头调用时的兜底，**不再默认演示课 C2026DS001**。
+    courseId: str = ""
 
 
 class FeedbackReq(BaseModel):
@@ -42,8 +45,13 @@ class FeedbackReq(BaseModel):
 def ai_sessions(
     db: Session = Depends(get_db),
     user=Depends(get_current_user),
+    course_id: str = Depends(get_current_course_id),
 ):
-    rows = db.query(ChatSession).filter(ChatSession.user_id == user.user_id).order_by(ChatSession.updated_at.desc()).all()
+    """答疑历史会话 —— 按当前学生和当前课程检索。"""
+    rows = db.query(ChatSession).filter(
+        ChatSession.user_id == user.user_id,
+        ChatSession.course_id == course_id,
+    ).order_by(ChatSession.updated_at.desc()).all()
     items = [
         {
             "sessionId": s.session_id, "title": s.title,
@@ -61,13 +69,16 @@ def ai_delete_session(
     session_id: str,
     db: Session = Depends(get_db),
     user=Depends(get_current_user),
+    course_id: str = Depends(get_current_course_id),
 ):
     """删除会话（含全部消息），仅限本人会话"""
-    s = db.query(ChatSession).filter(ChatSession.session_id == session_id).first()
+    s = db.query(ChatSession).filter(
+        ChatSession.session_id == session_id,
+        ChatSession.user_id == user.user_id,
+        ChatSession.course_id == course_id,
+    ).first()
     if not s:
         return fail("会话不存在", 404)
-    if s.user_id and s.user_id != user.user_id:
-        return fail("无权删除他人的会话", 403)
     db.query(ChatMessage).filter(ChatMessage.session_id == session_id).delete()
     db.delete(s)
     db.commit()
@@ -79,7 +90,15 @@ def ai_session_messages(
     session_id: str,
     db: Session = Depends(get_db),
     user=Depends(get_current_user),
+    course_id: str = Depends(get_current_course_id),
 ):
+    session = db.query(ChatSession).filter(
+        ChatSession.session_id == session_id,
+        ChatSession.user_id == user.user_id,
+        ChatSession.course_id == course_id,
+    ).first()
+    if not session:
+        return fail("会话不存在", 404)
     rows = db.query(ChatMessage).filter(ChatMessage.session_id == session_id).order_by(ChatMessage.id.asc()).all()
     if not rows:
         # 不再兜底返回他人的 chat_messages —— 新会话无消息则返回空
@@ -107,11 +126,15 @@ def suggest_questions(
     return ok([])
 
 
-def _agent_events(req: ChatReq, user):
+def _agent_events(req: ChatReq, user, course_id=None):
     """运行 explain 流 Agent，返回事件 dict 生成器（流式/非流式共用）"""
     raw_sid = (req.sessionId or '').strip()
     session_id = None if (not raw_sid or raw_sid.lower() == 'new') else raw_sid
-    context = {"courseId": req.courseId}
+    # 请求头（经成员校验）优先；无头调用才回退 body，body 也不再默认演示课
+    resolved = (course_id or req.courseId or "").strip()
+    context = {}
+    if resolved:
+        context["courseId"] = resolved
     if req.kpId:
         context["kpId"] = req.kpId
     return run_turn(
@@ -120,6 +143,7 @@ def _agent_events(req: ChatReq, user):
         session_id=session_id,
         context=context,
         user_id=user.user_id,
+        course_id=resolved,
     )
 
 
@@ -128,6 +152,7 @@ def ai_chat(
     req: ChatReq,
     db: Session = Depends(get_db),
     user=Depends(get_current_user),
+    course_id: str = Depends(get_current_course_id),
 ):
     """AI 智能答疑（非流式聚合版）：内部复用 explain 流 Agent，落库由 AgentStore 完成"""
     content_parts: list[str] = []
@@ -135,7 +160,7 @@ def ai_chat(
     session_id = ""
     out_of_scope = False
     demo = False
-    for ev in _agent_events(req, user):
+    for ev in _agent_events(req, user, course_id):
         etype = ev.get("type")
         if etype == "session":
             session_id = ev.get("session_id") or ""
@@ -163,6 +188,7 @@ def ai_chat(
 async def ai_chat_stream(
     req: ChatReq,
     user=Depends(get_current_user),
+    course_id: str = Depends(get_current_course_id),
 ):
     """SSE 真实流式答疑：meta → tool_start/tool_end → content(逐 token) → citations → done"""
     from sse_starlette.sse import EventSourceResponse
@@ -170,7 +196,7 @@ async def ai_chat_stream(
     def gen():  # 同步生成器：sse_starlette 会放入线程池迭代，避免阻塞事件循环
         session_id = ""
         out_of_scope = False
-        for ev in _agent_events(req, user):
+        for ev in _agent_events(req, user, course_id):
             etype = ev.get("type")
             if etype == "session":
                 session_id = ev.get("session_id") or ""

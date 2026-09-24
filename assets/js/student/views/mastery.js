@@ -92,7 +92,7 @@
               </div>
               <div class="stat stat--sm" style="--_c:var(--accent-500)">
                 <div class="stat__label">累计观看</div>
-                <div class="stat__value"><span>${rs.watchMinutes}</span><small>分钟</small></div>
+                <div class="stat__value"><span>${U.durMin(rs.watchMinutes)}</span><small>时长</small></div>
               </div>
               <div class="stat stat--sm" style="--_c:var(--warn)">
                 <div class="stat__label">累计阅读</div>
@@ -121,9 +121,9 @@
         U.$('#weakList').innerHTML = d.weakPoints.map(w => `
           <div class="list__item list__item--lv-${w.level}">
             <div class="list__main">
-              <div class="row"><b>${U.esc(w.name)}</b><span class="badge ${U.levelBadge[U.level(w.masteryRate)]}">${w.masteryRate}%</span></div>
+              <div class="row"><b>${U.esc(w.name)}</b><span class="badge ${U.levelBadge[U.level(w.accuracyRate)]}">${w.accuracyRate}%</span></div>
               <p>${U.esc(w.chapter)} · 累计错 ${w.errorCount} 题 · 近7日 ${w.trend > 0 ? '+' : ''}${w.trend}pp</p>
-              <div style="margin-top:6px;max-width:280px">${U.bar(w.masteryRate)}</div>
+              <div style="margin-top:6px;max-width:280px">${U.bar(w.accuracyRate)}</div>
             </div>
             <div class="list__trail">
               <button class="btn btn--xs btn--outline" data-goto="practice">去练习</button>
@@ -131,7 +131,10 @@
             </div>
           </div>`).join('');
         U.$$('[data-goto]', el).forEach(b => b.addEventListener('click', () => Router.go(b.dataset.goto)));
-        U.$$('[data-ask2]', el).forEach(b => b.addEventListener('click', () => { Router.go('ai'); setTimeout(() => Chat.ask(b.dataset.ask2), 260); }));
+        U.$$('[data-ask2]', el).forEach(b => b.addEventListener('click', () => {
+          // 不自动发送：新建会话并把问题填入答疑输入框，由用户确认后自行发送
+          Chat.draft(b.dataset.ask2);
+        }));
       });
 
       // 矩阵（按章节可折叠）

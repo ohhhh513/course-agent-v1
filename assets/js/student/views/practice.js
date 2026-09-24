@@ -6,6 +6,32 @@
   const Practice = {
     tab: 'quiz', state: 'select', mode: null,
     qs: [], idx: 0, answers: {}, picked: null, startAt: 0,
+    // 错题本「按章节知识点归纳」的筛选状态（跨重渲染保留）
+    _wChapter: '', _wKpId: '', _wSumOpen: true,
+
+    resetCourseContext() {
+      clearInterval(this._timer);
+      this.tab = 'quiz';
+      this.state = 'select';
+      this.mode = null;
+      this.activeMode = null;
+      this.qs = [];
+      this.idx = 0;
+      this.answers = {};
+      this.picked = null;
+      this.startAt = 0;
+      this.sessionId = '';
+      this._wChapter = '';
+      this._wKpId = '';
+      this._wSumOpen = true;
+      this.lastWrongFilter = 'false';
+      this._weakKpIds = [];
+      this._lastKpIds = undefined;
+      this._lastQIds = undefined;
+      this._pendingTarget = null;
+      this._pendingResume = null;
+      this._startTab = null;
+    },
 
     render() {
       const el = U.$('#view-practice');
@@ -29,15 +55,21 @@
       this.state = 'select';
       this.activeMode = null;
       const box = U.$('#pBody');
+      // 竞态防护：本视图要等两个接口才渲染。若期间用户已经切到「错题本」，
+      // 后到的回调不能再把 #pBody 覆盖回练习页（否则切页会被"弹回去"）。
+      const courseId = API.config.activeCourseId;
+      const stale = () => this.tab !== 'quiz' || U.$('#pBody') !== box || API.config.activeCourseId !== courseId;
       API.practice.modes().then(ms => {
+        if (stale()) return;
         API.student.dashboard().then(d => {
+          if (stale()) return;
           // 记住薄弱知识点 kpId，供「薄弱点强化」/「靶向强化出题」按知识点组卷
           this._weakKpIds = (d.weakPoints || []).map(w => w.kpId).filter(Boolean);
           box.innerHTML = `
           <div class="callout callout--brand" style="margin-bottom:16px">
             ${icon('sparkle')}
             <div><b>系统已为你定位 ${d.weakPoints.length} 个薄弱知识点</b>
-            ${d.weakPoints.map(w => `<span class="badge badge--danger" style="margin:4px 4px 0 0">${U.esc(w.name)} ${w.masteryRate}%</span>`).join('')}
+            ${d.weakPoints.map(w => `<span class="badge badge--danger" style="margin:4px 4px 0 0">${U.esc(w.name)} ${w.accuracyRate}%</span>`).join('')}
             <div style="margin-top:6px">推荐使用「薄弱点强化」模式，习题将自动命中上述知识点并按前后置关系排序。</div></div>
           </div>
 
@@ -64,22 +96,40 @@
                 <div class="todo">
                   <div class="todo__ico todo__ico--${w.level}">${icon('target')}</div>
                   <div class="todo__main"><b>${U.esc(w.name)}</b>
-                    <span>掌握率 ${w.masteryRate}% · 建议 ${Math.ceil((60 - w.masteryRate) / 5)} 组靶向练习</span></div>
+                    <span>正确率 ${w.accuracyRate}% · 建议 ${Math.ceil((60 - w.accuracyRate) / 5)} 组靶向练习</span></div>
                   <button class="btn btn--sm btn--outline" data-weak-start data-weak-kp="${U.esc(w.kpId)}">出题</button>
                 </div>`).join('')}
             </div>
           </div>`;
 
         U.$$('#modeGrid .card[data-mode]', box).forEach(c => c.addEventListener('click', () => {
-          if (this.activeMode === c.dataset.mode) { this.collapsePanel(); return; }
-          const opts = c.dataset.mode === 'weak' ? { kpIds: this._weakKpIds } : undefined;
-          this.expandPanel(c.dataset.mode, ms, c, opts);
+          const mode = c.dataset.mode;
+          if (this.activeMode === mode) { this.collapsePanel(); return; }
+          this.enterMode(mode, ms, c);
         }));
         U.$$('[data-weak-start]', box).forEach(b => b.addEventListener('click', e => {
           e.stopPropagation();
           const kp = b.dataset.weakKp;
           this.expandPanel('weak', ms, box.querySelector('#modeGrid .card[data-mode="weak"]'), kp ? { kpIds: [kp] } : undefined);
         }));
+        // 从「预警 → 去补救」进入：直接按该知识点开一组靶向练习
+        if (this._pendingTarget) {
+          const pt = this._pendingTarget; this._pendingTarget = null;
+          if (pt.kpId) {
+            const panel = U.$('#modePanel');
+            if (panel) panel.hidden = false;
+            Toast.info('靶向练习', `已按「${pt.kpName || pt.kpId}」组卷`);
+            this.start('weak', ms, { kpIds: [pt.kpId] });
+            return;
+          }
+        }
+        // 从「待办 → 继续练习」进入：自动打开对应模式的存档面板
+        if (this._pendingResume) {
+          const pr = this._pendingResume; this._pendingResume = null;
+          const mode = pr.mode || 'order';
+          const card = box.querySelector(`#modeGrid .card[data-mode="${mode}"]`);
+          if (card) this.enterMode(mode, ms, card);
+        }
         });
       });
     },
@@ -121,8 +171,126 @@
       }
     },
 
+    /* --- 练习入口（任意模式）：检查存档 → 继续挑战 / 开始新练习 --- */
+    enterMode(mode, ms, cardEl) {
+      const courseId = API.config.activeCourseId;
+      this.activeMode = mode;
+      U.$$('#modeGrid .card[data-mode]').forEach(c => c.classList.toggle('is-active', c === cardEl));
+      const panel = U.$('#modePanel');
+      if (panel) panel.hidden = false;
+      panel.innerHTML = `<div class="card"><div class="card__body t-dim fz-13">检查存档…</div></div>`;
+      API.practice.current({ mode }).then(sv => {
+        if (API.config.activeCourseId !== courseId) return;
+        // 有实际作答进度、且未做完，才算「存档」；空会话（0 题）不提示
+        if (sv && sv.sessionId && sv.answered > 0 && sv.answered < sv.total) this._renderResumePanel(mode, ms, sv);
+        else this._startMode(mode, ms);
+      }).catch(() => this._startMode(mode, ms));
+    },
+
+    /* --- 正常开始某模式（顺序练习先选章节，其余直接组卷）--- */
+    _startMode(mode, ms) {
+      if (mode === 'order') { this._renderChapterPick(ms); return; }
+      const card = U.$(`#modeGrid .card[data-mode="${mode}"]`);
+      const opts = mode === 'weak' ? { kpIds: this._weakKpIds } : undefined;
+      this.expandPanel(mode, ms, card, opts);
+    },
+
+    /* --- 有存档时先选「继续挑战 / 开始新练习」（任意模式）--- */
+    _renderResumePanel(mode, ms, sv) {
+      const MODE_CN = { weak: '薄弱点强化', order: '顺序练习', random: '随机练习', wrong: '错题重练' };
+      const panel = U.$('#modePanel');
+      panel.innerHTML = `
+      <div class="card">
+        <div class="card__head">
+          <button class="btn btn--sm btn--ghost" id="rsBack">${icon('arrowLeft')} 返回</button>
+          <span class="badge badge--brand">${MODE_CN[mode] || mode}</span>
+          <h3 style="margin-left:6px">发现未完成的练习</h3>
+        </div>
+        <div class="card__body">
+          <div class="callout callout--brand">${icon('clock')}
+            <div><b>你上次练到一半</b><div class="fz-12 t-dim" style="margin-top:2px">已完成 ${sv.answered}/${sv.total} 题，可继续上次进度。</div></div>
+          </div>
+          <div class="row" style="margin-top:14px">
+            <button class="btn btn--primary" id="rsContinue">${icon('arrowRight')} 继续挑战（${sv.answered}/${sv.total}）</button>
+            <button class="btn btn--outline" id="rsNew">开始新练习</button>
+          </div>
+        </div>
+      </div>`;
+      U.$('#rsBack', panel).addEventListener('click', () => this.collapsePanel());
+      U.$('#rsNew', panel).addEventListener('click', () => this._startMode(mode, ms));
+      U.$('#rsContinue', panel).addEventListener('click', () => this.resume(sv));
+    },
+
+    /* --- 顺序练习：选择章节 / 知识点 --- */
+    _renderChapterPick(ms) {
+      const courseId = API.config.activeCourseId;
+      const panel = U.$('#modePanel');
+      if (panel) panel.hidden = false;
+      const mCount = ((ms || []).find(x => x.key === 'order') || {}).count || 20;
+      panel.innerHTML = `<div class="card"><div class="card__body t-dim fz-13">加载章节…</div></div>`;
+      API.graph.get({ type: 'knowledge' }).then(g => {
+        if (API.config.activeCourseId !== courseId) return;
+        const byCh = {};
+        (g.nodes || []).forEach(n => {
+          const ch = n.chapter || '其它';
+          (byCh[ch] = byCh[ch] || []).push(n);
+        });
+        const chapters = Object.keys(byCh).sort((a, b) => a.localeCompare(b, 'zh'));
+        // 一屏平铺所有章节 + 各自知识点
+        const sections = chapters.map(ch => {
+          const kps = byCh[ch].slice().sort((a, b) => a.id.localeCompare(b.id));
+          return `
+            <div style="padding:14px 0;border-bottom:1px solid var(--border)">
+              <div class="row" style="align-items:center;gap:10px;margin-bottom:10px">
+                <b style="font-size:14.5px">${U.esc(ch)}</b>
+                <span class="t-dim fz-12">${kps.length} 个知识点</span>
+                <span class="spacer"></span>
+                <button class="btn btn--sm btn--outline" data-kp="__all__" data-ch="${U.esc(ch)}">整章练习</button>
+              </div>
+              <div class="row" style="flex-wrap:wrap;gap:8px">
+                ${kps.map(k => `<button class="btn btn--sm btn--outline" data-kp="${U.esc(k.id)}">${U.esc(k.name)}</button>`).join('')}
+              </div>
+            </div>`;
+        }).join('');
+        panel.innerHTML = `
+        <div class="card">
+          <div class="card__head">
+            <button class="btn btn--sm btn--ghost" id="chBack">${icon('arrowLeft')} 返回</button>
+            <span class="badge badge--brand">顺序练习</span>
+            <h3 style="margin-left:6px">选择章节 / 知识点</h3>
+            <span class="spacer"></span>
+            <span class="fz-12 t-dim">点「整章练习」或具体知识点开始</span>
+          </div>
+          <div class="card__body" style="padding-top:4px">${sections}</div>
+        </div>`;
+        U.$('#chBack', panel).addEventListener('click', () => this.collapsePanel());
+        U.$$('[data-kp]', panel).forEach(b => b.addEventListener('click', () => {
+          const kp = b.dataset.kp;
+          const kpIds = (kp === '__all__') ? byCh[b.dataset.ch].map(k => k.id) : [kp];
+          this.start('order', ms, { kpIds, count: mCount });
+        }));
+      }).catch(() => {
+        panel.innerHTML = `<div class="card"><div class="card__body t-dim">章节加载失败，请重试</div></div>`;
+      });
+    },
+
+    /* --- 继续挑战：载入存档，从第一道未答题继续 --- */
+    resume(sv) {
+      this.mode = sv.mode || 'order';
+      this.qs = sv.questions || [];
+      this.sessionId = sv.sessionId;
+      this.answers = {};
+      this.qs.forEach(q => { if (q.answered) this.answers[q.qId] = q.myAnswer; });
+      const idx = this.qs.findIndex(q => !q.answered);
+      this.idx = idx >= 0 ? idx : 0;
+      this.state = 'quiz';
+      Toast.ok('已继续上次进度', `第 ${this.idx + 1} / ${this.qs.length} 题`);
+      this.renderQuiz();
+    },
+
     /* --- 开始练习 --- */
     start(mode, ms, opts) {
+      const courseId = API.config.activeCourseId;
       const m = (ms || []).find(x => x.key === mode);
       // 记录进入练习时的 tab，退出时按此恢复到对应列表
       this._startTab = this.tab;
@@ -132,6 +300,15 @@
       if (this._lastKpIds) body.kpIds = this._lastKpIds;
       if (this._lastQIds) body.qIds = this._lastQIds;
       API.practice.create(body).then(s => {
+        if (API.config.activeCourseId !== courseId) return;
+        if (!s.questions || !s.questions.length) {
+          this.qs = [];
+          this.state = 'select';
+          const target = U.$('#modePanel') || U.$('#pBody');
+          if (target) target.innerHTML = `<div class="callout callout--warn">${icon('info')}<div><b>当前课程暂无可练习题目</b><div class="fz-12 t-dim">请等待教师发布题目后再开始练习。</div></div></div>`;
+          Toast.warn('当前课程暂无可练习题目');
+          return;
+        }
         this.mode = mode; this.qs = s.questions; this.idx = 0; this.answers = {};
         this.sessionId = s.sessionId;  // 保存真实 sessionId，后续 submit/finish 要用
         this.state = 'quiz';
@@ -201,7 +378,7 @@
         </div>
 
         <div class="card__foot row">
-          <span class="fz-12 t-dim">知识点定位：${q.kpPath.join(' › ')}</span>
+          <span class="fz-12 t-dim">知识点定位：${(q.kpPath || []).join(' › ') || '—'}</span>
           <span class="spacer"></span>
           <button class="btn btn--primary" id="qSubmit" disabled>提交答案</button>
         </div>
@@ -253,6 +430,21 @@
           }
         });
 
+        // 知识点定位树：题库里 kp_path 有 2 级也有 3 级，按实际层级渲染，
+        // 不能写死 kpPath[0..2]（否则二级路径的最后一行会显示 undefined）
+        const path = (r.kpPath || []).map(x => String(x || '')).filter(Boolean);
+        if (!path.length && q.kpPath && q.kpPath.length) path.push(...q.kpPath);
+        const leafIdx = Math.max(0, path.length - 1);
+        const pathHtml = path.map((p, i) => {
+          const isLeaf = i === leafIdx;
+          const cls = isLeaf ? 'kp-tree__row--leaf' : (i ? 'kp-tree__row--sub' : '');
+          const ic = isLeaf ? 'target' : (i ? 'chevronRight' : 'folder');
+          const inner = isLeaf
+            ? `<b class="t-brand">${U.esc(p)}</b>${q.isKey ? '<span class="badge badge--warn">◆ 重难点</span>' : ''}`
+            : (i ? `<span>${U.esc(p)}</span>` : `<b>${U.esc(p)}</b>`);
+          return `<div class="kp-tree__row ${cls}">${icon(ic)}${inner}</div>`;
+        }).join('');
+
         U.$('#fbBox').innerHTML = `
         <div class="feedback feedback--${r.correct ? 'ok' : 'no'}">
           <div class="feedback__head">${icon(r.correct ? 'checkCircle' : 'xCircle')}
@@ -267,14 +459,9 @@
             </div>
             <div class="feedback__sec">
               <h5>知识点定位树</h5>
-              <div class="kp-tree">
-                <div class="kp-tree__row">${icon('folder')}<b>${r.kpPath[0]}</b></div>
-                <div class="kp-tree__row kp-tree__row--sub">${icon('chevronRight')}<span>${r.kpPath[1]}</span></div>
-                <div class="kp-tree__row kp-tree__row--leaf">${icon('target')}<b class="t-brand">${r.kpPath[2]}</b>
-                  ${q.isKey ? '<span class="badge badge--warn">◆ 重难点</span>' : ''}</div>
-              </div>
+              <div class="kp-tree">${pathHtml || '<div class="kp-tree__row kp-tree__row--leaf">' + icon('target') + '<b class="t-brand">未标注知识点</b></div>'}</div>
               <div class="row row--wrap fz-12 t-dim" style="margin-top:9px">
-                <span>前置知识点：</span>${(q.preKp || []).map(k => `<span class="badge badge--outline">${U.esc(k)}</span>`).join('')}
+                <span>前置知识点：</span>${(q.preKp || []).length ? (q.preKp || []).map(k => `<span class="badge badge--outline">${U.esc(k)}</span>`).join('') : '<span>—</span>'}
               </div>
             </div>
             <div class="feedback__sec">
@@ -282,8 +469,7 @@
               <div class="row row--wrap">
                 <span class="badge ${r.masteryDelta >= 0 ? 'badge--ok' : 'badge--danger'}">
                   掌握率 ${r.masteryDelta >= 0 ? '+' : ''}${r.masteryDelta}pp</span>
-                ${r.errorType ? `<span class="badge badge--warn">错误类型：${r.errorType}</span>
-                  <span class="badge badge--outline">已自动归入错题本</span>` : '<span class="badge badge--outline">完成率已更新</span>'}
+                <span class="badge badge--outline">${r.correct ? '完成率已更新' : '已自动归入错题本'}</span>
               </div>
             </div>
           </div>
@@ -304,7 +490,9 @@
         // 提交失败时也清除 flag 并恢复按钮
         this._submitting = false;
         if (btn) { btn.disabled = false; btn.textContent = '提交答案'; }
-        Toast.error('提交失败', err && err.message || '请重试');
+        // 后端异常会把原始错误带回来（如 SQL 报错），对学习者只给一行可读提示
+        const msg = String((err && err.message) || '').replace(/\s+/g, ' ').trim();
+        Toast.err('提交失败', msg ? (msg.length > 60 ? msg.slice(0, 60) + '…' : msg) : '请重试');
       });
     },
 
@@ -315,7 +503,7 @@
       const panel = U.$('#modePanel');
       const target = (panel && !panel.hidden) ? panel : U.$('#pBody');
       const kpChanges = r.kpChanges || [];
-      const errorTypes = r.errorTypes || [];
+      const wrongByKp = r.wrongByKp || [];
       target.innerHTML = `
       <div class="grid g-4" style="margin-bottom:16px">
         <div class="stat" style="--_c:var(--ok)"><div class="stat__label">正确率</div>
@@ -325,7 +513,7 @@
           <div class="stat__value">${r.correct ?? 0}<small>/${r.total ?? 0}</small></div>
           <div class="stat__hint">错题 ${r.wrong ?? 0} 道已归入错题本</div></div>
         <div class="stat" style="--_c:var(--info)"><div class="stat__label">总用时</div>
-          <div class="stat__value">${Math.floor((r.durationSeconds || 0) / 60)}<small>分${(r.durationSeconds || 0) % 60}秒</small></div>
+          <div class="stat__value">${U.dur(r.durationSeconds)}</div>
           <div class="stat__hint">均每题 ${r.avgSeconds ?? 0} 秒</div></div>
         <div class="stat" style="--_c:var(--accent-500)"><div class="stat__label">能力目标增益</div>
           <div class="stat__value">+${r.scoreGain ?? 0}</div>
@@ -354,9 +542,9 @@
           </div>
         </div>
         <div class="card">
-          <div class="card__head"><h3>${icon('alert')} 错误类型分布</h3></div>
+          <div class="card__head"><h3>${icon('alert')} 错题知识点分布</h3></div>
           <div class="card__body">
-            ${errorTypes.length ? `<div class="chart chart--sm" id="errTypeChart"></div>` : `<p class="fz-12 t-dim">没有错题，继续保持！</p>`}
+            ${wrongByKp.length ? `<div class="chart chart--sm" id="wrongKpChart"></div>` : `<p class="fz-12 t-dim">本次没有错题，继续保持！</p>`}
           </div>
         </div>
       </div>
@@ -384,9 +572,9 @@
           ]
         }, { area: true, max: 100 });
       }
-      if (errorTypes.length) {
-        Charts.bar('#errTypeChart', errorTypes.map(e => ({ name: e.type, value: e.count })),
-          { horizontal: true, showLabel: true, labelFmt: '{c} 题' });
+      if (wrongByKp.length) {
+        Charts.bar('#wrongKpChart', wrongByKp.map(e => ({ name: e.name, value: e.count })),
+          { horizontal: true, showLabel: true, minInterval: 1, labelFmt: '{c} 题' });
       }
 
       U.$('#againBtn').addEventListener('click', () => API.practice.modes().then(ms => this.start(this.mode || 'weak', ms, { kpIds: this._lastKpIds, qIds: this._lastQIds })));
@@ -398,13 +586,66 @@
       U.$('#backSelect').addEventListener('click', () => this.renderSelect());
     },
 
-    /* --- 错题本 --- */
+    /* --- 错题本（含「按章节 → 知识点」归纳筛选） --- */
     renderWrong(filter) {
+      const courseId = API.config.activeCourseId;
       const f = filter || 'false';
       this.lastWrongFilter = f;
       this.tab = 'wrong';
-      API.practice.wrongBook({ mastered: f }).then(r => {
+      const chapter = this._wChapter || '';
+      const kpId = this._wKpId || '';
+      const box = U.$('#pBody');
+      API.practice.wrongBook({
+        mastered: f,
+        chapter: chapter || undefined,
+        kpId: kpId || undefined,
+      }).then(r => {
+        // 竞态防护：请求期间用户已切走（如切回「智能练习」）就不再覆盖页面
+        if (this.tab !== 'wrong' || U.$('#pBody') !== box || API.config.activeCourseId !== courseId) return;
+        const groups = r.groups || [];
+        // 归纳面板里的知识点名（用于「已筛选」回显）
+        let kpLabel = kpId;
+        groups.some(g => g.kps.some(k => {
+          if (k.kpId === kpId) { kpLabel = k.name; return true; }
+          return false;
+        }));
+        const filtering = !!(chapter || kpId);
+        const open = this._wSumOpen !== false;
+
         U.$('#pBody').innerHTML = `
+        <div class="card" style="margin-bottom:16px">
+          <div class="card__head">
+            <h3>${icon('target')} 按章节知识点归纳</h3>
+            <span class="badge badge--outline">${groups.length} 个章节</span>
+            <span class="badge badge--outline">${groups.reduce((s, g) => s + g.total, 0)} 道错题</span>
+            <span class="spacer"></span>
+            ${filtering
+              ? `<span class="badge badge--brand">筛选：${U.esc(chapter || '全部章节')}${kpId ? ' › ' + U.esc(kpLabel) : ''}</span>
+                 <button class="btn btn--sm btn--ghost" id="wClearKp">清除筛选</button>`
+              : '<span class="fz-12 t-dim">点章节 / 知识点可筛出下方错题</span>'}
+            <button class="btn btn--sm btn--ghost" id="wSumToggle">${open ? '收起' : '展开'}</button>
+          </div>
+          <div class="card__body" id="wGroups" ${open ? '' : 'hidden'}>
+            ${groups.length ? groups.map(g => `
+              <div class="wb-group">
+                <div class="row" style="align-items:center;gap:8px;margin-bottom:8px">
+                  <button class="chip chip--chapter ${chapter === g.chapter ? 'is-active' : ''}"
+                          data-ch="${U.esc(g.chapter)}" title="按本章筛选">
+                    ${U.esc(g.chapter)}<span class="chip__count">${g.total}</span>
+                  </button>
+                  <span class="fz-12 t-dim">${g.kpCount} 个知识点</span>
+                </div>
+                <div class="chips-row">
+                  ${g.kps.map(k => `
+                    <button class="chip chip--kp ${kpId === k.kpId ? 'is-active' : ''}"
+                            data-kp="${U.esc(k.kpId)}" data-kp-ch="${U.esc(g.chapter)}" title="按此知识点筛选">
+                      ${U.esc(k.name)}<span class="chip__count">${k.count}</span>
+                    </button>`).join('')}
+                </div>
+              </div>`).join('') : `<p class="fz-12 t-dim">当前分类下暂无错题，归纳数据为空</p>`}
+          </div>
+        </div>
+
         <div class="card">
           <div class="card__head">
             <h3>${icon('pencil')} 错题本</h3>
@@ -423,13 +664,13 @@
                 <div class="row" style="margin-bottom:6px">
                   <span class="badge badge--outline mono">${w.qId}</span>
                   <span class="badge badge--danger">错 ${w.wrongCount} 次</span>
-                  <span class="badge badge--warn">${U.esc(w.errorType)}</span>
                   <span class="spacer"></span>
                   <span class="fz-11 t-dim">${w.lastTime}</span>
                 </div>
                 <div class="wrong-item__stem">${U.esc(w.stem)}</div>
                 <div class="wrong-item__tags">
-                  <span class="badge badge--brand">${U.esc(w.kp)}</span>
+                  <span class="badge badge--brand">${U.esc(w.kpName || w.kp)}</span>
+                  <span class="badge badge--outline">${U.esc(w.chapter || '未分章')}</span>
                   <span class="badge badge--outline">难度 ${U.stars(w.difficulty)}</span>
                   <span class="fz-12 t-dim">我的答案 <b class="t-danger">${w.myAnswer}</b> · 正确答案 <b class="t-ok">${w.answer}</b></span>
                   <span class="spacer"></span>
@@ -437,15 +678,41 @@
               : `<button class="btn btn--xs btn--outline" data-redo="${w.qId}">重做</button>
                      <button class="btn btn--xs btn--ghost" data-mastered="${w.qId}">标记已掌握</button>`}
                 </div>
-              </div>`).join('') : R.empty('太棒了，没有待攻克的错题', '继续保持，可以去做新的练习', 'award')}
+              </div>`).join('')
+            : R.empty(filtering ? '当前筛选下没有错题' : '太棒了，没有待攻克的错题',
+                      filtering ? '试试清除筛选或切换上方分类' : '继续保持，可以去做新的练习', filtering ? 'search2' : 'award')}
           </div>
         </div>`;
 
+        // ---- 归纳面板交互：章节 / 知识点 chip 切换筛选 ----
+        U.$$('#wGroups .chip--chapter[data-ch]').forEach(c => c.addEventListener('click', () => {
+          const ch = c.dataset.ch;
+          this._wChapter = (this._wChapter === ch) ? '' : ch;
+          this._wKpId = '';                       // 换章时清掉知识点筛选，避免出现空列表
+          this.renderWrong(f);
+        }));
+        U.$$('#wGroups .chip--kp[data-kp]').forEach(c => c.addEventListener('click', () => {
+          const kp = c.dataset.kp;
+          this._wKpId = (this._wKpId === kp) ? '' : kp;
+          this._wChapter = '';                    // 选知识点时不再限定章节
+          this.renderWrong(f);
+        }));
+        const clearBtn = U.$('#wClearKp');
+        if (clearBtn) clearBtn.addEventListener('click', () => {
+          this._wChapter = ''; this._wKpId = '';
+          this.renderWrong(f);
+        });
+        const sumBtn = U.$('#wSumToggle');
+        if (sumBtn) sumBtn.addEventListener('click', () => {
+          this._wSumOpen = !open;
+          this.renderWrong(f);
+        });
+
         U.$$('#wFilter button').forEach(b => b.addEventListener('click', () => this.renderWrong(b.dataset.f)));
         U.$('#wPractice').addEventListener('click', () => {
-          // 一键重练：只重练当前 tab（待攻克/已掌握/全部）下显示的那些题
+          // 一键重练：只重练当前筛选下列表里显示的那些题
           const qIds = r.list.map(w => w.qId);
-          if (!qIds.length) { Toast.error('当前分类下没有可重练的题目'); return; }
+          if (!qIds.length) { Toast.err('当前分类下没有可重练的题目'); return; }
           API.practice.modes().then(ms => this.start('wrong', ms, { qIds, count: qIds.length }));
         });
         U.$$('[data-redo]').forEach(b => b.addEventListener('click', e => {
@@ -486,7 +753,6 @@
               <div class="row fz-12 t-dim" style="margin-bottom:10px">
                 <span class="badge badge--outline mono">${d.qId}</span>
                 <span class="badge badge--brand">${U.esc(d.kpPath.join(' › '))}</span>
-                <span class="badge badge--warn">${U.esc(d.errorType)}</span>
                 <span class="badge badge--outline">难度 ${U.stars(d.difficulty)}</span>
                 ${d.isKey ? '<span class="badge badge--danger">◆ 重难点</span>' : ''}
               </div>
@@ -575,4 +841,10 @@
     }
   };
 
-Router.register('practice', { title: '智能练习', mount: () => Practice.render() });
+Router.register('practice', {
+  title: '智能练习',
+  mount: () => Practice.render(),
+  reset: () => Practice.resetCourseContext(),
+  // 已 mount 过时再次进入：只在带「继续挑战」待办时重绘（否则会打断进行中的练习）
+  update: () => { if (Practice._pendingResume) Practice.render(); },
+});
