@@ -29,6 +29,8 @@
         .then(r => updateMsgBadge((r.list || []).filter(m => !m.read).length))
         .catch(() => {});
     }
+    // 供其它视图（如「预警与提醒」页读完私信后）刷新顶栏消息角标
+    window.refreshMsgBadge = loadMsgBadge;
 
     /* ================================================================
        课程切换器（多课程 · Step 6）
@@ -141,10 +143,26 @@
     /* ================================================================
        导航侧栏 · 预警徽标（动态绑定后端真实 red + yellow 数量）
        ================================================================ */
-    // 预警模块开发中：不拉预警接口、不显示角标
+    // 侧栏「预警与提醒」角标 = 当前课程下「待处理」（status=open）的红 + 黄预警数。
+    // 2026-09-24：由写死 0 改为读真实数据（与预警页同源）。
     window.refreshAlertBadge = function () {
       const b = document.getElementById('alertBadge');
-      if (b) { b.textContent = '0'; b.style.display = 'none'; }
+      if (!b) return;
+      const courseId = API.config.activeCourseId;
+      if (!courseId) { b.style.display = 'none'; return; }
+      API.student.alerts({})
+        .then(r => {
+          if (API.config.activeCourseId !== courseId) return;   // 切课后丢弃旧结果
+          const os = (r && r.openStats) || {};
+          const n = (os.red || 0) + (os.yellow || 0);
+          if (n > 0) {
+            b.textContent = n > 99 ? '99+' : String(n);
+            b.style.display = '';
+          } else {
+            b.style.display = 'none';
+          }
+        })
+        .catch(() => {});
     };
     window.refreshAlertBadge();
   

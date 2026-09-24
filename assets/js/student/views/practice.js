@@ -61,16 +61,36 @@
       const stale = () => this.tab !== 'quiz' || U.$('#pBody') !== box || API.config.activeCourseId !== courseId;
       API.practice.modes().then(ms => {
         if (stale()) return;
+        // 随机练习的题量口径 = 「学过且做错过」的知识点题量（后端按此统计）。
+        // 若为 0（已学的全对了 / 压根没做过题），按钮前置提示，不必等组卷回来才知道。
+        this._randomCount = ((ms || []).find(x => x.key === 'random') || {}).count || 0;
         API.student.dashboard().then(d => {
           if (stale()) return;
           // 记住薄弱知识点 kpId，供「薄弱点强化」/「靶向强化出题」按知识点组卷
           this._weakKpIds = (d.weakPoints || []).map(w => w.kpId).filter(Boolean);
+          // 薄弱点与预警共用门槛（同一知识点至少作答 2 道不同题）：没有达标的知识点时给明确说明，
+          // 不留空白横幅，也不让「薄弱点强化」静默退化成整门课随机（后端同样会返回空池）。
+          const wps = d.weakPoints || [];
+          const weakBanner = wps.length
+            ? `<b>系统已为你定位 ${wps.length} 个薄弱知识点</b>` +
+              wps.map(w => `<span class="badge badge--danger" style="margin:4px 4px 0 0">${U.esc(w.name)} ${w.accuracyRate}%</span>`).join('') +
+              `<div style="margin-top:6px">推荐使用「薄弱点强化」模式，习题将自动命中上述知识点并按前后置关系排序。</div>`
+            : `<b>暂无可定位的薄弱知识点</b><div style="margin-top:6px">` +
+              `每个知识点<b>至少作答 2 道不同题</b>（与预警同一门槛）后才会计入薄弱点与靶向练习；` +
+              `可先用「顺序练习」或「随机练习」积累答题记录。</div>`;
+          const weakSugs = wps.length
+            ? wps.map(w => `
+                <div class="todo">
+                  <div class="todo__ico todo__ico--${w.level}">${icon('target')}</div>
+                  <div class="todo__main"><b>${U.esc(w.name)}</b>
+                    <span>正确率 ${w.accuracyRate}% · 建议 ${Math.ceil((60 - w.accuracyRate) / 5)} 组靶向练习</span></div>
+                  <button class="btn btn--sm btn--outline" data-weak-start data-weak-kp="${U.esc(w.kpId)}">出题</button>
+                </div>`).join('')
+            : R.empty('暂无靶向强化建议', '同一知识点作答 2 道以上不同题后，这里会给出针对性建议', 'target');
           box.innerHTML = `
-          <div class="callout callout--brand" style="margin-bottom:16px">
-            ${icon('sparkle')}
-            <div><b>系统已为你定位 ${d.weakPoints.length} 个薄弱知识点</b>
-            ${d.weakPoints.map(w => `<span class="badge badge--danger" style="margin:4px 4px 0 0">${U.esc(w.name)} ${w.accuracyRate}%</span>`).join('')}
-            <div style="margin-top:6px">推荐使用「薄弱点强化」模式，习题将自动命中上述知识点并按前后置关系排序。</div></div>
+          <div class="callout ${wps.length ? 'callout--brand' : 'callout--warn'}" style="margin-bottom:16px">
+            ${icon(wps.length ? 'sparkle' : 'info')}
+            <div>${weakBanner}</div>
           </div>
 
           <div class="grid g-4" id="modeGrid" style="margin-bottom:16px">
@@ -92,13 +112,7 @@
           <div class="card">
             <div class="card__head"><h3>${icon('target')} 靶向强化建议</h3></div>
             <div class="card__body stack" style="gap:10px">
-              ${d.weakPoints.map(w => `
-                <div class="todo">
-                  <div class="todo__ico todo__ico--${w.level}">${icon('target')}</div>
-                  <div class="todo__main"><b>${U.esc(w.name)}</b>
-                    <span>正确率 ${w.accuracyRate}% · 建议 ${Math.ceil((60 - w.accuracyRate) / 5)} 组靶向练习</span></div>
-                  <button class="btn btn--sm btn--outline" data-weak-start data-weak-kp="${U.esc(w.kpId)}">出题</button>
-                </div>`).join('')}
+              ${weakSugs}
             </div>
           </div>`;
 
@@ -191,6 +205,17 @@
     _startMode(mode, ms) {
       if (mode === 'order') { this._renderChapterPick(ms); return; }
       const card = U.$(`#modeGrid .card[data-mode="${mode}"]`);
+      if (mode === 'weak' && !(this._weakKpIds || []).length) {
+        // 没有达标的薄弱点（未作答，或每个知识点都不到 2 道题）：不要退化成"整门课随机抽"
+        Toast.warn('暂无可定位的薄弱知识点', '每个知识点至少作答 2 道不同题后才会计入（与预警同一门槛），可先用顺序/随机练习');
+        return;
+      }
+      if (mode === 'random' && !this._randomCount) {
+        // 随机练习范围 = 「学过且做错过」的知识点。已学的全对、或还没做过题时无可抽范围，
+        // 说明原因并给替代路径，不静默抽整门课（后端同样返回 emptyReason: random_scope_empty）。
+        Toast.warn('随机练习暂无可抽题范围', '随机练习只抽「学过且做错过」的知识点；你学过的都答对了、或还没做过题，可先用顺序练习');
+        return;
+      }
       const opts = mode === 'weak' ? { kpIds: this._weakKpIds } : undefined;
       this.expandPanel(mode, ms, card, opts);
     },
@@ -228,14 +253,31 @@
       if (panel) panel.hidden = false;
       const mCount = ((ms || []).find(x => x.key === 'order') || {}).count || 20;
       panel.innerHTML = `<div class="card"><div class="card__body t-dim fz-13">加载章节…</div></div>`;
-      API.graph.get({ type: 'knowledge' }).then(g => {
+      // 同时取「各知识点已发布题量」：没有题的知识点选了也组不出卷，直接不显示（2026-09-24）。
+      Promise.all([
+        API.graph.get({ type: 'knowledge' }),
+        API.practice.kpPool().catch(() => null),
+      ]).then(([g, pool]) => {
         if (API.config.activeCourseId !== courseId) return;
+        // 题量接口失败时（pool=null）退回旧行为：全部列出，不做隐藏 ——
+        // 宁可多显示几个按钮，也不能因为一次请求失败就让学生以为"这门课没题"。
+        const counts = (pool && pool.counts) ? pool.counts : null;
+        const hasQ = (kpId) => !counts || (counts[kpId] > 0);
         const byCh = {};
         (g.nodes || []).forEach(n => {
+          if (!hasQ(n.id)) return;              // 该知识点没有已发布题目 → 不列出
           const ch = n.chapter || '其它';
           (byCh[ch] = byCh[ch] || []).push(n);
         });
         const chapters = Object.keys(byCh).sort((a, b) => a.localeCompare(b, 'zh'));
+        // 整章都没有题 → 这一章连标题带「整章练习」一起不显示
+        if (!chapters.length) {
+          panel.innerHTML = `<div class="card"><div class="card__body">
+            <div class="callout callout--warn">${icon('info')}<div><b>暂无可练习的知识点</b>
+            <div class="fz-12 t-dim">当前课程的题库里还没有已发布的题目，可先用「薄弱点强化」或「错题重练」，或等教师补充题目。</div></div></div>
+          </div></div>`;
+          return;
+        }
         // 一屏平铺所有章节 + 各自知识点
         const sections = chapters.map(ch => {
           const kps = byCh[ch].slice().sort((a, b) => a.id.localeCompare(b.id));
@@ -243,12 +285,12 @@
             <div style="padding:14px 0;border-bottom:1px solid var(--border)">
               <div class="row" style="align-items:center;gap:10px;margin-bottom:10px">
                 <b style="font-size:14.5px">${U.esc(ch)}</b>
-                <span class="t-dim fz-12">${kps.length} 个知识点</span>
+                <span class="t-dim fz-12">${kps.length} 个可练习知识点</span>
                 <span class="spacer"></span>
                 <button class="btn btn--sm btn--outline" data-kp="__all__" data-ch="${U.esc(ch)}">整章练习</button>
               </div>
               <div class="row" style="flex-wrap:wrap;gap:8px">
-                ${kps.map(k => `<button class="btn btn--sm btn--outline" data-kp="${U.esc(k.id)}">${U.esc(k.name)}</button>`).join('')}
+                ${kps.map(k => `<button class="btn btn--sm btn--outline" data-kp="${U.esc(k.id)}">${U.esc(k.name)}${counts ? `<span class="t-dim" style="margin-left:6px;font-size:11px">${counts[k.id] || 0} 题</span>` : ''}</button>`).join('')}
               </div>
             </div>`;
         }).join('');
@@ -259,7 +301,7 @@
             <span class="badge badge--brand">顺序练习</span>
             <h3 style="margin-left:6px">选择章节 / 知识点</h3>
             <span class="spacer"></span>
-            <span class="fz-12 t-dim">点「整章练习」或具体知识点开始</span>
+            <span class="fz-12 t-dim">只列出有题目的知识点 · 点「整章练习」或具体知识点开始</span>
           </div>
           <div class="card__body" style="padding-top:4px">${sections}</div>
         </div>`;
@@ -305,8 +347,21 @@
           this.qs = [];
           this.state = 'select';
           const target = U.$('#modePanel') || U.$('#pBody');
-          if (target) target.innerHTML = `<div class="callout callout--warn">${icon('info')}<div><b>当前课程暂无可练习题目</b><div class="fz-12 t-dim">请等待教师发布题目后再开始练习。</div></div></div>`;
-          Toast.warn('当前课程暂无可练习题目');
+          // 指定了知识点却组不出题（该知识点暂无题 / 切换课程后的残留 kpId）：
+          // 提示要具体，不能笼统说"当前课程无题"，否则学生会以为整门课都没有题。
+          const byKp = !!(body.kpIds && body.kpIds.length);
+          const weakNoKp = body.mode === 'weak' && !byKp;      // 薄弱点强化但无可定位的薄弱点
+          const randomEmpty = s.emptyReason === 'random_scope_empty';  // 随机练习范围（学过且有错）为空
+          const title = randomEmpty ? '随机练习无可抽题范围'
+                      : weakNoKp ? '暂无可定位的薄弱知识点'
+                      : byKp ? '该知识点暂无可用题目'
+                             : '当前课程暂无可练习题目';
+          const hint = randomEmpty ? '随机练习只抽「学过且做错过」的知识点；你学过的都答对了、或还没做过题，可先用顺序练习。'
+                     : weakNoKp ? '每个知识点至少作答 2 道不同题后才会计入（与预警同一门槛），可先用顺序/随机练习。'
+                     : byKp ? '可改用「顺序练习」或「随机练习」，或等教师补充该知识点的题目。'
+                            : '请等待教师发布题目后再开始练习。';
+          if (target) target.innerHTML = `<div class="callout callout--warn">${icon('info')}<div><b>${title}</b><div class="fz-12 t-dim">${hint}</div></div></div>`;
+          Toast.warn(title);
           return;
         }
         this.mode = mode; this.qs = s.questions; this.idx = 0; this.answers = {};
@@ -516,8 +571,7 @@
           <div class="stat__value">${U.dur(r.durationSeconds)}</div>
           <div class="stat__hint">均每题 ${r.avgSeconds ?? 0} 秒</div></div>
         <div class="stat" style="--_c:var(--accent-500)"><div class="stat__label">能力目标增益</div>
-          <div class="stat__value">+${r.scoreGain ?? 0}</div>
-          <div class="stat__hint">已回写目标图谱达成度</div></div>
+          <div class="stat__value">+${r.scoreGain ?? 0}</div></div>
       </div>
 
       ${(r.masteredCount > 0) ? `<div class="callout" style="margin-bottom:16px">${icon('checkCircle')}<div><b>${r.masteredCount} 道答对题目已自动标记为「已掌握」</b><span class="fz-12 t-dim" style="margin-left:6px">可到错题本「已掌握」查看</span></div></div>` : ''}

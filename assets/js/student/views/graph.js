@@ -1,72 +1,48 @@
 'use strict';
 
   /* ================================================================
-     视图 2 · 课程图谱导航（三图谱）
+     视图 2 · 课程图谱导航
      知识图谱：左画布 + 右「知识点详情」面板（概览 / 关联资源）
+
+     2026-09-24 调整：删除「问题图谱 / 目标图谱」两个页签。
+     核查结论（两图谱不可用，故从学生端移除）：
+       1) 后端 /graph?type=problem|goal 有代码（按 graph_type 查库，problem 用真实
+          错题数聚合 errorRate、goal 用 GOAL_KP_MAP 聚合掌握率），但教师端**没有任何
+          创建 problem / goal 节点的入口**（建章/建知识点/图谱编排都只处理
+          chapter 与 knowledge），真实课程里这两类节点恒为 0 条；
+       2) GOAL_KP_MAP 仍是 v1.0 的 KP01/KP11… 编号，与现行 KP001… 体系对不上，
+          即便有 goal 节点，达成度也恒为 0；
+       3) 前端原本就未接接口：非 knowledge 分支直接渲染「开发中」占位。
+     后端接口与 seed 里的演示节点未删。日后要恢复：还原本文件，并先补上
+     problem/goal 节点的创建入口与数据。
      ================================================================ */
   const GraphView = {
-    type: 'knowledge',
     sideTab: 'overview',      // 右侧面板 Tab：overview | resources
     _graph: null,             // 最近一次渲染用的图谱数据（面板关系 chips 复用）
     _cur: null,               // 当前选中节点
     meta: {
-      knowledge: { name: '知识图谱', desc: '将课程拆分为相互关联的知识点，精准构建前置 / 后置 / 并列 / 进阶逻辑关系，实现「前有根基，后有进阶，逐级推进」。', legend: [['前置关系', 'var(--rel-pre)'], ['进阶关系', 'var(--rel-advance)'], ['并列关系', 'var(--rel-parallel)']] },
-      problem: { name: '问题图谱', desc: '以问题为牵引构建高阶学习框架：驱动问题 → 子问题拆解 → 映射知识点 → 关联高频错题簇，渐进式培养解决问题的能力。', legend: [['问题拆解', 'var(--rel-split)'], ['知识映射', 'var(--rel-map)'], ['错题关联', 'var(--rel-error)']] },
-      goal: { name: '目标图谱', desc: '基于 OBE 成果导向教育理念，将知识点与能力目标逐级绑定，形成「看得见、看得清」的达成主线，支撑专业目标达成。', legend: [['目标支撑', 'var(--rel-support)']] }
+      knowledge: { name: '知识图谱', desc: '将课程拆分为相互关联的知识点，精准构建前置 / 后置 / 并列 / 进阶逻辑关系，实现「前有根基，后有进阶，逐级推进」。', legend: [['前置关系', 'var(--rel-pre)'], ['进阶关系', 'var(--rel-advance)'], ['并列关系', 'var(--rel-parallel)']] }
     },
 
     render() {
       const el = U.$('#view-graph');
-      const mt = this.meta[this.type];
-      const isKnowledge = this.type === 'knowledge';
-      // 知识图谱铺满可用区域（其余图谱保持普通卡片流）
-      el.classList.toggle('fill', isKnowledge);
+      const mt = this.meta.knowledge;
+      // 知识图谱铺满可用区域
+      el.classList.add('fill');
 
-      const seg = `
+      const toolbar = `
         <div class="graph-toolbar">
-          <div class="seg" id="graphSeg">
-            <button data-t="knowledge" class="${this.type === 'knowledge' ? 'is-active' : ''}">知识图谱</button>
-            <button data-t="problem" class="${this.type === 'problem' ? 'is-active' : ''}">问题图谱</button>
-            <button data-t="goal" class="${this.type === 'goal' ? 'is-active' : ''}">目标图谱</button>
-          </div>
+          <span class="badge badge--brand">${icon('network')} ${mt.name}</span>
           <div class="divider divider--v"></div>
-          <span class="fz-12 t-dim">${mt.name}</span>
-          ${!isKnowledge ? '<span class="badge badge--warn">开发中</span>' : ''}
+          <span class="fz-12 t-dim graph-toolbar__desc">${mt.desc}</span>
           <span class="spacer"></span>
-          ${isKnowledge ? `<button class="btn btn--sm" id="graphReset">${icon('refresh')} 重置视图</button>` : ''}
+          <button class="btn btn--sm" id="graphReset">${icon('refresh')} 重置视图</button>
         </div>`;
-
-      if (!isKnowledge) {
-        const title = this.type === 'problem' ? '问题图谱' : '目标图谱';
-        el.innerHTML = `
-        <div class="card" style="margin-bottom:16px">${seg}</div>
-        <div class="card">
-          <div class="card__head"><h3>${icon(this.type === 'problem' ? 'flask' : 'award')} ${title}</h3>
-            <span class="badge badge--warn">开发中</span></div>
-          <div class="card__body">
-            <div class="empty" style="padding:56px 24px;text-align:center">
-              <div style="font-size:42px;margin-bottom:12px">🚧</div>
-              <b style="font-size:16px;display:block;margin-bottom:8px">${title} · 正在开发</b>
-              <p style="color:var(--text-3);font-size:13px;line-height:1.8;max-width:440px;margin:0 auto">
-                ${this.type === 'problem'
-                  ? '问题驱动的学习框架将按课程真实结构逐步开放，当前不再展示演示节点。'
-                  : 'OBE 目标达成图谱将与课程知识点绑定后开放，当前不再展示演示节点。'}
-              </p>
-              <p class="fz-12 t-dim" style="margin-top:18px">
-                请先使用 <b>知识图谱</b>（教师端已可按目录编排，学生端实时同步）
-              </p>
-            </div>
-          </div>
-        </div>`;
-        U.$$('#graphSeg button', el).forEach(b => b.addEventListener('click', () => {
-          this.type = b.dataset.t; this.render();
-        }));
-        return;
-      }
 
       el.innerHTML = `
+      <style>#view-graph .graph-toolbar__desc{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}</style>
       <div class="card graph-card">
-        ${seg}
+        ${toolbar}
         <div class="graph-layout">
           <div class="graph-box" id="graphBox">
             <div class="graph-hint">滚轮缩放 · 长按拖动 · 双击画布取消选中</div>
@@ -86,11 +62,7 @@
 
       this.paintSideEmpty();
 
-      U.$$('#graphSeg button', el).forEach(b => b.addEventListener('click', () => {
-        this.type = b.dataset.t; this.render();
-      }));
-
-      API.graph.get({ type: this.type }).then(g => {
+      API.graph.get({ type: 'knowledge' }).then(g => {
         if (!el.classList.contains('is-active')) return;   // 竞态：视图已切走
         this._graph = g;
         // 教师布点快照：学生端拖拽会把落点坐标写回 g.nodes（见 charts.js 的「坐标不变量」），
@@ -111,21 +83,17 @@
           this.paintSideEmpty();
         });
 
-        // 重难点 / 关键节点清单
-        const keys = this.type === 'knowledge'
-          ? g.nodes.filter(n => n.isKey).sort((a, b) => a.mastery - b.mastery)
-          : this.type === 'problem'
-            ? g.nodes.filter(n => n.category === 0 || n.category === 3)
-            : g.nodes.filter(n => n.category === 1);
+        // 重难点清单：知识图谱取 isKey 节点，按掌握率升序（最需要补的在前）
+        const keys = g.nodes.filter(n => n.isKey).sort((a, b) => a.mastery - b.mastery);
         U.$('#keyCount').textContent = keys.length + ' 项';
         U.$('#keyList').innerHTML = keys.map(n => {
-          const v = n.mastery !== undefined ? n.mastery : (n.achieve !== undefined ? n.achieve : null);
+          const v = (n.mastery === undefined || n.mastery === null) ? null : n.mastery;
           const lv = v === null ? 'none' : U.level(v);
           const dotColor = (g.categories[n.category] || g.categories[3] || {}).color || 'var(--text-3)';
           return `<div class="list__item list__item--clickable" data-node="${n.id}">
             <span class="list__lead" style="width:8px;height:8px;border-radius:50%;background:${dotColor};margin-top:7px"></span>
             <div class="list__main"><b>${U.esc(n.name)}</b>
-              <p>${n.chapter ? U.esc(n.chapter) + ' · ' : ''}${n.difficulty ? '难度 ' + '★'.repeat(n.difficulty) : ''}${n.count ? n.count + ' 人次错题' : ''}${n.errorRate ? '错误率 ' + n.errorRate + '%' : ''}</p></div>
+              <p>${n.chapter ? U.esc(n.chapter) + ' · ' : ''}${n.difficulty ? '难度 ' + '★'.repeat(n.difficulty) : ''}</p></div>
             ${v !== null ? `<div class="list__trail"><span class="badge ${U.levelBadge[lv]}">${v}%</span></div>` : ''}
           </div>`;
         }).join('') || R.empty('暂无数据');
@@ -312,28 +280,6 @@
     },
 
     openNode(node, g) {
-      // 目标 / 问题类节点：轻量弹窗（保持原交互）
-      if (this.type !== 'knowledge') {
-        const pre = g.links.filter(l => l.target === node.id).map(l => g.nodes.find(n => n.id === l.source)).filter(Boolean);
-        const post = g.links.filter(l => l.source === node.id).map(l => g.nodes.find(n => n.id === l.target)).filter(Boolean);
-        Modal.open({
-          title: node.name,
-          body: `<div class="kv">
-            <div class="kv__row"><span>节点类型</span><span>${g.categories[node.category].name}</span></div>
-            ${node.achieve !== undefined ? `<div class="kv__row"><span>达成度</span><span><b class="mono">${node.achieve}%</b> · 权重 ${node.weight}%</span></div>` : ''}
-            ${node.errorRate !== undefined ? `<div class="kv__row"><span>错误率</span><span class="t-danger mono">${node.errorRate}%</span></div>` : ''}
-            ${node.count !== undefined ? `<div class="kv__row"><span>累计错题</span><span class="mono">${node.count} 人次</span></div>` : ''}
-          </div>
-          ${node.achieve !== undefined ? `<div style="margin-top:14px">${U.bar(node.achieve, null, 'lg')}</div>` : ''}
-          <div class="divider"></div>
-          <p class="fz-12 t-dim" style="margin-bottom:8px">上游节点</p>
-          <div class="chips">${pre.map(n => `<span class="chip">${U.esc(n.name)}</span>`).join('') || '<span class="t-dim fz-12">无</span>'}</div>
-          <p class="fz-12 t-dim" style="margin:14px 0 8px">下游节点</p>
-          <div class="chips">${post.map(n => `<span class="chip">${U.esc(n.name)}</span>`).join('') || '<span class="t-dim fz-12">无</span>'}</div>`
-        });
-        return;
-      }
-
       // 知识图谱：右侧内嵌详情面板（真实学情来自 /graph/kp/{id}）
       this._cur = node.id;
       const rel = this._relOf(node, g);
@@ -357,7 +303,6 @@ Router.register('graph', {
   title: '课程图谱导航',
   mount: () => GraphView.render(),
   reset: () => {
-    GraphView.type = 'knowledge';
     GraphView.sideTab = 'overview';
     GraphView._graph = null;
     GraphView._cur = null;

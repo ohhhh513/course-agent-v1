@@ -24,30 +24,71 @@ from sqlalchemy import func
 router = APIRouter(prefix="/api/v1/practice", tags=["智能练习"])
 
 
-def _expand_kp_ids(db: Session, kp_ids: list[str], course_id: str) -> set[str]:
-    """把细粒度知识点扩展到同章节的其它知识点。
+def _order_pool(db: Session, user_id: str, course_id: str, rows: list, target_kps: list[str]) -> list:
+    """抽题池排序：最薄弱知识点 → 做错过的题 → 难度升序 → 同档随机打散。
 
-    课后题库（KHD）按“章代表知识点”挂载，细分知识点（如 KP02 时间复杂度）题量很少，
-    直接按其 kp_id 组卷往往只有一两道；这里按章节扩到同章其它知识点，凑足同主题题量。
+    target_kps 的顺序即优先级（前端按答题正确率升序给出，最薄弱在前）。
+    「做错过的题」= 该生在该题上最近一次作答是错的（与全站"按题取最近一次"口径一致）。
     """
-    kp_ids = [k for k in kp_ids if k]
-    if not kp_ids:
-        return set()
-    kps = set(kp_ids)
-    rows = db.query(GraphNode).filter(
+    from collections import defaultdict
+    import random
+
+    kp_rank = {kp: i for i, kp in enumerate(target_kps)}
+    wrong_qids: set[str] = set()
+    qids = [r.q_id for r in rows]
+    if qids:
+        latest = db.query(
+            AnswerRecord.q_id, func.max(AnswerRecord.id).label("last_id"),
+        ).filter(
+            AnswerRecord.user_id == user_id,
+            AnswerRecord.course_id == course_id,
+            AnswerRecord.q_id.in_(qids),
+        ).group_by(AnswerRecord.q_id).subquery()
+        for qid, ok in db.query(AnswerRecord.q_id, AnswerRecord.is_correct).join(
+                latest, AnswerRecord.id == latest.c.last_id).all():
+            if not ok:
+                wrong_qids.add(qid)
+
+    buckets: dict = defaultdict(list)
+    for r in rows:
+        rank = kp_rank.get(r.kp_id, len(kp_rank))
+        tier = 0 if r.q_id in wrong_qids else 1      # 做错过的题排前
+        diff = int(r.difficulty or 3)                 # 同档先易后难
+        buckets[(rank, tier, diff)].append(r)
+    out: list = []
+    for key in sorted(buckets):
+        group = buckets[key]
+        random.shuffle(group)                         # 同档内随机，顺序每次不同
+        out.extend(group)
+    return out
+
+
+def _random_scope_kp_ids(db: Session, user_id: str, course_id: str) -> list[str]:
+    """「随机练习」的抽题范围：**学过且有错**的知识点（2026-09-24 重定义）。
+
+    - 学过 = 有作答记录；
+    - 有错 = 按题去重取最近一次作答后，存在答错的题 —— 即加权正确率 < 100%；
+    - 全对 / 从没做过 → 不进入范围（调用方据此返回空池并提示，不再随机抽整门课）。
+
+    口径与 `services/scoring.quiz_accuracy_by_kp` 一致（含多标签的加权：主 KP 1.0 / 其它 0.3）。
+
+    **课程隔离**（2026-09-24 核实后更正）：`quiz_accuracy_by_kp(db, user_id)` 只按 user 聚合、
+    **没有 course 参数**，返回的是该生「所有课程」的知识点正确率表 —— 所以它的**键集合跨课程**。
+    但每个 KP 的**数值本身不跨课**：KP id 全局唯一（`teacher._next_graph_id` 全表取 max+1），
+    一道题只属一门课、其主 KP 与其它标签都指向本课的知识点（库副本实测 0 条例外），
+    且「只取该课程作答记录」重算的结果与全量口径**逐点完全一致**。
+    因此这里按"本课程的知识点"过滤，是为了确定**这门课该在哪些知识点里抽题**
+    （否则切到另一门课时会拿别的课的知识点当范围，那些点在本课根本无题可抽），
+    而不是因为正确率算错了。
+    """
+    from ..services.scoring import quiz_accuracy_by_kp
+
+    acc = quiz_accuracy_by_kp(db, user_id)
+    course_kps = {r[0] for r in db.query(GraphNode.id).filter(
         GraphNode.graph_type == "knowledge",
         GraphNode.course_id == course_id,
-        GraphNode.id.in_(kp_ids),
-    ).all()
-    chapters = {r.chapter for r in rows if r.chapter}
-    if chapters:
-        extra = db.query(GraphNode.id).filter(
-            GraphNode.graph_type == "knowledge",
-            GraphNode.course_id == course_id,
-            GraphNode.chapter.in_(chapters),
-        ).all()
-        kps |= {r[0] for r in extra}
-    return kps
+    ).all()}
+    return [kp for kp, (rate, _n) in acc.items() if rate < 100 and kp in course_kps]
 
 
 def _figure_of(q: Question):
@@ -129,16 +170,46 @@ def practice_modes(
     base = [
         {"key": "weak", "name": "薄弱点强化", "desc": "系统按掌握率自动组卷，命中薄弱知识点", "icon": "target", "recommend": True},
         {"key": "order", "name": "顺序练习", "desc": "按章节与知识点前后置顺序逐题推进", "icon": "list"},
-        {"key": "random", "name": "随机练习", "desc": "在已学范围内随机抽题，检验综合掌握", "icon": "shuffle"},
+        {"key": "random", "name": "随机练习", "desc": "只在「学过且做错过」的知识点里随机抽题", "icon": "shuffle"},
         {"key": "wrong", "name": "错题重练", "desc": "重做历史错题，验证是否真正掌握", "icon": "refresh"},
     ]
+    # 随机练习的题量按"学过且有错"的范围统计（与组卷口径一致，避免卡片写着 15 题、实际只有几道）
+    random_scope = _random_scope_kp_ids(db, user.user_id, course_id)
+    random_cap = 0
+    if random_scope:
+        random_cap = db.query(func.count(Question.q_id)).filter(
+            Question.course_id == course_id,
+            Question.status == "published",
+            Question.kp_id.in_(random_scope),
+        ).scalar() or 0
     for m in base:
         key = m["key"]
-        cap = {"weak": total_qs, "order": total_qs, "random": total_qs, "wrong": wrong_count}[key]
+        cap = {"weak": total_qs, "order": total_qs, "random": random_cap, "wrong": wrong_count}[key]
         m["count"] = min(_BASE_COUNTS[key], cap)
         if cap == 0:
             m["count"] = 0
     return ok(base)
+
+
+@router.get("/kp-pool")
+def practice_kp_pool(
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user),
+    course_id: str = Depends(get_current_course_id),
+):
+    """各知识点的**已发布题量**（「顺序练习」选章节用：没有题的知识点不展示）。
+
+    口径与组卷一致 —— 只统计**主 KP**（`questions.kp_id`），不按 `kp_ids` 多标签扩散：
+    `create_session` 带 kpIds 时就是按主 KP 过滤抽题的，按多标签统计会出现
+    「这里显示有题、进去却抽不到」的偏差。只统计当前课程、status='published' 的题。
+    """
+    rows = db.query(Question.kp_id, func.count(Question.q_id)).filter(
+        Question.course_id == course_id,
+        Question.status == "published",
+        Question.kp_id.isnot(None),
+    ).group_by(Question.kp_id).all()
+    counts = {kp: int(n or 0) for kp, n in rows if (kp or "").strip()}
+    return ok({"counts": counts, "total": sum(counts.values())})
 
 
 @router.post("/sessions")
@@ -149,6 +220,7 @@ def create_session(
     course_id: str = Depends(get_current_course_id),
 ):
     """创建练习会话（组卷）"""
+    target_kps: list[str] = []
     q = db.query(Question).filter(
         Question.course_id == course_id,
         Question.status == "published",
@@ -157,11 +229,23 @@ def create_session(
         # 重做指定题目（错题本“重做本题”）
         q = q.filter(Question.q_id.in_(req.qIds))
     elif req.kpIds:
-        expanded = _expand_kp_ids(db, req.kpIds, course_id)
-        if expanded:
-            q = q.filter(Question.kp_id.in_(expanded))
+        # 只取「当前课程真实存在」的目标知识点，**不扩散到同章**（2026-09-24 改）：
+        # 学生在「薄弱点强化 / 靶向出题」里指定的是知识点，抽到的题就必须属于这些知识点。
+        # 旧实现按章节扩散，会出现「点 KP001 却抽到同章其它（甚至已达标）知识点的题」。
+        want = [str(k).strip() for k in req.kpIds if str(k).strip()]
+        valid = {r[0] for r in db.query(GraphNode.id).filter(
+            GraphNode.graph_type == "knowledge",
+            GraphNode.course_id == course_id,
+            GraphNode.id.in_(want),
+        ).all()}
+        target_kps = [k for k in want if k in valid]     # 保留传入顺序（= 正确率升序）
+        if target_kps:
+            q = q.filter(Question.kp_id.in_(target_kps))
         else:
-            print(f"[practice] 未识别 kpIds={req.kpIds}，回退为全库", flush=True)
+            # 传了 kpIds 但都不属于本课程（多为切换课程后的残留状态）：
+            # 显式返回空池，不再静默回退成「整门课随机」，避免学生以为在练薄弱点。
+            print(f"[practice] kpIds={req.kpIds} 不属于当前课程 {course_id}，返回空池", flush=True)
+            return ok({"sessionId": "", "mode": req.mode, "total": 0, "questions": []})
     elif req.mode == "wrong":
         # 错题重练：只抽该用户错过的题
         wrong_q_ids = [r[0] for r in db.query(AnswerRecord.q_id).filter(
@@ -170,13 +254,33 @@ def create_session(
             AnswerRecord.is_correct == 0,
         ).distinct().all()]
         q = q.filter(Question.q_id.in_(wrong_q_ids))
+    elif req.mode == "random":
+        # 随机练习（2026-09-24 重定义）：只在「学过且有错」的知识点范围内随机抽题。
+        # 已学的全对、或压根没做过 → 显式返回空池 + emptyReason，由前端弹提示，
+        # 不再静默抽整门课（那样等于"没学过也在练"）。
+        scope = _random_scope_kp_ids(db, user.user_id, course_id)
+        if scope:
+            q = q.filter(Question.kp_id.in_(scope))
+        else:
+            print("[practice] random 模式但无「学过且有错」的知识点，返回空池", flush=True)
+            return ok({"sessionId": "", "mode": req.mode, "total": 0, "questions": [],
+                       "emptyReason": "random_scope_empty"})
+    if req.mode == "weak" and not target_kps and not req.qIds:
+        # 「薄弱点强化 / 靶向出题」但没有任何可定位的薄弱点（未作答，或题量不足 2 道）：
+        # 显式返回空池并提示前端，不再静默退化成"整门课随机抽"（2026-09-24）。
+        print("[practice] weak 模式但无可定位的薄弱点（kpIds 为空），返回空池", flush=True)
+        return ok({"sessionId": "", "mode": req.mode, "total": 0, "questions": []})
     if req.difficulty:
         q = q.filter(Question.difficulty == req.difficulty)
-    # 简单随机抽样（真实环境按 mode 智能组卷）
     import random
     all_qs = q.all()
     count = min(req.count, len(all_qs))
-    picked = random.sample(all_qs, count) if all_qs else []
+    if target_kps:
+        # 指定了知识点：按「最薄弱 → 做错过的题 → 难度升序 → 同档随机」取前 count 题
+        picked = _order_pool(db, user.user_id, course_id, all_qs, target_kps)[:count]
+    else:
+        # 未指定知识点（顺序/随机/错题重练等）：保持随机抽样
+        picked = random.sample(all_qs, count) if all_qs else []
 
     # 同一模式只保留一个进行中「存档」：新开练习时，把旧的 running 会话标记为 abandoned
     db.query(PracticeSession).filter(

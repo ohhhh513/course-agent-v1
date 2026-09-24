@@ -21,7 +21,6 @@ const ViewFns = {
   monitor: () => Monitor.render(),
   analysis: () => Analysis.render(),
   question: () => Question.render(),
-  intervention: () => Intervention.render(),
   report: () => Report.render(),
   resource: () => TeacherStructure.render(),
   structure: () => TeacherStructure.render(),

@@ -511,6 +511,12 @@ window.API = (function () {
     modes: (p) => request('GET', '/practice/modes', p, () => M().practiceModes),
 
     /**
+     * GET /practice/kp-pool  各知识点的已发布题量（顺序练习选章节用）
+     * 返回 { counts: { kpId: 题数 }, total }；无题的知识点不在 counts 里。
+     */
+    kpPool: (p) => request('GET', '/practice/kp-pool', p, () => ({ counts: {}, total: 0 })),
+
+    /**
      * POST /practice/sessions  创建练习会话（组卷）
      * body: { mode: weak|order|random|wrong, kpIds?, count, difficulty? }
      */

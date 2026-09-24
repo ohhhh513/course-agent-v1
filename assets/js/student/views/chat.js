@@ -102,7 +102,9 @@
         box.innerHTML = qs.length
           ? qs.map(q => `<button class="ask-item" data-ask="${U.esc(q)}">${icon('bulb')}<span>${U.esc(q)}</span></button>`).join('')
           : '<p class="fz-12 t-dim" style="padding:4px 2px">暂无推荐问题</p>';
-        U.$$('#askBox [data-ask]').forEach(b => b.addEventListener('click', () => this.ask(b.dataset.ask)));
+        // 2026-09-24：点击「猜你想问」只把问题填进输入框，不直接发送 ——
+        // 与驾驶舱/学情的「问 AI」入口统一为「帮你把问题写好，发不发由你决定」。
+        U.$$('#askBox [data-ask]').forEach(b => b.addEventListener('click', () => this.fillInput(b.dataset.ask)));
       }).catch(() => {
         const box = U.$('#askBox');
         if (box) box.innerHTML = '<p class="fz-12 t-dim" style="padding:4px 2px">推荐问题加载失败</p>';
@@ -153,11 +155,20 @@
       const t = this.pendingDraft;
       if (!t) return;
       this.pendingDraft = null;
+      this.fillInput(t, true);   // 跨页带入：页面切换本身已是反馈，不再额外提示
+    },
+
+    /**
+     * 把文字填进输入框：不发送、不切换会话、不清空当前对话。
+     * silent=true 时不弹提示（用于跨页带入的草稿）。
+     */
+    fillInput(question, silent) {
       const input = U.$('#chatInput');
-      if (!input) return;
-      input.value = t;
+      if (!input || !question) return;
+      input.value = question;
       input.dispatchEvent(new Event('input'));   // 触发输入框自适应高度
       input.focus();
+      if (!silent) Toast.info('已填入输入框', '确认或修改后发送');
     },
 
     /**

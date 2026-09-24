@@ -254,18 +254,60 @@
 
         U.$$('#alList [data-detail]').forEach(b => b.addEventListener('click', () => {
           const a = r.list.find(x => x.alertId === b.dataset.detail);
+          // 历史正确率（按天累计）：后端给的 trendData 是近 14 天「截至当天」的累计正确率，
+          // 当天没做题则沿用前一天的值；第一次作答之前的日期为 null（图上留空）。
+          const series = a.trendData || [];
+          const known = series.filter(v => v !== null && v !== undefined);
+          const lastAcc = known.length ? known[known.length - 1] : null;
+          // 最后两个有值的点：用于显示"较上一天 ±x.xpp"
+          const lastIdx = series.reduce((acc, v, i) => (v !== null && v !== undefined ? i : acc), -1);
+          const prevAcc = known.length > 1 ? known[known.length - 2] : null;
+          const diffAcc = (lastAcc !== null && prevAcc !== null) ? Math.round((lastAcc - prevAcc) * 10) / 10 : null;
+          const diffText = diffAcc === null ? '' : (diffAcc > 0 ? `较上一天 +${diffAcc}pp` : diffAcc < 0 ? `较上一天 ${diffAcc}pp` : '与上一天持平');
+          const labels = a.trendXAxis || [];
+          const mainColor = a.level === 'red' ? Charts.tokens().danger : (a.level === 'yellow' ? Charts.tokens().warn : Charts.tokens().ok);
           Modal.open({
             title: '预警详情 · ' + a.student, size: 'wide',
             body: `<p class="fz-12 t-dim" style="margin-bottom:10px">触发规则：<b>${U.esc(a.trigger)}</b></p>
+              <div class="row" style="gap:10px;align-items:baseline;flex-wrap:wrap;margin:0 0 4px">
+                <span class="fz-13">「${U.esc(a.kp || a.kpId || '该知识点')}」历史正确率</span>
+                <b class="mono" style="font-size:22px;color:${lastAcc === null ? 'var(--text-3)' : mainColor}">${lastAcc === null ? '—' : lastAcc + '%'}</b>
+                <span class="fz-11 t-dim">今日为止（近 ${a.trendDays || 14} 天累计）</span>
+                ${diffText ? `<span class="badge ${diffAcc > 0 ? 'badge--ok' : diffAcc < 0 ? 'badge--danger' : 'badge--outline'}">${diffText}</span>` : ''}
+              </div>
+              <p class="fz-12 t-dim" style="margin:0 0 8px">每天取「截至当天」的累计正确率（同一道题只算最近一次作答）；当天没做题就沿用前一天的值，故曲线是台阶式推进。</p>
               <div class="chart chart--sm" id="alTrend"></div>
               <div class="divider"></div>
               <div class="callout callout--brand">${icon('bulb')}
                 <div>建议：${a.level === 'red' ? '立即人工介入 / 推送补救资源' : '持续监控并安排一次靶向练习'}</div></div>`,
-            footer: `<button class="btn" data-close>关闭</button>
-              <button class="btn btn--outline" id="aIv">${icon('route')} 生成干预</button>`,
-            onMount(ov, close) {
-              Charts.line('#alTrend', { xAxis: ['4步前', '3步前', '2步前', '前次', '当前'], series: [{ name: '学习完成率', data: a.trendData, color: a.level === 'red' ? Charts.tokens().danger : Charts.tokens().warn }] }, { max: 100, fmt: '{value}%' });
-              U.$('#aIv', ov).addEventListener('click', () => { close(); Router.go('intervention'); });
+            footer: `<button class="btn" data-close>关闭</button>`,
+            onMount(ov) {
+              Charts.line('#alTrend', {
+                xAxis: labels,
+                series: [
+                  {
+                    name: '累计正确率', data: series, color: mainColor,
+                    // 把"今天/最新"的取值直接标在图上，避免右端数据点看不出数值
+                    markPoint: (lastIdx < 0) ? undefined : {
+                      symbol: 'circle', symbolSize: 9,
+                      itemStyle: { color: mainColor, borderColor: '#fff', borderWidth: 2 },
+                      data: [{
+                        coord: [labels[lastIdx], series[lastIdx]],
+                        value: series[lastIdx] + '%',
+                        label: {
+                          // 取值接近顶部时把标签放到点下方，避免压到图例
+                          show: true, position: series[lastIdx] >= 80 ? 'bottom' : 'top', distance: 8,
+                          formatter: p => (lastIdx === labels.length - 1 ? '今天 ' : '最新 ') + p.value,
+                          color: mainColor, fontSize: 11.5, fontWeight: 600,
+                          backgroundColor: 'rgba(255,255,255,.92)', padding: [2, 5], borderRadius: 4,
+                          borderColor: mainColor, borderWidth: 1,
+                        },
+                      }],
+                    },
+                  },
+                  { name: '达标线 60%', data: labels.map(() => 60), color: Charts.tokens().dim, dashed: true },
+                ],
+              }, { max: 100, fmt: '{value}%', right: 46, top: 44 });
             }
           });
         }));

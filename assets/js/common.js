@@ -414,8 +414,7 @@ const R = {
         <b class="clamp-2">${U.esc(r.title)}</b>
         <div class="row"><span class="badge badge--outline">${label[r.type]}</span><span class="spacer"></span><span>${r.views || 0} 次</span></div>
         <div class="mt-a">
-          ${U.bar(r.progress, r.progress >= 100 ? 'excellent' : r.progress > 0 ? 'fair' : 'none', 'sm')}
-          <div class="row fz-11 t-dim" style="margin-top:4px"><span>${U.esc(r.kp)}</span><span class="spacer"></span><span class="mono">${r.progress}%</span></div>
+          <div class="row fz-11 t-dim"><span>${U.esc(r.kp)}</span><span class="spacer"></span><span class="mono">${r.progress}%</span></div>
         </div>
       </div>
     </div>`;

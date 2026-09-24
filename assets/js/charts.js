@@ -568,7 +568,8 @@ const Charts = (function () {
     return render(sel, (t) => ({
       tooltip: Object.assign(baseTooltip(t), { trigger: 'axis', axisPointer: { type: 'line', lineStyle: { color: t.split } } }),
       legend: { top: 0, right: 0, textStyle: { color: t.text2, fontSize: 11.5 }, itemWidth: 14, itemHeight: 8 },
-      grid: { left: o.yAxes ? 18 : 4, right: o.yAxes ? 30 : 8, top: 36, bottom: 4, containLabel: true },
+      // right 可覆盖：默认 8/30 会让最后一个类目标签贴边被裁掉（如"最近 14 天"的今天）
+      grid: { left: o.left !== undefined ? o.left : (o.yAxes ? 18 : 4), right: o.right !== undefined ? o.right : (o.yAxes ? 30 : 8), top: o.top !== undefined ? o.top : 36, bottom: 4, containLabel: true },
       xAxis: {
         type: 'category', data: data.xAxis, boundaryGap: false,
         axisLine: { lineStyle: { color: t.split } },
@@ -613,7 +614,9 @@ const Charts = (function () {
           lineStyle: { color: t.warn, type: 'dashed', width: 1 },
           label: { color: t.warn, fontSize: 10.5, formatter: p => p.name },
           data: data.milestones.map(m => ({ xAxis: m.x, name: m.label }))
-        } : undefined
+        } : undefined,
+        // 可选的标记点（如把"今天"的取值直接标在图上）
+        markPoint: s.markPoint || undefined
       }))
     }));
   }

@@ -77,18 +77,22 @@ def _local_day_utc_range(day: date) -> tuple:
     )
 
 
-def _today_study_seconds(db: Session, uid: str, today: date) -> dict:
+def _today_study_seconds(db: Session, uid: str, today: date, course_id: str) -> dict:
     """当天累计学习时长（秒）= 当天练习用时 + 当天视频（资源）学习时长。
 
     - 练习：当天开始或结束的会话。已结束取 duration_seconds；进行中的会话按「已作答
       题目的用时」估算，避免把页面挂机时长也算成学习时长。
     - 资源：resource_study_log 记录的当日累计观看秒数（视频播放时按前进秒数累加，
       拖动回退不计），由 /student/resources/{id}/progress 写入。
+    - 课程隔离（2026-09-24）：练习会话按当前课程过滤 —— 学生同时在多门课时，
+      原实现会把别课的练习时长也算进「今日累计学习时长」。
+      注：resource_study_log 表没有课程维度（不改表结构），其口径仍是「该生当天」。
     """
     day_start, day_end = _local_day_utc_range(today)
     touched_at = func.coalesce(PracticeSession.finished_at, PracticeSession.created_at)
     sessions = db.query(PracticeSession).filter(
         PracticeSession.user_id == uid,
+        PracticeSession.course_id == course_id,      # 课程隔离
         touched_at >= day_start,
         touched_at < day_end,
     ).all()
@@ -155,8 +159,9 @@ def student_dashboard(
     # 综合掌握率（答题正确率 ∪ 资源完成率）→ 资源中心展示用
     from ..routers.graph import _mastery_for_user
     from ..services.scoring import quiz_accuracy_by_kp
+    from ..services.alert_detector import ENGAGE_MIN    # 与预警共用同一门槛（≥2 道不同题）
     mastery_map = _mastery_for_user(uid, db)
-    acc_by_kp = quiz_accuracy_by_kp(db, uid)   # {kp: (答题正确率, 不同题目数)} —— 靶向/薄弱点用
+    acc_by_kp = quiz_accuracy_by_kp(db, uid)   # {kp: (加权正确率, 含次要命中的不同题数)}
 
     # --- learning_path（用户专属）---
     lp_rows = db.query(LearningPath).filter(
@@ -194,7 +199,7 @@ def student_dashboard(
     mastery_rate = round(sum(mastery_map.get(r.kp_id, 0) for r in lp_rows) / lp_total, 1) if lp_total else 0
 
     # --- 今日学习时长：累计当天学习时长（练习用时 + 视频观看时长，按本地日历日统计）---
-    today_study = _today_study_seconds(db, uid, today)
+    today_study = _today_study_seconds(db, uid, today, course_id)
     today_seconds = today_study["todaySeconds"]
     today_minutes = today_study["todayMinutes"]
 
@@ -256,8 +261,10 @@ def student_dashboard(
     weak_points = []
     for r in lp_rows:
         q = acc_by_kp.get(r.kp_id)
-        # 薄弱点 = 有作答记录、且【答题正确率】< 60（靶向练习盯的是做题，不看资源进度）
-        if q and q[0] < 60:
+        # 薄弱点（= 靶向练习的候选）判定与**预警同一门槛**（2026-09-24 统一）：
+        #   ① 该知识点上做过至少 ENGAGE_MIN 道不同题（题做太少不算证据，避免"1 道题定生死"）
+        #   ② 加权答题正确率 < 60（靶向盯的是做题，不看资源进度）
+        if q and q[1] >= ENGAGE_MIN and q[0] < 60:
             level = "danger" if q[0] < 40 else "warn"
             weak_points.append({
                 "kpId": r.kp_id, "name": r.name,
@@ -278,6 +285,7 @@ def student_dashboard(
     # 教师“确认”不会改变预警等级；“忽略”与无有效预警均按正常处理。
     active_alerts = db.query(Alert).filter(
         Alert.user_id == uid,
+        Alert.course_id == course_id,          # 课程隔离：只看当前课程的预警
         Alert.level.in_(("red", "yellow")),
         Alert.status.notin_(("closed", "ignored")),
     ).all()
@@ -306,8 +314,11 @@ def student_dashboard(
     # 进行中的练习「存档」→ 待办「继续挑战」（检查会话历史；同一模式最多一条，需有作答进度）
     _mode_cn = {"weak": "薄弱点强化", "order": "顺序练习", "random": "随机练习", "wrong": "错题重练"}
     _ps_todos, _seen_modes = [], set()
+    # 存档续做（「继续挑战」待办）：必须限定当前课程 —— 原实现只按 user_id +
+    # status=running 取，学生切课后仍会看到上一门课留下的未完成练习。（2026-09-24 修）
     for ps in db.query(PracticeSession).filter(
         PracticeSession.user_id == uid,
+        PracticeSession.course_id == course_id,      # 课程隔离
         PracticeSession.status == "running",
     ).order_by(desc(PracticeSession.created_at)).all():
         if ps.mode in _seen_modes:
@@ -340,7 +351,7 @@ def student_dashboard(
     recent = []
     ps_rows = (
         db.query(PracticeSession)
-        .filter(PracticeSession.user_id == uid)
+        .filter(PracticeSession.user_id == uid, PracticeSession.course_id == course_id)  # 课程隔离
         .order_by(desc(func.coalesce(PracticeSession.finished_at, PracticeSession.created_at)))
         .limit(50)
         .all()
@@ -469,13 +480,14 @@ def student_dashboard(
 def study_duration(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
+    course_id: str = Depends(get_current_course_id),
 ):
     """当天累计学习时长（练习用时 + 视频观看时长）。
 
     驾驶舱「今日累计学习时长」的轻量刷新接口：只读 practice_sessions /
     answer_records / resource_study_log 三张真实业务表，不做任何估算或造数。
     """
-    return ok(_today_study_seconds(db, user.user_id, date.today()))
+    return ok(_today_study_seconds(db, user.user_id, date.today(), course_id))
 
 
 def _calc_max_streak(date_set: set) -> int:
@@ -826,19 +838,30 @@ def resource_stats(db: Session = Depends(get_db), user: User = Depends(get_curre
 def mastery_matrix(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
+    course_id: str = Depends(get_current_course_id),
 ):
-    """知识点掌握矩阵 — 从用户专属 learning_paths 动态计算"""
+    """知识点掌握矩阵 — 从用户专属 learning_paths 动态计算（按当前课程隔离）
+
+    课程隔离（2026-09-24）：原实现只按 user_id 过滤，且 GraphNode 完全不过滤课程，
+    导致多课程学生的矩阵把两门课的章节/知识点/答题记录全混在一起 —— 表现就是
+    「切到哪门课，我的学情矩阵都一样」。现全部按 X-Course-Id 收敛。
+    """
     uid = user.user_id
-    lp_map = {lp.kp_id: lp for lp in db.query(LearningPath).filter(LearningPath.user_id == uid).all()}
-    gn_map = {gn.id: gn for gn in db.query(GraphNode).filter(GraphNode.graph_type == "knowledge").all()}
+    lp_map = {lp.kp_id: lp for lp in db.query(LearningPath).filter(
+        LearningPath.user_id == uid, LearningPath.course_id == course_id).all()}
+    gn_map = {gn.id: gn for gn in db.query(GraphNode).filter(
+        GraphNode.graph_type == "knowledge", GraphNode.course_id == course_id).all()}
     wrong_counts = dict(db.query(
         AnswerRecord.kp_id, func.count(AnswerRecord.id)
     ).filter(
-        AnswerRecord.user_id == uid, AnswerRecord.is_correct == 0
+        AnswerRecord.user_id == uid, AnswerRecord.course_id == course_id,
+        AnswerRecord.is_correct == 0
     ).group_by(AnswerRecord.kp_id).all())
     total_counts = dict(db.query(
         AnswerRecord.kp_id, func.count(AnswerRecord.id)
-    ).filter(AnswerRecord.user_id == uid).group_by(AnswerRecord.kp_id).all())
+    ).filter(
+        AnswerRecord.user_id == uid, AnswerRecord.course_id == course_id,
+    ).group_by(AnswerRecord.kp_id).all())
 
     # 按真实 GraphNode 章节动态分组（章节顺序按数字排序，与知识图谱/学习路径一致）
     def _ch_num(ch):
@@ -962,8 +985,9 @@ def growth(
     dimension: str = Query("week"),
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
+    course_id: str = Depends(get_current_course_id),
 ):
-    """成长轨迹 — 按周从 answer_records 聚合生成曲线"""
+    """成长轨迹 — 按周从 answer_records 聚合生成曲线（按当前课程隔离）"""
     uid = user.user_id
     today = date.today()
 
@@ -971,6 +995,7 @@ def growth(
     eight_weeks_ago = today - timedelta(weeks=8)
     recs = db.query(AnswerRecord).filter(
         AnswerRecord.user_id == uid,
+        AnswerRecord.course_id == course_id,     # 课程隔离：只统计当前课程
         func.date(AnswerRecord.created_at) >= eight_weeks_ago,
     ).all()
 
@@ -1006,9 +1031,11 @@ def growth(
     # 学习路径后恒为 NULL），故改为按真实掌握率统计；分母也不再写死 28（图谱已是 34 个）。
     total_kp = db.query(GraphNode).filter(
         GraphNode.graph_type == "knowledge",
+        GraphNode.course_id == course_id,        # 课程隔离：分母只数本课知识点
     ).count() or 1
     mastered_kps = db.query(LearningPath).filter(
         LearningPath.user_id == uid,
+        LearningPath.course_id == course_id,     # 课程隔离
         LearningPath.mastery >= 80,
     ).count()
     mastered_ratio = round(min(mastered_kps, total_kp) / total_kp * 100, 1)
@@ -1041,24 +1068,34 @@ def growth(
 def compare(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
+    course_id: str = Depends(get_current_course_id),
 ):
-    """与班级对比 — 动态排名"""
-    uid = user.user_id
-    class_id = _resolve_class_id(db, user)
+    """与课程内同学对比 — 动态排名（按当前课程隔离）
 
-    # 同班所有学生
-    students = db.query(User).filter(User.role == "student", User.class_name == user.class_name).all()
-    student_uids = [s.user_id for s in students]
+    课程隔离（2026-09-24）：原实现用 users.class_name 找「同班」，但班级维已废弃
+    （新建账号的 class_name 多为空 → 命中所有空班级学生，两门课的人混在一起）。
+    现改为与教师端 _course_students 同源的口径：当前课程的成员（user_courses）。
+    """
+    uid = user.user_id
+
+    # 当前课程内的学生（与 teacher._course_students 同源）
+    from ..models.user_course import UserCourse
+    student_uids = [u for (u,) in db.query(UserCourse.user_id).filter(
+        UserCourse.course_id == course_id,
+        UserCourse.role_in_course == "student",
+    ).all()]
 
     # 为每个学生算两个核心指标
-    my_lp = db.query(LearningPath).filter(LearningPath.user_id == uid).all()
+    my_lp = db.query(LearningPath).filter(
+        LearningPath.user_id == uid, LearningPath.course_id == course_id).all()
     my_done = sum(1 for r in my_lp if r.status == "done")
     my_mastery = round(sum(r.mastery or 0 for r in my_lp if r.mastery and r.mastery > 0) /
                        max(len([r for r in my_lp if r.mastery and r.mastery > 0]), 1), 1)
 
     all_stats = []
     for suid in student_uids:
-        lps = db.query(LearningPath).filter(LearningPath.user_id == suid).all()
+        lps = db.query(LearningPath).filter(
+            LearningPath.user_id == suid, LearningPath.course_id == course_id).all()
         done = sum(1 for r in lps if r.status == "done")
         actives = [r for r in lps if r.mastery and r.mastery > 0]
         avg_m = round(sum(r.mastery for r in actives) / len(actives), 1) if actives else 0
@@ -1096,8 +1133,17 @@ def student_alerts(
     status: str = Query("all"),
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
+    course_id: str = Depends(get_current_course_id),
 ):
-    base_q = db.query(Alert).filter(Alert.user_id == user.user_id)
+    """我的预警（按当前课程隔离）
+
+    课程隔离（2026-09-24）：原实现只按 user_id 过滤，多课程学生会看到其它课程的
+    预警（预警本身自带 course_id，取自被预警知识点所属课程）。
+    """
+    base_q = db.query(Alert).filter(
+        Alert.user_id == user.user_id,
+        Alert.course_id == course_id,
+    )
     stats = {
         "red": base_q.filter(Alert.level == "red").count(),
         "yellow": base_q.filter(Alert.level == "yellow").count(),

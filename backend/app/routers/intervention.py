@@ -543,7 +543,9 @@ def generate_report(
 
     # 4. 真实统计：预警情况
     alert_rows = db.query(Alert).filter(
-        Alert.user_id.in_(student_ids), Alert.status != "closed"
+        Alert.user_id.in_(student_ids),
+        Alert.course_id == course_id,      # 课程隔离：报告只统计本课预警
+        Alert.status != "closed",
     ).all()
     red_cnt = sum(1 for a in alert_rows if a.level == "red")
     yellow_cnt = sum(1 for a in alert_rows if a.level == "yellow")

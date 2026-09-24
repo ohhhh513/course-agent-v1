@@ -74,6 +74,72 @@ def china_day_bounds_utc(day) -> tuple[datetime, datetime]:
     )
 
 
+def daily_accuracy_series(db: Session, user_id: str, course_id: str, kp_id: str, days: int = 14) -> dict:
+    """某学生某知识点近 N 天的「累计正确率」曲线（预警详情用）。
+
+    口径与 `services/scoring.quiz_accuracy_by_kp` 完全一致（按题去重取最近一次作答；
+    主 KP 权重 1.0、其它标签权重 SECONDARY_KP_WEIGHT），只是把"截至时刻"改成按天：
+      - 每天的取值 = 截至该日（含）为止的加权正确率；
+      - 当天没作答 → 分子分母都不变 → 沿用前一天的值（"昨天 40%、今天没做还是 40%"）；
+      - 该知识点第一次作答之前 → None（图上留空，不画成 0）。
+    日期按中国时区自然日切分（库里 created_at 存的是 UTC naive）。
+    """
+    from ..models.practice import AnswerRecord
+    from ..models.question import Question
+    from ..services.catalog_helpers import parse_kp_ids
+    from ..services.scoring import SECONDARY_KP_WEIGHT
+
+    today = china_now().date()
+    start_day = today - timedelta(days=days - 1)
+    labels = [(start_day + timedelta(days=i)).strftime("%m-%d") for i in range(days)]
+
+    rows = db.query(
+        AnswerRecord.q_id, AnswerRecord.is_correct, AnswerRecord.created_at,
+    ).filter(
+        AnswerRecord.user_id == user_id,
+        AnswerRecord.course_id == course_id,
+        AnswerRecord.created_at.isnot(None),
+    ).order_by(AnswerRecord.created_at.asc(), AnswerRecord.id.asc()).all()
+
+    qids = list({r[0] for r in rows if r[0]})
+    kp_of: dict = {}
+    tags_of: dict = {}
+    if qids:
+        for qid, kp_primary, kp_ids in db.query(
+                Question.q_id, Question.kp_id, Question.kp_ids).filter(
+                Question.q_id.in_(qids)).all():
+            kp_of[qid] = (kp_primary or "").strip()
+            tags_of[qid] = parse_kp_ids(kp_ids)
+
+    # 只保留与该知识点相关的作答，并定好每题权重（主命中 1.0 / 次要命中 0.3）
+    seq: list = []
+    for qid, ok, created in rows:
+        if not qid:
+            continue
+        if kp_of.get(qid) == kp_id:
+            weight = 1.0
+        elif kp_id in tags_of.get(qid, []):
+            weight = float(SECONDARY_KP_WEIGHT)
+        else:
+            continue
+        seq.append((created, qid, bool(ok), weight))
+
+    data: list = []
+    latest: dict = {}          # q_id -> (最近一次是否答对, 权重)
+    ptr = 0
+    for i in range(days):
+        day = start_day + timedelta(days=i)
+        _, day_end = china_day_bounds_utc(day)
+        while ptr < len(seq) and seq[ptr][0] <= day_end:
+            _, qid, ok, weight = seq[ptr]
+            latest[qid] = (ok, weight)
+            ptr += 1
+        den = sum(w for _ok, w in latest.values())
+        num = sum(w for ok, w in latest.values() if ok)
+        data.append(round(num / den * 100, 1) if den else None)
+    return {"xAxis": labels, "data": data, "days": days}
+
+
 # ------- Pydantic 请求体 -------
 class AlertReviewReq(BaseModel):
     action: str           # confirm / ignore
@@ -172,6 +238,7 @@ def teacher_dashboard(
     # 预警查询条件：课程维（class_id 可能为空，故按学生列表过滤）
     active_alerts_all = db.query(Alert).filter(
         Alert.user_id.in_(student_ids) if student_ids else Alert.user_id.is_(None),
+        Alert.course_id == course_id,          # 课程隔离：学生同时在多门课时，只取本课预警
         Alert.level.in_(("red", "yellow")),
         Alert.status.notin_(("closed", "ignored")),
     ).all() if student_ids else []
@@ -867,7 +934,9 @@ def teacher_alerts(
     q = db.query(Alert)
     sids = [s.user_id for s in _course_students(db, course_id)]
     if sids:
-        q = q.filter(Alert.user_id.in_(sids))
+        # 课程隔离（2026-09-24）：既按「课程学生」收敛，也按预警自身的 course_id 收敛 ——
+        # 学生同时选了两门课时，只按学生过滤会把另一门课的预警也带出来。
+        q = q.filter(Alert.user_id.in_(sids), Alert.course_id == course_id)
     else:
         return ok(list_response([], 0))
     if level and level != "all":
@@ -892,22 +961,11 @@ def teacher_alerts(
     }
 
     def alert_to_dict(a: Alert) -> dict:
-        # 趋势数据：取该学生该 kp 最近 5 次 answer_records 的正确率
-        trend_data = []
-        ars = db.query(AnswerRecord).filter(
-            AnswerRecord.user_id == a.user_id,
-            AnswerRecord.kp_id == a.kp_id,
-        ).order_by(AnswerRecord.created_at.desc()).limit(5).all()
-        ars = list(reversed(ars))  # 时间升序
-        if ars:
-            # 用每 1 次正确率（单点）→ 填充到 5 个点
-            for i in range(5):
-                if i < len(ars):
-                    trend_data.append(100 if ars[i].is_correct else 0)
-                else:
-                    trend_data.append(None)
-        else:
-            trend_data = [None] * 5
+        # 历史正确率：该学生该知识点近 14 天的「累计正确率」（按天；当天没做题沿用前一天）
+        # 2026-09-24：替换原「最近 5 次作答的对错（0/100 点）」—— 那只是单次对错，看不出趋势。
+        trend = daily_accuracy_series(
+            db, a.user_id, a.course_id or course_id, a.kp_id, days=14,
+        )
 
         return {
             "alertId": a.alert_id,
@@ -921,7 +979,9 @@ def teacher_alerts(
             "kp": a.kp_name or "",
             "kpId": a.kp_id or "",
             "detail": loads(a.detail_json) or {},
-            "trendData": trend_data,
+            "trendData": trend["data"],
+            "trendXAxis": trend["xAxis"],
+            "trendDays": trend["days"],
             "createdAt": format_china_time(a.created_at, "%Y-%m-%d %H:%M"),
             "status": "open" if a.status in ("read", "pending") else a.status,
             "note": a.note or "",
@@ -937,17 +997,29 @@ def review_alert(
     req: AlertReviewReq,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
+    course_id: str = Depends(get_current_course_id),
 ):
+    """复核预警（确认 / 忽略）—— 课程隔离 + 课程内角色校验
+
+    2026-09-24 修复：原实现按班级维校验（在 TeacherClass 里找 alert.class_id），
+    而班级维已废弃 —— `teacher_classes` / `classes` 两表为空、`alert.class_id`
+    恒为 None，于是任何复核都返回 403「无权复核非本班预警」，教师端复核完全不可用。
+    现改为：
+      1) 预警必须属于当前课程（X-Course-Id；get_current_course_id 已校验成员身份）；
+      2) 调用者必须是该课程内的教师（user_courses.role_in_course == "teacher"）；
+    注意：`alert.class_id` 不再参与鉴权，保持恒为 None 也不影响。
+    """
     alert = db.query(Alert).filter(Alert.alert_id == alert_id).first()
     if not alert:
         return fail("预警不存在", 404)
-    # 越权校验：只能复核本班预警
-    teacher_class_ids = {
-        tc.class_id
-        for tc in db.query(TeacherClass).filter(TeacherClass.teacher_user_id == user.user_id).all()
-    }
-    if alert.class_id not in teacher_class_ids:
-        return fail("无权复核非本班预警", 403)
+    if alert.course_id != course_id:
+        return fail("无权复核其它课程的预警", 403)
+    member = db.query(UserCourse).filter(
+        UserCourse.user_id == user.user_id,
+        UserCourse.course_id == course_id,
+    ).first()
+    if not member or member.role_in_course != "teacher":
+        return fail("仅该课程的教师可复核预警", 403)
     if req.action not in ("confirm", "ignore"):
         return fail("不支持的复核操作", 400)
     if req.action == "ignore":
