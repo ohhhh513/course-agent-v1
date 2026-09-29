@@ -47,6 +47,7 @@ from ..services.catalog_helpers import (
     resolve_kp_labels as _resolve_kp_labels,
     resource_kp_ids as _resource_kp_ids,
     question_kp_ids as _question_kp_ids,
+    question_kp_clause as _question_kp_clause,
 )
 
 # 教师端时间处理：数据库保存 naive UTC，接口展示和日期统计使用中国标准时间。
@@ -2943,10 +2944,12 @@ def structure_overview(
     for r in resources:
         for kid in _resource_kp_ids(r):
             res_counts[kid] = res_counts.get(kid, 0) + 1
-    q_counts = dict(db.query(Question.kp_id, func.count()).filter(
-        Question.course_id == course_id,
-        Question.kp_id.isnot(None), Question.kp_id != "",
-    ).group_by(Question.kp_id).all())
+    # 题目数口径 = 主 KP ∪ kp_ids 标签，与上面的资源数（_resource_kp_ids）一致；
+    # 否则「自己没题、只被别的题挂标签」的子知识点会显示 题目 0，但学生能练、也会出预警。
+    q_counts: dict = {}
+    for _q in db.query(Question).filter(Question.course_id == course_id).all():
+        for _kid in _question_kp_ids(_q):
+            q_counts[_kid] = q_counts.get(_kid, 0) + 1
     pre_map = {}
     for s, t in db.query(GraphLink.source, GraphLink.target).filter(
         GraphLink.course_id == course_id, GraphLink.relation == "pre",
@@ -3570,8 +3573,10 @@ def get_kp_detail(
         or ((not (r.kp_id or "").strip()) and chapter and (r.kp or "").startswith(chapter))
     ]
     video_res_ids = [r.res_id for r in res_rows if r.type == "video"]
+    # 题目数同资源口径：主 KP ∪ kp_ids 标签（2026-09-29），保证面板内两个数字同一规则
     question_count = db.query(Question).filter(
-        Question.kp_id == kpId, Question.status == "published",
+        Question.status == "published",
+        _question_kp_clause(Question, [kpId]),
     ).count()
 
     from ..services.kp_stats import kp_course_stats

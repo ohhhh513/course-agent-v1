@@ -19,6 +19,7 @@ from ..middleware.auth import get_current_user
 from ..dependencies import get_current_course_id
 from ..schemas.common import ok, fail, list_response
 from ..utils import loads, fmt_dt
+from ..services.catalog_helpers import question_kp_clause, question_kp_ids
 from sqlalchemy import func
 
 router = APIRouter(prefix="/api/v1/practice", tags=["智能练习"])
@@ -29,6 +30,10 @@ def _order_pool(db: Session, user_id: str, course_id: str, rows: list, target_kp
 
     target_kps 的顺序即优先级（前端按答题正确率升序给出，最薄弱在前）。
     「做错过的题」= 该生在该题上最近一次作答是错的（与全站"按题取最近一次"口径一致）。
+
+    2026-09-29：题目归属改为「主 KP ∪ kp_ids 标签」（与归因/预警口径一致）。
+    之前的实现只按主 KP 归位，导致"自己一道题都没有、只被别的题挂标签"的子知识点
+    抽不到任何题。排序上主命中优先，纯标签命中排在同档之后。
     """
     from collections import defaultdict
     import random
@@ -51,10 +56,15 @@ def _order_pool(db: Session, user_id: str, course_id: str, rows: list, target_kp
 
     buckets: dict = defaultdict(list)
     for r in rows:
-        rank = kp_rank.get(r.kp_id, len(kp_rank))
+        ranks = [kp_rank[k] for k in question_kp_ids(r) if k in kp_rank]
+        if ranks:
+            rank = min(ranks)
+            tag_only = 0 if (r.kp_id or "").strip() in kp_rank else 1
+        else:
+            rank, tag_only = len(kp_rank), 1
         tier = 0 if r.q_id in wrong_qids else 1      # 做错过的题排前
         diff = int(r.difficulty or 3)                 # 同档先易后难
-        buckets[(rank, tier, diff)].append(r)
+        buckets[(rank, tag_only, tier, diff)].append(r)
     out: list = []
     for key in sorted(buckets):
         group = buckets[key]
@@ -180,7 +190,7 @@ def practice_modes(
         random_cap = db.query(func.count(Question.q_id)).filter(
             Question.course_id == course_id,
             Question.status == "published",
-            Question.kp_id.in_(random_scope),
+            question_kp_clause(Question, random_scope),
         ).scalar() or 0
     for m in base:
         key = m["key"]
@@ -197,19 +207,24 @@ def practice_kp_pool(
     user=Depends(get_current_user),
     course_id: str = Depends(get_current_course_id),
 ):
-    """各知识点的**已发布题量**（「顺序练习」选章节用：没有题的知识点不展示）。
+    """各知识点的**可练习题量**（「顺序练习」选章节用：没有题的知识点不展示）。
 
-    口径与组卷一致 —— 只统计**主 KP**（`questions.kp_id`），不按 `kp_ids` 多标签扩散：
-    `create_session` 带 kpIds 时就是按主 KP 过滤抽题的，按多标签统计会出现
-    「这里显示有题、进去却抽不到」的偏差。只统计当前课程、status='published' 的题。
+    口径 = 主 KP ∪ `kp_ids` 多标签，与组卷（`create_session`）完全一致。
+
+    2026-09-29 修正：原实现只统计主 KP。像「拓扑与关键路径」这种**自己一道题都没有、
+    只被别的题挂标签**的子知识点，会被算成 0 题 —— 于是顺序练习把它隐藏、靶向练习
+    也抽不到题，但它的正确率照样会因为标签加权而下降、照样会出预警，变成**学生永远
+    消不掉的红点**。现在它与主命中的题目一起计数。
     """
-    rows = db.query(Question.kp_id, func.count(Question.q_id)).filter(
+    qs = db.query(Question).filter(
         Question.course_id == course_id,
         Question.status == "published",
-        Question.kp_id.isnot(None),
-    ).group_by(Question.kp_id).all()
-    counts = {kp: int(n or 0) for kp, n in rows if (kp or "").strip()}
-    return ok({"counts": counts, "total": sum(counts.values())})
+    ).all()
+    counts: dict = {}
+    for q in qs:
+        for kp in question_kp_ids(q):
+            counts[kp] = counts.get(kp, 0) + 1
+    return ok({"counts": counts, "total": len(qs)})
 
 
 @router.post("/sessions")
@@ -240,7 +255,10 @@ def create_session(
         ).all()}
         target_kps = [k for k in want if k in valid]     # 保留传入顺序（= 正确率升序）
         if target_kps:
-            q = q.filter(Question.kp_id.in_(target_kps))
+            # 抽题口径 = 主 KP ∪ kp_ids 标签（2026-09-29 修正）。
+            # 只按主 KP 抽会把"自己没有题、只被别的题挂标签"的子知识点变成空池，
+            # 而那些题恰恰是把该子知识点正确率拖低、并触发它预警的来源。
+            q = q.filter(question_kp_clause(Question, target_kps))
         else:
             # 传了 kpIds 但都不属于本课程（多为切换课程后的残留状态）：
             # 显式返回空池，不再静默回退成「整门课随机」，避免学生以为在练薄弱点。
@@ -260,7 +278,8 @@ def create_session(
         # 不再静默抽整门课（那样等于"没学过也在练"）。
         scope = _random_scope_kp_ids(db, user.user_id, course_id)
         if scope:
-            q = q.filter(Question.kp_id.in_(scope))
+            # 同样按「主 KP ∪ 标签」取题：子知识点在范围内时也能抽到它的关联题
+            q = q.filter(question_kp_clause(Question, scope))
         else:
             print("[practice] random 模式但无「学过且有错」的知识点，返回空池", flush=True)
             return ok({"sessionId": "", "mode": req.mode, "total": 0, "questions": [],

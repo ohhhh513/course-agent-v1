@@ -35,6 +35,11 @@
 
     render() {
       const el = U.$('#view-practice');
+      // render() 画出来的标签页固定是「智能练习」高亮，因此状态也必须是 quiz；
+      // 否则上一次停留在「错题本」时再进本页，renderSelect() 的 stale() 判定会
+      // 因 this.tab !== 'quiz' 直接 return —— 页面停在骨架屏，且 _pendingTarget
+      //（预警「去练习」带过来的知识点）永远不会被消费。
+      this.tab = 'quiz';
       el.innerHTML = `
       <div class="tabs" id="pTabs" style="margin-bottom:16px">
         <button class="is-active" data-t="quiz">智能练习</button>
@@ -899,6 +904,9 @@ Router.register('practice', {
   title: '智能练习',
   mount: () => Practice.render(),
   reset: () => Practice.resetCourseContext(),
-  // 已 mount 过时再次进入：只在带「继续挑战」待办时重绘（否则会打断进行中的练习）
-  update: () => { if (Practice._pendingResume) Practice.render(); },
+  // 已 mount 过时再次进入：只在带待办时重绘（否则会打断进行中的练习）。
+  // 「预警 → 去练习」会在跳转前设置 _pendingTarget，若这里不重绘，
+  // 该目标要等到用户手动再进一次练习页才会生效（表现为"点了没反应、
+  // 得先点一次薄弱点强化再退出才进去"）。
+  update: () => { if (Practice._pendingResume || Practice._pendingTarget) Practice.render(); },
 });

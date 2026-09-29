@@ -16,6 +16,7 @@ from ..models.user import User
 from ..middleware.auth import get_current_user, get_current_user_optional
 from ..dependencies import get_current_course_id
 from ..schemas.common import ok
+from ..services.catalog_helpers import question_kp_clause
 
 router = APIRouter(prefix="/api/v1/graph", tags=["图谱"])
 
@@ -266,9 +267,12 @@ def kp_detail(
             completion_rate = 100 if lp[0] == "done" else round(lp[1] or 0, 1)
 
     # 题库题数 + 个人错题数
+    # 题数口径 = 主 KP ∪ kp_ids 标签（2026-09-29）：与练习抽题、归因加权一致。
+    # 否则「自己没题、只被别的题挂标签」的子知识点会显示"题库 0 题"，
+    # 但学生点靶向练习又能抽到题（甚至它的预警就是这么来的），前后矛盾。
     question_count = db.query(Question).filter(
-        Question.kp_id == kp_id,
         Question.status == "published",
+        question_kp_clause(Question, [kp_id]),
     ).count()
     wrong_count = 0
     if uid:

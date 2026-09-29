@@ -69,3 +69,21 @@ def question_kp_ids(q) -> list[str]:
     if primary and primary not in ids:
         ids.insert(0, primary)
     return ids
+
+
+def question_kp_clause(model, kp_ids):
+    """SQL 条件：题目命中这些知识点 —— 主 KP（`kp_id`）∪ 多标签（`kp_ids`）。
+
+    与 `resource_hits_kp` 的资源口径、以及归因/预警用的
+    `services.scoring.quiz_accuracy_by_kp`（主 1.0 / 标签 0.3）保持同源。
+    用带引号的 LIKE 精确匹配 JSON 里的元素，避免 "KP01" 命中 "KP018" 这类前缀误伤。
+    """
+    from sqlalchemy import or_
+
+    ids = [str(k).strip() for k in (kp_ids or []) if str(k or "").strip()]
+    if not ids:
+        return None
+    clauses = [model.kp_id.in_(ids)]
+    for k in ids:
+        clauses.append(model.kp_ids.like(f'%"{k}"%'))
+    return or_(*clauses)
