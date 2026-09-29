@@ -50,11 +50,12 @@
           <div class="card__body card__body--flush"><div class="list" id="stuList" style="height:calc(100vh - 184px);overflow:auto">${U.skeleton(300)}</div></div>
         </div>
 
-        <div class="card">
+        <div class="card card--alerts">
           <div class="card__head"><h3>${icon('bell')} 异常预警列表</h3><span class="spacer"></span>
+            <span class="badge badge--outline" id="alCount"></span>
             <div class="seg" id="alSeg"><button data-l="all" class="is-active">全部</button><button data-l="red">红</button><button data-l="yellow">黄</button></div>
           </div>
-          <div class="card__body stack" id="alList" style="height:calc(100vh - 220px);min-height:240px;overflow:auto">${U.skeleton(300)}</div>
+          <div class="card__body stack" id="alList" style="height:calc(100vh - 240px);min-height:180px;overflow:auto">${U.skeleton(300)}</div>
         </div>
       </div>`;
 
@@ -226,6 +227,30 @@
       });
     },
 
+    /**
+     * 异常预警卡内滚动：可见高度固定为 4 张卡片，其余靠容器自身滚动条查看。
+     * 高度不写死像素 —— 按首张卡片的真实高度 + 列表 gap + 容器上下内边距算出来，
+     * 这样卡片内容（标题行数、描述换行）变化时仍然正好是 4 条。
+     * 不足 4 条时把高度交还给内容，避免卡片底部留一大片空白。
+     */
+    _clampAlertList(box) {
+      if (!box) return;
+      const cards = U.$$('.alert-card', box);
+      if (cards.length <= 4) {
+        box.style.height = 'auto';
+        box.style.maxHeight = '';
+        box.classList.remove('alert-list--scroll');
+        return;
+      }
+      const cs = getComputedStyle(box);
+      const cardH = cards[0].getBoundingClientRect().height;
+      const gap = parseFloat(cs.rowGap) || 16;
+      const pad = (parseFloat(cs.paddingTop) || 0) + (parseFloat(cs.paddingBottom) || 0);
+      box.style.height = 'auto';
+      box.style.maxHeight = Math.ceil(cardH * 4 + gap * 3 + pad + 2) + 'px';
+      box.classList.add('alert-list--scroll');
+    },
+
     loadAlerts() {
       const self = this;
       API.teacher.alerts({ level: this.level }).then(r => {
@@ -251,6 +276,11 @@
               ${a.status === 'open' || a.status === 'reviewed' || a.status === 'ignored' ? `<button class="btn btn--sm btn--primary" data-review="${a.alertId}">${a.status === 'open' ? '复核' : '重新复核'}</button>` : ''}
             </div>
           </div>`).join('') || R.empty('暂无该级别预警', '', 'checkCircle');
+
+        // 列表只展示 4 条，其余在卡内滚动（2026-09-24 需求）。
+        const cnt = U.$('#alCount');
+        if (cnt) cnt.textContent = (r.total || r.list.length) ? `共 ${r.total || r.list.length} 条` : '';
+        this._clampAlertList(box);
 
         U.$$('#alList [data-detail]').forEach(b => b.addEventListener('click', () => {
           const a = r.list.find(x => x.alertId === b.dataset.detail);

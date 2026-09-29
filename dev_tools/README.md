@@ -198,3 +198,37 @@ python dev_tools\init_course.py ^
 ---
 
 **一句话：** 启动后端 → 管理员建教师 → 运行 `init_course.py` 按提示填三类资源目录、选教师与课程 → 得到 `courseId` / `inviteCode` → 学生凭码入课。
+
+---
+
+## 11. 生成一份「演示库」（1 教师 + 10 学生，带学情）
+
+目标：一条可复现的流水线，产出一个**内容 + 学情都真实**的演示数据库
+（默认就是 `backend/app/data/course_agent.db`，`start.bat` 直接用它）。
+
+分工原则：**课程内容一律走上面的官方导入器**，`seed_demo_db.py` 只补「账号 + 学情」。
+
+| 步骤 | 命令 | 说明 |
+| --- | --- | --- |
+| ① 生成导入配置 | `python dev_tools\seed_demo_db.py config` | 由 `course_structure_ds.json` 派生 `demo_config.json`，把课名与三类资源根改成仓库内素材（`resources/data-structures-1-9/`，65 个文件） |
+| ② 建库 + 账号 | `python dev_tools\seed_demo_db.py init-db [--force]` | 建表 + 1 管理员 / 1 教师（wangjg）/ 10 名学生（stu01…stu10）/ 班级 |
+| ③ 起后端 | `start.bat`（或 `python -m uvicorn app.main:app --port 8000`） | 后端必须指向同一份库 |
+| ④ 教师建课 | 教师端顶栏「+」建课，或 `POST /api/v1/teacher/courses` | `init_course.py` 的非交互模式要先有课号 |
+| ⑤ 章/KP/资源 | `python dev_tools\init_course.py --config dev_tools\demo_config.json --course <课号> --teacher wangjg --password 123456` | 9 章 / 26 KP / 65 个资源，全部走上传接口 |
+| ⑥ 题库 | `python dev_tools\import_questions.py --course <课号> --teacher wangjg --password 123456` | 228 题，按 KP 名称挂载 |
+| ⑦ 知识点关系与介绍 | `python dev_tools\seed_demo_db.py content --course <课号>` | 27 条前置链 + 6 条并列关系 + 26 条知识点介绍；同时给画布布好坐标（需服务在跑） |
+| ⑧ 学情 | 停后端 → `python dev_tools\seed_demo_db.py activity --course <课号>` | 10 名学生的答题/练习/资源进度/打卡/消息/答疑，再由后端自身逻辑推导学习路径与预警 |
+| ⑨ 直接演示 | 重新 `start.bat` | 账号见输出，或随时 `python dev_tools\seed_demo_db.py accounts` |
+
+要点：
+
+- `activity` 可重复执行：它会先清掉这 10 名学生在该课程里上次生成的数据，再重算，**不动课程内容**。
+- 学生的掌握率/正确率/预警**不是写死的**：脚本只生成 `answer_records` 等原始记录，
+  学习路径用 `services/learning_path.sync_user`、预警用 `services.alert_detector.detect_alerts` 推导，
+  所以页面之间口径一致（换随机种子 `--seed` 可重来一套）。
+- 10 名学生的画像（学霸→落后）定义在 `seed_demo_db.py` 顶部的 `PROFILES`，改完重跑 `activity` 即可。
+- 知识点关系与介绍写在 `seed_demo_db.py` 顶部的 `KP_PRE` / `KP_PARALLEL` / `KP_SUMMARY`（用**知识点名称**书写，脚本再解析成 id），
+  推送时走教师端官方接口：`PUT /teacher/graph/kp-topology`（坐标 + 并列）与
+  `PUT /teacher/structure/kps/{id}/relations`（前置，含环检测、并双写 `kp_details.pre_kp/post_kp`）；
+  介绍走 `PUT /teacher/structure/kps/{id}` 落 `kp_details.summary`。
+  ⚠️ 顺序不能反：拓扑接口是**覆盖式**重写 pre/advance/parallel，所以先推拓扑、再推前置关系。

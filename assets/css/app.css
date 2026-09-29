@@ -804,6 +804,15 @@
   min-height: 44px;
 }
 
+/* 异常预警列表：只展示 4 条，其余在卡内滚动
+   （可见高度由 monitor.js 按首张卡片真实高度算出，这里只负责滚动条与卡片对齐） */
+.card--alerts { align-self: start; }
+#alList.alert-list--scroll { scrollbar-gutter: stable; }
+#alList.alert-list--scroll::-webkit-scrollbar { width: 6px; }
+#alList.alert-list--scroll::-webkit-scrollbar-track { background: var(--surface-3); border-radius: var(--r-full); }
+#alList.alert-list--scroll::-webkit-scrollbar-thumb { background: var(--brand-300); border-radius: var(--r-full); }
+#alList.alert-list--scroll::-webkit-scrollbar-thumb:hover { background: var(--brand-400); }
+
 /* ---------- 教师端：热力图辅助 ---------- */
 .hm-legend { display: flex; align-items: center; gap: 8px; font-size: 11.5px; color: var(--text-3); }
 .hm-legend__bar {
