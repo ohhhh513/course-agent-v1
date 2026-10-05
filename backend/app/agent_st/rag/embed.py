@@ -91,7 +91,11 @@ def embed_texts(texts: list[str]) -> list[list[float]]:
     except ImportError as exc:  # pragma: no cover
         raise RuntimeError("需要安装 openai 才能调用远程 embedding") from exc
     base = settings.embedding_base_url or settings.llm_base_url
-    client = OpenAI(api_key=settings.embedding_api_key, base_url=base)
+    # 与 chat 同一套客户端构造：默认忽略系统代理（见 agent_st/net.py）
+    from ..net import sync_client
+
+    client = sync_client(base, settings.embedding_api_key,
+                         use_env_proxy=bool(getattr(settings, "llm_use_env_proxy", False)))
 
     vectors: list[list[float]] = []
     for start in range(0, len(texts), EMBED_BATCH_SIZE):

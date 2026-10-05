@@ -30,6 +30,9 @@ class AgentSettings:
     max_steps: int
     off_topic_score: float
 
+    # 默认忽略系统代理（见 backend/app/config.py 里 LLM_USE_ENV_PROXY 的说明）；
+    # 必须放在所有无默认值字段之后，否则 dataclass 报 "non-default argument follows default"。
+    llm_use_env_proxy: bool = False
     extra: dict = field(default_factory=dict)
 
 
@@ -44,6 +47,7 @@ class _Bridge:
             llm_base_url=app_settings.LLM_BASE_URL,
             llm_api_key=app_settings.LLM_API_KEY,
             llm_model=app_settings.LLM_MODEL,
+            llm_use_env_proxy=bool(getattr(app_settings, "LLM_USE_ENV_PROXY", False)),
             embedding_base_url=app_settings.EMBEDDING_BASE_URL,
             embedding_api_key=app_settings.EMBEDDING_API_KEY,
             embedding_model=app_settings.EMBEDDING_MODEL,

@@ -17,7 +17,12 @@ def chat_available() -> bool:
 
 def _client():
     settings = get_settings()
-    return OpenAI(api_key=settings.llm_api_key, base_url=settings.llm_base_url)
+    # 统一走 agent_st.net：默认忽略系统代理（本机挂着不通的 VPN 时，
+    # httpx 会静默走它并导致所有调用 APIConnectionError）。
+    from ..net import sync_client
+
+    return sync_client(settings.llm_base_url, settings.llm_api_key,
+                       use_env_proxy=bool(getattr(settings, "llm_use_env_proxy", False)))
 
 
 def complete(messages: list[dict], tools: list[dict] | None) -> dict:
