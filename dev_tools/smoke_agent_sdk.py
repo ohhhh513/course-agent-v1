@@ -106,7 +106,8 @@ def main():
     print(f"引用条数    : {len(citations)}")
     print(f"建议动作    : {actions}")
     print(f"done        : {done}")
-    print(f"回答文本    : {((''.join(text_parts)) or '')[:400]}")
+    answer = ''.join(text_parts)
+    print(f"回答文本    : （{len(answer)} 字）\n{answer[:2000]}")
     db.close()
 
 
