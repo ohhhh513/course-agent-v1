@@ -23,6 +23,21 @@ REM --- 1. Check prerequisites ---
 echo  [1/5] Checking environment...
 
 set "PYTHON="
+
+REM 优先使用项目自带虚拟环境 backend\.venv（依赖与 backend\requirements.txt 一致：
+REM fastapi / sqlalchemy / openai / openai-agents 都在里面，Agent 运行层才能切到 sdk）。
+REM 若 venv 不存在或依赖不全，则回落到下面的 Python 3.11 自动探测逻辑。
+set "VENV_PY=%BACKEND%\.venv\Scripts\python.exe"
+if exist "%VENV_PY%" (
+    "%VENV_PY%" -c "import fastapi, sqlalchemy, uvicorn, jose, passlib, openai" >nul 2>nul
+    if not errorlevel 1 (
+        set "PYTHON=%VENV_PY%"
+        echo        Using project venv: backend\.venv
+    ) else (
+        echo        [warn] backend\.venv 存在但依赖不全，回落到系统 Python
+    )
+)
+
 for /f "delims=" %%E in ('where python3.11 2^>nul') do if not defined PYTHON set "PYTHON=%%E"
 if not defined PYTHON (
     for /f "delims=" %%E in ('py -3.11 -c "import sys;print(sys.executable)" 2^>nul') do if not defined PYTHON set "PYTHON=%%E"
@@ -65,7 +80,8 @@ ping -n 3 127.0.0.1 >nul
 REM --- 3. Ensure dependencies ---
 echo.
 echo  [3/5] Checking dependencies...
-"%PYTHON%" -c "import fastapi, sqlalchemy, uvicorn, jose, passlib" 2>nul
+REM openai 也在检查项里：缺了它智能答疑会静默退回演示模式（只检索、不调模型）
+"%PYTHON%" -c "import fastapi, sqlalchemy, uvicorn, jose, passlib, openai" 2>nul
 if errorlevel 1 (
     echo  First run - installing dependencies, please wait...
     cd /d "%BACKEND%"
@@ -119,8 +135,8 @@ echo  ================================================
 echo.
 echo   Frontend : http://127.0.0.1:%PORT%/
 echo   API Docs : http://127.0.0.1:%PORT%/docs
-echo   Login    : student / 123456
-echo              teacher / 123456
+echo   Login    : admin / admin   （首次启动用管理员建教师与课程）
+echo              （系统不再内置演示师生账号；演示库账号见 dev_tools 说明）
 echo.
 echo  ================================================
 echo.
