@@ -41,15 +41,16 @@ def _kp_tags(raw) -> list[str]:
     return [str(x).strip() for x in data if str(x or "").strip()]
 
 
-def quiz_accuracy_by_kp(
-    db: Session,
-    user_id: str,
-    secondary_weight: float = SECONDARY_KP_WEIGHT,
-) -> dict:
-    """每知识点：(加权答题正确率%, 含次要命中的不同题数)。按题去重、取最近一次作答。"""
+def _weighted_records(db: Session, user_id: str) -> list[tuple]:
+    """每题「最近一次作答」的加权归属记录 —— 正确率与逐题拆解共用的唯一取数入口。
+
+    返回 [(q_id, primary_kp, related_kps, is_correct, created_at)]：
+      - 按 q_id 去重、只取最近一次（题目归属后来被改过时也不会重复计数）；
+      - primary_kp = 题目当前主 KP（题目已删除时退回答题记录里的 kp_id）；
+      - related_kps = [主 KP] + kp_ids 里的其它标签（去重，主 KP 在前）。
+    """
     from ..models.question import Question
 
-    # 每题只取最近一次作答（按 q_id 去重，不按 kp 分组：题目归属后来被改过时也不会重复计数）
     latest = db.query(
         func.max(AnswerRecord.id).label("last_id"),
     ).filter(
@@ -58,11 +59,11 @@ def quiz_accuracy_by_kp(
     ).group_by(AnswerRecord.q_id).subquery()
     rows = db.query(
         AnswerRecord.q_id, AnswerRecord.kp_id, AnswerRecord.is_correct,
+        AnswerRecord.created_at,
     ).join(latest, AnswerRecord.id == latest.c.last_id).all()
     if not rows:
-        return {}
+        return []
 
-    # 题目当前的标签（主 KP + kp_ids）；题目已被删除时退回答题记录里的 kp_id
     qids = [r[0] for r in rows if r[0]]
     primary_map: dict[str, str] = {}
     tags_map: dict[str, list[str]] = {}
@@ -73,10 +74,8 @@ def quiz_accuracy_by_kp(
             primary_map[qid] = (kp_id or "").strip()
             tags_map[qid] = _kp_tags(kp_ids)
 
-    num: dict[str, float] = defaultdict(float)   # 加权答对数
-    den: dict[str, float] = defaultdict(float)   # 加权作答数
-    hits: dict[str, int] = defaultdict(int)      # 该点上的不同题数（主命中 ∪ 次要命中）
-    for qid, rec_kp, ok in rows:
+    out: list[tuple] = []
+    for qid, rec_kp, ok, created in rows:
         primary = primary_map.get(qid) or (rec_kp or "").strip()
         if not primary:
             continue
@@ -84,6 +83,20 @@ def quiz_accuracy_by_kp(
         for tag in tags_map.get(qid, []):
             if tag and tag != primary and tag not in related:
                 related.append(tag)
+        out.append((qid, primary, related, bool(ok), created))
+    return out
+
+
+def quiz_accuracy_by_kp(
+    db: Session,
+    user_id: str,
+    secondary_weight: float = SECONDARY_KP_WEIGHT,
+) -> dict:
+    """每知识点：(加权答题正确率%, 含次要命中的不同题数)。按题去重、取最近一次作答。"""
+    num: dict[str, float] = defaultdict(float)   # 加权答对数
+    den: dict[str, float] = defaultdict(float)   # 加权作答数
+    hits: dict[str, int] = defaultdict(int)      # 该点上的不同题数（主命中 ∪ 次要命中）
+    for _qid, primary, related, ok, _created in _weighted_records(db, user_id):
         for kp in related:
             w = 1.0 if kp == primary else float(secondary_weight)
             hits[kp] += 1                 # 只要挂了这个点就算"做过 1 道题"
@@ -98,3 +111,43 @@ def quiz_accuracy_by_kp(
         if total_w:
             out[kp] = (round(num[kp] / total_w * 100, 1), hits.get(kp, 0))
     return out
+
+
+def kp_accuracy_detail(
+    db: Session,
+    user_id: str,
+    kp_id: str,
+    secondary_weight: float = SECONDARY_KP_WEIGHT,
+) -> dict:
+    """某知识点正确率的**逐题拆解**（与 quiz_accuracy_by_kp 严格同源）。
+
+    供「为什么这个点正确率是 X%」这类问题使用：把参与计算的每道题、
+    它对该点的权重（主命中 1.0 / 标签命中 0.3）、最近一次对错、贡献都列出来。
+    """
+    items: list[dict] = []
+    num = den = 0.0
+    for qid, primary, related, ok, created in _weighted_records(db, user_id):
+        if kp_id not in related:
+            continue
+        w = 1.0 if primary == kp_id else float(secondary_weight)
+        den += w
+        if ok:
+            num += w
+        items.append({
+            "qId": qid,
+            "primaryKpId": primary,
+            "hitByPrimary": primary == kp_id,
+            "weight": w,
+            "isCorrect": ok,
+            "contribution": w if ok else 0.0,
+            "answeredAt": created.isoformat(sep=" ", timespec="seconds") if created else "",
+        })
+    items.sort(key=lambda x: (x["isCorrect"], x["qId"]))      # 错题在前，便于讲解
+    return {
+        "kpId": kp_id,
+        "rate": round(num / den * 100, 1) if den else None,
+        "weightedCorrect": round(num, 2),
+        "weightedTotal": round(den, 2),
+        "hits": len(items),
+        "items": items,
+    }

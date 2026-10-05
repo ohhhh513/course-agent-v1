@@ -238,6 +238,11 @@
               </div>
             </div>` : ''}
             ${m.outOfScope ? `<div class="callout callout--warn" style="margin-top:10px">${icon('alert')}<div><b>超出课程材料范围</b>已按「严格溯源」约束拒绝推测性回答，可点击下方转人工。</div></div>` : ''}
+            ${(m.actions || []).length ? `
+            <div class="msg__agent-acts">
+              ${m.actions.map((a, i) => `<button class="btn btn--sm ${i === 0 ? 'btn--primary' : 'btn--outline'}"
+                data-agent-action="${U.esc(JSON.stringify(a))}">${U.esc(a.label || '打开')}</button>`).join('')}
+            </div>` : ''}
           </div>
           <div class="msg__meta">
             ${mName ? `<span class="badge badge--outline">${mName}</span>` : ''}
@@ -273,6 +278,47 @@
           Toast.ok('反馈已提交', '将用于 AI 知识库迭代优化');
         });
       });
+      // AI 建议的界面动作（工具 suggest_action 的结果）：白名单校验后才执行
+      U.$$('[data-agent-action]', U.$('#chatLog')).forEach(b => {
+        if (b.dataset.bound) return;
+        b.dataset.bound = '1';
+        b.addEventListener('click', () => {
+          let act = null;
+          try { act = JSON.parse(b.dataset.agentAction || 'null'); } catch (e) { act = null; }
+          if (!this.applyAgentAction(act)) {
+            Toast.warn('这个建议暂时无法直接打开', '请从左侧导航手动进入');
+          }
+        });
+      });
+    },
+
+    /**
+     * 执行 AI 建议的界面动作（来自工具 suggest_action）。返回 false = 未识别/不允许。
+     *
+     * 白名单制：navigate 只允许固定页面；practice 只复用「预警 → 去练习」那套待办机制
+     * （设置 Practice._pendingTarget 后跳练习页，仍由用户自己点开始）。
+     * 除这两种之外一律不执行 —— 模型给什么都不能触发任意跳转或任意代码。
+     */
+    applyAgentAction(a) {
+      const VIEWS = ['dashboard', 'graph', 'resource', 'practice', 'mastery', 'alerts', 'ai'];
+      const MODES = ['weak', 'order', 'random', 'wrong'];
+      if (!a || typeof a !== 'object') return false;
+      if (a.kind === 'navigate') {
+        if (!VIEWS.includes(a.view)) return false;
+        Router.go(a.view);
+        return true;
+      }
+      if (a.kind === 'practice') {
+        const kpId = String(a.kpId || '').trim();
+        if (!kpId) return false;
+        const mode = MODES.includes(a.mode) ? a.mode : 'weak';
+        if (typeof Practice !== 'undefined') {
+          Practice._pendingTarget = { kpId, kpName: a.kpName || '', mode };
+        }
+        Router.go('practice');
+        return true;
+      }
+      return false;
     },
 
     // 防外部注入：清除 chatLog 内任何不在我们白名单内的可疑 SVG / 文本水印
@@ -333,7 +379,7 @@
       const log = U.$('#chatLog');
       if (!log || this.busy) return;
       this.busy = true;
-      this._acc = ''; this._final = ''; this._cites = [];
+      this._acc = ''; this._final = ''; this._cites = []; this._actions = [];
       this._tools = [];          // 思考/工具条目（{kind:'think'|'tool', ...}）
       this._toolsOpen = false;   // 流式期间面板折叠，可点击展开
 
@@ -386,8 +432,9 @@
           role: 'ai', content: mdToHtml(this._final || ''),
           citations: cites, outOfScope: payload.outOfScope,
           toolLog: this._tools,
+          actions: this._actions || [],
         }));
-        this._acc = ''; this._final = ''; this._tools = [];
+        this._acc = ''; this._final = ''; this._tools = []; this._actions = [];
         this.bindCites();
         this.scrubLog(log);
         this.scroll();
@@ -397,7 +444,7 @@
       const fail = (msg) => {
         const sm = $id('streamMsg');
         if (sm) sm.remove();
-        this._acc = ''; this._final = ''; this._tools = [];
+        this._acc = ''; this._final = ''; this._tools = []; this._actions = [];
         log.insertAdjacentHTML('beforeend', this.tpl({
           role: 'ai',
           content: `<p>${U.esc(msg || '回答生成失败，请稍后重试')}</p>`, citations: [], outOfScope: false,
@@ -448,6 +495,7 @@
             if (now - (this._lastScroll || 0) > 300) { this._lastScroll = now; this.scroll(); }
           },
           onCitations: (d) => { this._cites = (d && d.items) || []; },
+          onAction: (d) => { this._actions = (d && d.actions) || []; },
           onLog: () => {},
           onDraft: () => {},
           onError: (d) => fail(d && d.message),

@@ -7,6 +7,10 @@ tools:
   - resolve_topic
   - retrieve_chunks
   - get_question
+  - explain_metric
+  - my_alerts
+  - breakdown
+  - suggest_action
 max_steps: 6
 steps:
   - 用 resolve_topic 定位本课程的章(CH0x)与知识点(KP0xx)；text 传用户原话整句，禁止拆词或自判知识点；上下文若有 q_id 必须传入

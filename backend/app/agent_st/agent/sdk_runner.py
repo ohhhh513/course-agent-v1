@@ -166,6 +166,10 @@ async def _run_async(message: str, flow_id: str, session_id: str, context: dict 
     store.add_message(session_id, "assistant", final_text)
     if ctx.tool_log:
         store.set_last_tool_log(session_id, ctx.tool_log, draft_id=_first_draft_id(ctx))
+    # 工具建议的界面动作（suggest_action）：与 legacy 路径一致地透出
+    actions = ctx.turn.get("actions") or []
+    if actions:
+        emit({"type": "action", "actions": actions})
     emit({
         "type": "done",
         "drafts": ctx.turn.get("drafts") or [],

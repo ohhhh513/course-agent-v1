@@ -160,6 +160,7 @@ def ai_chat(
     session_id = ""
     out_of_scope = False
     demo = False
+    actions: list = []
     for ev in _agent_events(req, user, course_id):
         etype = ev.get("type")
         if etype == "session":
@@ -168,6 +169,8 @@ def ai_chat(
             content_parts.append(ev.get("delta") or "")
         elif etype == "citations":
             citations = ev.get("items") or []
+        elif etype == "action":
+            actions = ev.get("actions") or []
         elif etype == "done":
             demo = bool(ev.get("demo"))
             out_of_scope = bool(ev.get("out_of_scope"))
@@ -180,6 +183,7 @@ def ai_chat(
         "sourceCount": len(citations),
         "demo": demo,
         "sessionId": session_id,
+        "actions": actions,
     }
     return ok(result)
 
@@ -219,6 +223,10 @@ async def ai_chat_stream(
             elif etype == "citations":
                 items = ev.get("items") or []
                 yield {"event": "citations", "data": json.dumps({"items": items}, ensure_ascii=False)}
+            elif etype == "action":
+                # 工具建议的界面动作（suggest_action）→ 前端渲染成按钮，用户点击才生效
+                yield {"event": "action", "data": json.dumps(
+                    {"actions": ev.get("actions") or []}, ensure_ascii=False)}
             elif etype == "error":
                 yield {"event": "error", "data": json.dumps({"message": ev.get("message")}, ensure_ascii=False)}
             elif etype == "done":

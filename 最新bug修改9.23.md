@@ -544,3 +544,49 @@ python dev_tools/smoke_agent_sdk.py --runtime sdk    --user stu07
 ```
 
 ⚠️ **需要重启后端**才生效；`AGENT_RUNTIME=sdk` 还要求运行服务的解释器里装了 `openai-agents`（目前只有 `backend/.venv` 有）。
+
+---
+
+## 三十四、P1：学情只读工具 + 界面动作建议（Agent 能查数据、能给按钮）（2026-10-05）
+
+### 目标与约束（用户）
+
+让答疑助手从"只讲课程内容"变成"能查我自己的学情并指路"；**行为规范写进 skill**、**不动数据库**、学生端保留生成报告（后者属 P2）。
+
+### 改动
+
+| 文件 | 内容 |
+| --- | --- |
+| `services/scoring.py` | 抽出 `_weighted_records()`（每题最近一次 + 主 KP + 标签 + 对错的**唯一取数入口**），新增 `kp_accuracy_detail()`（某知识点正确率的逐题拆解：权重、贡献、错题在前）。重构后与重构前**全学生 × 全知识点逐点比对 0 差异**（脚本在 `%TEMP%\dump_accuracy_baseline.py`） |
+| `agent_st/persistence.py` | 补 `Alert / AnswerRecord / LearningPath / UserCourse` —— 遵守"agent_st 统一从 persistence 取模型"的既有约定 |
+| `agent_st/agent/tools/analytics.py`（新增） | 四个工具：`explain_metric`（口径字典，内容取自各接口真实实现）、`my_alerts`（**当前登录用户**在本课程的预警）、`breakdown`（复用 `kp_accuracy_detail`）、`suggest_action`（界面动作建议，只入队不执行） |
+| `agent_st/agent/flows/explain.yaml` | 工具白名单 +4 |
+| `agent_st/agent/skills/explain.md` | 新增「学情类问题」一节：什么问法调哪个工具、**禁止估算用户数据**、结论指向页面/练习时用 `suggest_action` 给按钮 |
+| `agent_st/agent/runtime.py`、`sdk_runner.py` | 两条运行层都透出 `action` 事件（来自 `ctx.turn['actions']`） |
+| `routers/ai.py` | SSE 与聚合接口都返回 `actions` |
+| `assets/js/api.js` | SSE 分发新增 `onAction` |
+| `assets/js/student/views/chat.js` | 气泡内渲染动作按钮 + `applyAgentAction()` **白名单桥**：`navigate` 只允许 7 个固定页面；`practice` 复用「预警 → 去练习」的待办机制（仍由用户自己点开始） |
+| `assets/js/student/views/practice.js` | 待办支持 `mode`（默认 weak，靶向练习） |
+| `assets/css/app.css` | 按钮行样式 `.msg__agent-acts` |
+
+### 安全边界（这几点是刻意的）
+
+1. **身份与课程由服务端注入**：工具签名里没有 `user_id` / `course_id`，模型无法查询他人数据；
+2. `suggest_action` 只写 `ctx.turn`，**不执行任何操作**；前端 `applyAgentAction` 是白名单制（页面枚举 + 练习模式枚举），模型给别的值一律忽略并提示；
+3. 数值一律来自业务函数，模型只负责叙述与编排。
+
+### 实测（两条运行层 + 真 SSE）
+
+- 库副本冒烟：**legacy 与 sdk 都跑通** `my_alerts → explain_metric → breakdown → suggest_action`，
+  动作示例：`{"kind":"practice","label":"去练 KP019「查找」的靶向练习","kpId":"KP019","mode":"weak"}`。
+- 真实 SSE（学生 stu07 问「我现在有哪些预警？」）事件序列：
+  `meta → tool_start/tool_end ×4 → think ×337 → content ×441 → citations ×1 → action ×1 → done`，
+  动作为 `practice / KP013 树与二叉树`（该生最薄弱点）。
+
+### 未做（P2+，已登记）
+
+- 教师视角工具（全班数据）与**角色过滤**——**前置依赖 P38**（教师端接口目前没有角色校验，Agent 的工具就是接口，必须先修）；
+- 写操作的**审批闸门**（发布草稿 / 复核预警 / 发消息）；方案：状态存进现成的 `chat_messages.tool_log`，**不加表**；
+- 学生端"生成报告"（`reports` 表只有 `class_id`，无 user/course，需要把归属写进 `detail_json`，见 P45）；多智能体 handoff；MCP 导出。
+
+⚠️ 需要重启后端才生效（本轮已重启验证）。

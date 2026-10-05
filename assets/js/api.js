@@ -164,8 +164,8 @@ window.API = (function () {
    * @param {string} method   一般为 'POST'
    * @param {string} path     形如 '/ai/chat/stream'
    * @param {object} payload  请求体
-   * @param {object} handlers 事件回调：{ onMeta, onToolStart, onToolEnd, onContent,
-   *                                   onCitations, onDraft, onLog, onDone, onError }
+ * @param {object} handlers 事件回调：{ onMeta, onToolStart, onToolEnd, onContent, onThink,
+ *                                   onCitations, onDraft, onAction, onLog, onDone, onError }
    *                           各回调接收解析后的 data 对象
    * @returns {Promise<void>} 流结束后 resolve；HTTP 非 200 时 reject
    */
@@ -192,6 +192,7 @@ window.API = (function () {
           case 'think':       h.onThink && h.onThink(data); break;
           case 'citations':   h.onCitations && h.onCitations(data); break;
           case 'draft':       h.onDraft && h.onDraft(data); break;
+          case 'action':      h.onAction && h.onAction(data); break;
           case 'log':         h.onLog && h.onLog(data); break;
           case 'error':       h.onError && h.onError(data); break;
           case 'done':        h.onDone && h.onDone(data); break;

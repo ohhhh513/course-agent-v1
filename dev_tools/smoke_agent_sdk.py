@@ -79,7 +79,7 @@ def main():
     print(f"问题        : {args.question}")
     print("-" * 72)
 
-    text_parts, tools, citations, done = [], [], [], None
+    text_parts, tools, citations, done, actions = [], [], [], None, []
     for ev in runtime.run_turn(
         message=args.question, flow_id=args.flow, context={}, store=None,
         user_id=user.user_id, course_id=course_id,
@@ -95,6 +95,8 @@ def main():
             citations = ev.get("items") or []
         elif kind == "done":
             done = ev
+        elif kind == "action":
+            actions = ev.get("actions") or []
         elif kind == "error":
             print(f"[error] {ev.get('message')}")
         print(f"  event: {kind}" + (f"  {ev.get('name') or ''}" if kind.startswith("tool") else ""))
@@ -102,6 +104,7 @@ def main():
     print("-" * 72)
     print(f"工具调用    : {tools}")
     print(f"引用条数    : {len(citations)}")
+    print(f"建议动作    : {actions}")
     print(f"done        : {done}")
     print(f"回答文本    : {((''.join(text_parts)) or '')[:400]}")
     db.close()

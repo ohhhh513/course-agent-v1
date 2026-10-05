@@ -550,6 +550,8 @@
 }
 .msg__meta { display: flex; align-items: center; gap: 8px; margin-top: 6px; font-size: 11px; color: var(--text-3); }
 .msg__acts { display: flex; gap: 2px; }
+/* AI 建议的界面动作按钮（工具 suggest_action → 前端渲染，点击才生效） */
+.msg__agent-acts { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
 .msg__acts button {
   width: 24px; height: 24px; border-radius: var(--r-xs); color: var(--text-3);
   display: grid; place-items: center; transition: all var(--t-fast);

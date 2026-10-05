@@ -138,7 +138,8 @@
             const panel = U.$('#modePanel');
             if (panel) panel.hidden = false;
             Toast.info('靶向练习', `已按「${pt.kpName || pt.kpId}」组卷`);
-            this.start('weak', ms, { kpIds: [pt.kpId] });
+            // mode 由待办带入（AI 的 suggest_action 会给 mode；预警入口默认 weak）
+            this.start(pt.mode || 'weak', ms, { kpIds: [pt.kpId] });
             return;
           }
         }

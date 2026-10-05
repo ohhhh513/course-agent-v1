@@ -10,6 +10,11 @@ from ..models.agent_st import STQuestionDraft
 from ..models.graph import GraphNode, GraphLink
 from ..models.question import Question
 from ..models.course import Course
+# 学情类工具（tools/analytics.py）需要：预警、答题记录、学习路径、选课关系
+from ..models.alert import Alert
+from ..models.practice import AnswerRecord
+from ..models.graph import LearningPath
+from ..models.user_course import UserCourse
 
 __all__ = [
     "SessionLocal",
@@ -21,4 +26,8 @@ __all__ = [
     "GraphLink",
     "Question",
     "Course",
+    "Alert",
+    "AnswerRecord",
+    "LearningPath",
+    "UserCourse",
 ]

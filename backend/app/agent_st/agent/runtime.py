@@ -401,6 +401,10 @@ def run_turn(
     store.add_message(session_id, "assistant", final_text)
     if ctx.tool_log:
         store.set_last_tool_log(session_id, ctx.tool_log, draft_id=_first_draft_id(ctx))
+    # 工具建议的界面动作（suggest_action）：只透出建议，前端渲染成按钮，用户点击才生效
+    actions = ctx.turn.get("actions") or []
+    if actions:
+        yield {"type": "action", "actions": actions}
     yield {
         "type": "done",
         "drafts": ctx.turn.get("drafts") or [],
