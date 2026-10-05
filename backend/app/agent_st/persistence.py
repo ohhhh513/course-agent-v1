@@ -7,7 +7,7 @@ from sqlalchemy.orm import sessionmaker
 from ..database import SessionLocal, engine  # noqa: F401
 from ..models.ai import ChatSession, ChatMessage
 from ..models.agent_st import STQuestionDraft
-from ..models.graph import GraphNode, GraphLink
+from ..models.graph import GraphNode, GraphLink, KpDetail
 from ..models.question import Question
 from ..models.course import Course
 # 学情类工具（tools/analytics.py）需要：预警、答题记录、学习路径、选课关系
@@ -24,6 +24,7 @@ __all__ = [
     "STQuestionDraft",
     "GraphNode",
     "GraphLink",
+    "KpDetail",
     "Question",
     "Course",
     "Alert",

@@ -188,9 +188,108 @@ def breakdown(ctx: ToolContext, kp_id: str = ""):
         detail = kp_accuracy_detail(db, uid, kp)
         detail["kpName"] = node.name
         detail["chapter"] = node.chapter or ""
+        detail["isKey"] = bool(node.is_key)
+        # 前置/后继（来自知识图谱编排保存的关系）：用于解释"为什么建议先补它"
+        detail["relations"] = _relations(db, course_id, kp)
         detail["note"] = ("正确率 = Σ(权重×最近一次是否答对) ÷ Σ(权重)；"
                           "主命中权重 1.0、标签命中 0.3；重做同一道题是替换而不是累加。")
         return detail
+    finally:
+        db.close()
+
+
+def _relations(db, course_id: str, kp_id: str) -> dict:
+    """某知识点的前置/后继（名字），供"先补哪个"的解释使用。"""
+    kd = db.query(persistence.KpDetail).filter(
+        persistence.KpDetail.kp_id == kp_id,
+        persistence.KpDetail.course_id == course_id,
+    ).first()
+    import json as _json
+
+    def _names(ids):
+        ids = [str(x) for x in (ids or []) if str(x).strip()]
+        if not ids:
+            return []
+        rows = db.query(persistence.GraphNode.id, persistence.GraphNode.name).filter(
+            persistence.GraphNode.id.in_(ids),
+            persistence.GraphNode.course_id == course_id,
+        ).all()
+        m = {i: n for i, n in rows}
+        return [{"kpId": i, "name": m.get(i, i)} for i in ids]
+
+    if not kd:
+        return {"pre": [], "post": []}
+    try:
+        pre_ids = _json.loads(kd.pre_kp or "[]")
+    except Exception:
+        pre_ids = []
+    try:
+        post_ids = _json.loads(kd.post_kp or "[]")
+    except Exception:
+        post_ids = []
+    return {"pre": _names(pre_ids), "post": _names(post_ids)}
+
+
+@tool(
+    name="weak_ranking",
+    description=(
+        "按**统一口径**列出当前用户在本课程里「最该先补」的知识点排序（含理由），"
+        "用于回答「应该先完成哪一个」「先补哪个知识点」。"
+        "口径：只统计命中 ≥2 道不同题（与预警门槛一致）且正确率 < 60% 的知识点；"
+        "排序 = 正确率升序 → 前置知识点个数多的优先（基础点先补）→ 章节靠前。"
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "limit": {"type": "integer", "description": "返回前几个，默认 3"},
+        },
+    },
+    flows=("explain",),
+)
+def weak_ranking(ctx: ToolContext, limit: int = 3):
+    from app.services.alert_detector import ENGAGE_MIN
+    from app.services.scoring import quiz_accuracy_by_kp
+
+    uid, course_id = ctx.user_id, _course_id(ctx)
+    if not uid or not course_id:
+        return {"error": "缺少用户或课程上下文"}
+    db = persistence.SessionLocal()
+    try:
+        acc = quiz_accuracy_by_kp(db, uid)
+        nodes = db.query(persistence.GraphNode).filter(
+            persistence.GraphNode.graph_type == "knowledge",
+            persistence.GraphNode.course_id == course_id,
+        ).all()
+        rows = []
+        for node in nodes:
+            hit = acc.get(node.id)
+            if not hit:
+                continue
+            rate, hits = hit
+            if hits < ENGAGE_MIN or rate >= 60:
+                continue
+            rel = _relations(db, course_id, node.id)
+            rows.append({
+                "kpId": node.id, "name": node.name, "chapter": node.chapter or "",
+                "rate": rate, "hits": hits, "isKey": bool(node.is_key),
+                "pre": [x["name"] for x in rel["pre"]],
+                "post": [x["name"] for x in rel["post"]],
+            })
+        rows.sort(key=lambda r: (r["rate"], -len(r["pre"]), r["chapter"], r["kpId"]))
+        top = rows[: max(1, int(limit or 3))]
+        for i, r in enumerate(top, 1):
+            reasons = [f"正确率仅 {r['rate']}%（{r['hits']} 道题）"]
+            if r["pre"]:
+                reasons.append(f"且它是「{'、'.join(r['pre'])}」的前置")
+            if r["post"]:
+                reasons.append(f"补上后能支撑 {len(r['post'])} 个后续知识点")
+            r["rank"] = i
+            r["reason"] = "；".join(reasons)
+        return {
+            "totalWeak": len(rows),
+            "basis": "命中 ≥2 道不同题且正确率 <60%；按正确率升序、基础点（被更多点依赖）优先",
+            "ranking": top,
+        }
     finally:
         db.close()
 

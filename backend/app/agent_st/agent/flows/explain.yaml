@@ -10,6 +10,7 @@ tools:
   - explain_metric
   - my_alerts
   - breakdown
+  - weak_ranking
   - suggest_action
 max_steps: 6
 steps:

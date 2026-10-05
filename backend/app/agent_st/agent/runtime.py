@@ -195,7 +195,15 @@ def _explain_out_of_scope(ctx: ToolContext, message: str) -> bool:
 
     注意检索混合了向量分，生活类问题（如菜谱）也可能捞到几个低分切片，
     因此不能用「有命中就算相关」，必须看最高分是否达到课程问题的水平。
+
+    例外：**学情类问题**（问自己的预警 / 某个百分比怎么算 / 逐题拆解）本来就不依赖
+    教材检索，数据来自库；如果本轮调用过学情工具，绝不能判成"超出课程材料范围"。
     """
+    _ANALYTICS_TOOLS = {"my_alerts", "breakdown", "explain_metric", "weak_ranking"}
+    used = {e.get("name") for e in (ctx.tool_log or []) if isinstance(e, dict)}
+    if used & _ANALYTICS_TOOLS:
+        return False
+
     topic = ctx.turn.get("topic") or {}
     if not topic.get("uncertain", True):
         return False
