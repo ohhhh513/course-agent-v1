@@ -106,27 +106,28 @@ backend/e2e_catalog_flow.py
 backend/test_tag_gapfill.py
 
 # ============================================================
-#  已跟踪文件脱管清单（gitignore 管不到「已入库」的文件）
+#  已跟踪文件脱管（gitignore 管不到「已入库」的文件）
 # ------------------------------------------------------------
-#  下列文件在 .gitignore 规则生效前就已被提交，会继续参与每次提交，
-#  导致团队成员 git pull 时本地 rag.db 被覆盖、切片数据互相冲掉。
-#  请由仓库负责人执行一次（只需一次，之后 gitignore 即生效）：
+#  ✅ 已于 2026-09-30 执行完毕（脱管 = 只从索引移除，磁盘文件原样保留）：
 #
 #    git rm -r --cached backend/app/data/st/rag.db
 #    git rm -r --cached backend/data
-#    git rm --cached backend/app/data/course_agent.db.bak.baseline
-#    git rm --cached backend/app/data/course_agent.db.bak.final_delivery
-#    git rm --cached backend/app/data/course_agent.db.before_path_unify_20260911
-#    git rm --cached backend/app/data/course_agent.db.before_resource_url_fix_20260906
-#    git rm --cached backend/app/data/course_agent.db.before_restore_20260906
-#    git rm --cached backend/app/data/course_agent.db.before_url_unify_20260911
-#    git rm --cached backend/app/data/resource_registry_snapshot.json
+#
+#  被跟踪文件数 / 体积：206 个 / 21.10 MB  →  175 个 / 3.40 MB。
+#  真正的元凶是 backend/data/.pytest-tmp-*（27 个 pytest 临时库、15.56 MB）；
+#  6 个 backend/app/data/course_agent.db.bak.* 与 resource_registry_snapshot.json
+#  在本次清理之前就已不在版本库里。
+#
+#  ⚠️ 仍未处理：上述文件的历史 blob 依然留在 .git 里（约 35.84 MiB）。
+#  彻底瘦身需要 git filter-repo 重写历史 + force push（会改写已推送提交的哈希、
+#  协作者必须重新 clone），属单独决策事项，未执行。
 #
 #  校验：git ls-files | grep -E "\.db|pytest-tmp|_snapshot\.json"  应当无输出。
 #
-#  注意：请保留这两个（它们是种子数据，代码会读取，删了别人跑不起来）：
-#    backend/app/data/st/st_bank/after_class.json
-#    backend/app/data/st/st_bank/ai_samples.json
-#  rag.db 不入库后，团队成员各自用下面命令在本地重建：
+#  ⚠️ 旧注记已失效：st_bank/after_class.json / ai_samples.json 这两个「种子文件」
+#    已不在仓库、也不在磁盘上 —— 题库切片的唯一通道是 ingest_question_bank()
+#    （直接切主库 questions 表），原先读 after_class.json 的路径已废除
+#    （见 backend/app/agent_st/rag/ingest.py 与 rag/bank.py 的说明）。
+#  rag.db 不入库后，团队成员各自用下面命令在本地重建（按主库 questions 表 + resources 表）：
 #    cd backend && python run_st_ingest.py <course_id>
 # ============================================================

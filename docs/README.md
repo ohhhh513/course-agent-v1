@@ -23,12 +23,12 @@
 ## 关键事实速查
 
 - **技术栈**：原生 HTML/CSS/JS + ECharts，无框架、无构建。
-- **数据来源**：所有取数走 `API.*`；`api.js` 中 `config.mode = 'http'`，**默认直连真实后端**（`/api/v1`）。
+- **数据来源**：所有取数走 `API.*`；`api.js` 的 `config.baseURL = '/api/v1'`，**直连真实后端**。
 - **统一信封**：`{ code, message, data, traceId }`，成功 `code=0`，前端读 `data`。
 - **鉴权**：`Authorization: Bearer <JWT>`；登录 `/auth/login`，当前用户 `/auth/profile`。
-- **角色**：`student`（`student.html`，7 视图）/ `teacher`（`teacher.html`，7 视图）。
+- **角色**：`student`（`student.html`，7 视图：dashboard / graph / resource / ai / practice / mastery / alerts）/ `teacher`（`teacher.html`，7 个导航视图：dashboard / monitor / analysis / question / report / structure / graph-edit；另有一个无入口的 `intervention` 兜底视图）。
 - **首页**：`index.html` = 登录页；`forgot.html` 找回密码；`home.html` 产品介绍（可选）。
-- **Mock 已下线**：早期 `assets/js/mock/data.js` 与 `mode:'mock'` 已移除；`api.js` 中的 mock 分支为死代码，**切勿切回**。
+- **Mock 已彻底移除**（2026-09-30）：早期的 `assets/js/mock/data.js` 与 `mode:'mock'` 已下线；`api.js` 内的 mock 分支、本地账号表（`ca_accounts`）、`window.MOCK` 引用与全部内联兜底解析器也已一并删除，前端现在只有真实后端一条取数路径。
 
 ### 账号（无演示账号）
 
@@ -44,7 +44,7 @@
 ## 两件"接手必知"
 
 1. **AI 已经接好了**：智能答疑（`/ai/chat/stream`）与智能出题（`/question/gen`）调用的是**真实 LLM**（DeepSeek + RAG），当前为 `live` 模式。想知道运行模式，访问 `GET /api/v1/agent/status` 看 `mode` 字段。
-2. **"学情类"功能显示为 0 不是 bug**：`learning_paths` 表 408 条全部为 `todo`、`answer_records` 仅 2 条，导致掌握率 / 预警 / 归因 / 报告**算法正确但没有输入数据**。补齐数据即可，详见 `项目真实交互梳理.md`。
+2. **"学情类"数字是真实计算的**：掌握率 / 预警 / 归因 / 报告一律由 `answer_records`、`learning_paths` 等关系表实时算出（2026-09-30 本地库实测：答题记录 **645** 条、学习路径 **260** 条、预警 **51** 条）。空库时这些指标显示为 0 属预期，补齐数据即可，详见 `项目真实交互梳理.md`。
 
 ---
 
@@ -57,4 +57,4 @@
 
 ---
 
-> 接口规模：约 130 个端点，按 11 个模块组织：`auth` / `course` / `graph` / `student` / `practice` / `ai` / `teacher` / `analysis` / `question` / `intervention` + `report` / `agent`。
+> 接口规模：**101** 个路由（2026-09-30 实测），按 11 个模块组织：`auth` / `course` / `graph` / `student` / `practice` / `ai` / `teacher` / `analysis` / `question` / `intervention` + `report` / `agent`。

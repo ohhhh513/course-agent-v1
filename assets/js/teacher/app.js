@@ -22,7 +22,6 @@ const ViewFns = {
   analysis: () => Analysis.render(),
   question: () => Question.render(),
   report: () => Report.render(),
-  resource: () => TeacherStructure.render(),
   structure: () => TeacherStructure.render(),
   'graph-edit': () => TeacherGraphEdit.render(),
 };

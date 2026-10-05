@@ -32,9 +32,9 @@
 - **原生 HTML / CSS / JS**，无框架、无打包构建；
 - **ECharts** 负责图表（学情看板、掌握率、归因图）；
 - **Hash 路由**切换视图（`student.html` / `teacher.html` 内部多视图）；
-- 统一数据层 `assets/js/api.js`：所有取数走 `API.*`，`config.mode = 'http'` **直连真实后端**，页面无需改动。
+- 统一数据层 `assets/js/api.js`：所有取数走 `API.*`，`config.baseURL = '/api/v1'` **直连真实后端**，页面无需改动。
 
-> **Mock 已下线**：早期的 `assets/js/mock/data.js` 与 `mode:'mock'` 已移除，前端只消费后端真实接口。注意 `api.js` 内部仍留有 mock 分支的**死代码**（`window.MOCK` 已不存在），切勿切回 `mock`。
+> **Mock 已彻底移除**（2026-09-30）：早期的 `assets/js/mock/data.js` 与 `mode:'mock'` 已下线；`api.js` 的 mock 分支、本地账号表、`window.MOCK` 引用与内联兜底解析器均已删除，前端只消费后端真实接口。
 
 ---
 
@@ -135,14 +135,16 @@ python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 - 健康检查：<http://127.0.0.1:8000/health> → `{"status":"ok",...}`
 - 智能体状态：<http://127.0.0.1:8000/api/v1/agent/status> → 看 `mode` 是 `live` 还是 `demo`
 
-### 演示账号
+### 账号
+
+前端不内置演示账号，账号全部来自数据库：
 
 | 用户名 | 密码 | 角色 | 说明 |
 | --- | --- | --- | --- |
-| `student` | `123456` | 学生 | 陈思远 · 计算机 2301 班 |
-| `teacher` | `123456` | 教师 | 李文博 · 可看 CL2301 / CL2302 / 软件 2301 |
+| `admin` | `admin` | 管理员 | 空库首次启动自动创建；用于在 `admin.html` 创建教师 / 学生账号 |
+| 教师 / 学生账号 | 自定 | 教师 / 学生 | 由管理员在管理端创建 |
 
-> 后端种子写入 12 名学生 + 1 名教师（见 `backend/app/seed/mock_data.py` 的 `DEFAULT_ACCOUNTS`）。首次启动会执行 `run_seed()` 建表并填充演示数据，随后 `bootstrap()` 把演示库补全为真实库（9 章图谱 + 真实资源 + 228 道正式题）；如需重置，删除 `backend/app/data/course_agent.db` 后重启即可。
+> 后端首次启动只执行 `init_db()` 建表并创建 `admin`。旧演示种子（`backend/app/seed/mock_data.py` 的 `DEFAULT_ACCOUNTS`，含 `student` / `teacher`）与 `bootstrap()` **默认关闭**，仅当设置环境变量 `DEMO_SEED=1` 时才执行（见 `backend/app/main.py` 启动钩子）；如需重置，删除 `backend/app/data/course_agent.db` 后重启即可。
 
 ---
 
@@ -151,7 +153,7 @@ python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 1. **统一响应信封**：所有接口返回 `{ code, message, data, traceId }`，成功 `code=0`，前端只读 `data`；异常由全局处理器包成 `code≠0`（HTTP 仍 200）。
 2. **接口前缀**：业务接口统一挂在 `/api/v1` 下。
 3. **鉴权**：`Authorization: Bearer <JWT>`；登录 `/api/v1/auth/login`，当前用户 `/api/v1/auth/profile`。
-4. **http 直连**：前端 `assets/js/api.js` 的 `config.mode` 已固定为 `'http'`，页面零改动消费真实后端；**请勿改回 `mock`**（mock 数据文件已移除，改回会全线崩溃）。
+4. **http 直连**：前端 `assets/js/api.js` 只保留真实后端取数路径（`config.baseURL = '/api/v1'`），页面零改动消费真实后端；**mock 模式已于 2026-09-30 连同兜底数据一起删除**，不再有「切回 mock」这个选项。
 5. **不受管接口必须走 `API.*`**：直接 `fetch` 会绕过统一注入的 JWT（`question.js:558` 已因此产生 401 bug）。
 6. **AI 能力已落地**：答疑在 `routers/ai.py`，出题在 `routers/teacher.py` 的 `question_router`，底层统一调用 `app/agent_st/` 的 `run_turn()`（live / demo 双模式）；事件契约见 `docs/智能体工作流说明.md`。
 7. **无框架前端**：视图切换用 Hash 路由；第三方库放 `assets/js/vendor/`；**不要在原型阶段引入构建工具**。
@@ -193,11 +195,11 @@ python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 
 | 模块 | 状态 |
 | --- | --- |
-| 鉴权、图谱、题库、资源、练习判分、干预、报告 | ✅ 真实实现 |
+| 鉴权、图谱、题库、资源、练习判分、预警、归因、报告 | ✅ 真实实现，动态数值一律从关系表算出 |
 | AI 答疑、AI 出题 | ✅ 真实 LLM（live 模式，需 `.env` 配 Key） |
-| 掌握率 / 雷达 / 预警 / 归因 | ⚠️ **算法真实，但数据为空**（`learning_paths` 全 `todo`、`answer_records` 仅 2 条）→ 显示为 0，**不是 bug** |
-| 素材上传解析 `/question/materials`、靶向补练包 `/question/packs`、答疑反馈 `/ai/feedback`、猜你想问 `/ai/suggest-questions` | 🚧 占位 |
-| 教师端「文件方式批量导入题目」 | 🔴 **有功能 bug**：前端 token 取错导致 401（见 `项目真实交互梳理.md` §六） |
+| 掌握率 / 学情指标 | ✅ 真实计算（能力目标达成度与能力雷达图已于 2026-09-29 随目标图谱下线一并删除） |
+| 教师端「教学干预与策略」 | ⚠️ 后端接口保留，界面已于 2026-09-24 移除 |
+| 素材上传解析 `/question/materials`、靶向补练包 `/question/packs`、猜你想问 `/ai/suggest-questions` | ✅ 已于 2026-09-29 处置：空壳端点删除，素材统一走真实入口 `/teacher/resources/upload`；答疑反馈 `/ai/feedback` 已真实落库 |
 
 ---
 

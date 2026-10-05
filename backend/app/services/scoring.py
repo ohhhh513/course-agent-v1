@@ -45,17 +45,25 @@ def quiz_accuracy_by_kp(
     db: Session,
     user_id: str,
     secondary_weight: float = SECONDARY_KP_WEIGHT,
+    course_id: str | None = None,
 ) -> dict:
-    """每知识点：(加权答题正确率%, 含次要命中的不同题数)。按题去重、取最近一次作答。"""
+    """每知识点：(加权答题正确率%, 含次要命中的不同题数)。按题去重、取最近一次作答。
+
+    course_id 给定时**只统计该课程下的作答记录**（默认 None = 保持历史口径：该生全部课程）。
+    传了它就不再依赖「KP id 全局唯一」来间接隔离课程（清单 P43）。
+    """
     from ..models.question import Question
 
     # 每题只取最近一次作答（按 q_id 去重，不按 kp 分组：题目归属后来被改过时也不会重复计数）
-    latest = db.query(
+    latest_q = db.query(
         func.max(AnswerRecord.id).label("last_id"),
     ).filter(
         AnswerRecord.user_id == user_id,
         AnswerRecord.kp_id.isnot(None),
-    ).group_by(AnswerRecord.q_id).subquery()
+    )
+    if course_id:
+        latest_q = latest_q.filter(AnswerRecord.course_id == course_id)
+    latest = latest_q.group_by(AnswerRecord.q_id).subquery()
     rows = db.query(
         AnswerRecord.q_id, AnswerRecord.kp_id, AnswerRecord.is_correct,
     ).join(latest, AnswerRecord.id == latest.c.last_id).all()
@@ -98,3 +106,43 @@ def quiz_accuracy_by_kp(
         if total_w:
             out[kp] = (round(num[kp] / total_w * 100, 1), hits.get(kp, 0))
     return out
+
+
+def weak_kp_ids(
+    db: Session,
+    user_id: str,
+    course_id: str | None,
+    candidates,
+    limit: int | None = None,
+) -> list[str]:
+    """从 candidates 里挑出「薄弱知识点」，按「有未处理预警优先 → 正确率升序」排序。
+
+    门槛与预警完全一致（同一组常量 `ENGAGE_MIN` / `YELLOW_BELOW`）：某知识点上做过
+    ≥ ENGAGE_MIN 道不同题、且加权正确率 < YELLOW_BELOW，才算薄弱点。
+
+    有未处理红/黄预警的点**优先占位**：否则会出现「预警页提示某知识点有问题、
+    薄弱点清单里却找不到它」的两套说法（清单 P47）。学习驾驶舱与「薄弱点强化」
+    卡片题量都走这一个入口，保证两边口径不再漂移。
+    """
+    from .alert_detector import ALERT_TYPE, ENGAGE_MIN, YELLOW_BELOW
+    from ..models.alert import Alert
+
+    acc = quiz_accuracy_by_kp(db, user_id, course_id=course_id)
+    aq = db.query(Alert.kp_id).filter(
+        Alert.user_id == user_id,
+        Alert.type == ALERT_TYPE,
+        Alert.level.in_(("red", "yellow")),
+        Alert.status.notin_(("closed", "ignored")),
+    )
+    if course_id:
+        aq = aq.filter(Alert.course_id == course_id)
+    alert_kps = {kp for (kp,) in aq.all() if kp}
+
+    rows = []
+    for kp in candidates:
+        q = acc.get(kp)
+        if q and q[1] >= ENGAGE_MIN and q[0] < YELLOW_BELOW:
+            rows.append((0 if kp in alert_kps else 1, q[0], kp))
+    rows.sort()
+    ids = [kp for _urgent, _rate, kp in rows]
+    return ids[:limit] if limit else ids

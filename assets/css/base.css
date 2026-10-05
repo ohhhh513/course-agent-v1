@@ -371,6 +371,14 @@ a.badge--outline:hover { border-color: var(--brand-400); color: var(--brand-300)
 .chip.is-active,
 .chip.is-on { background: var(--brand-500); border-color: var(--brand-500); color: #fff; }
 
+/* chip 内混排（中文名 + 等宽数字）：.chip 是 inline-flex，裸文本与 <b> 会成为两个 flex 项，
+   被 align-items:center 各自按盒子居中；中文字体与等宽数字的 ascent 不同（13 / 10），
+   结果数字基线比名称高 2px。包进同一个基线组即可对齐。 */
+.chip__txt { display: inline-flex; align-items: baseline; gap: 5px; }
+/* 数字自带的行高（Bahnschrift 约 18px）比中文行盒高，会把这一组撑高 2px，
+   整组居中后名称反而上移 1px。让数字不参与行盒高度，名称就停在原位，只有数字落下来对齐。 */
+.chip__txt b { line-height: 0; }
+
 /* segmented 分段控制器 */
 .seg {
   display: inline-flex; padding: 3px; gap: 2px;

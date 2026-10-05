@@ -788,14 +788,24 @@
       const self = this;
       const savedPage = (pr && pr.position) ? pr.position : 0;
       const isPdf = (res.url || '').toLowerCase().endsWith('.pdf');
+      // 页码钳制：总页数已知时限制在 [min, 总页数]，越界输入拉回并在界面上提示
+      const maxP = (res.pages > 0) ? res.pages : null;
+      const clampPage = (v, min) => {
+        let p = parseInt(v, 10);
+        if (isNaN(p)) p = min;
+        p = Math.max(min, p);
+        if (maxP) p = Math.min(maxP, p);
+        return p;
+      };
 
       if (isPdf) {
-        const url = res.url + (savedPage > 1 ? '#page=' + savedPage : '');
+        const initP = clampPage(savedPage || 1, 1);
+        const url = res.url + (initP > 1 ? '#page=' + initP : '');
         const body = `
           <iframe id="rd" src="${U.esc(url)}" style="width:100%;height:62vh;border:0;border-radius:var(--r-md);background:#fff"></iframe>
           <div class="row" style="margin-top:12px;gap:8px;align-items:center">
             <span class="fz-12 t-dim">跳转页码</span>
-            <input id="rdPage" class="input" type="number" min="1" max="${res.pages || 999}" value="${savedPage || 1}" style="width:90px">
+            <input id="rdPage" class="input" type="number" min="1" max="${res.pages || 999}" value="${initP}" style="width:90px">
             <button class="btn btn--sm btn--primary" id="rdJump">跳转</button>
             <span class="spacer"></span>
             <span class="fz-12 t-dim">共 ${res.pages || '?'} 页 · 续看已定位</span>
@@ -814,13 +824,18 @@
             const jb = U.$('#rdJump');
             const inp = U.$('#rdPage');
             if (jb) jb.addEventListener('click', () => {
-              const p = parseInt(inp.value, 10) || 1;
+              const raw = inp.value;
+              const p = clampPage(raw, 1);
+              if (String(p) !== String(parseInt(raw, 10))) {
+                inp.value = p;
+                Toast.warn('页码超出范围', maxP ? `共 ${maxP} 页，已调整为 ${p}` : '至少为 1，已调整');
+              }
               const f = U.$('#rd');
               if (f) f.src = res.url + '#page=' + p;
               save(p);
             });
             ov.addEventListener('click', e => {
-              if (e.target === ov || e.target.closest('[data-close]')) { if (inp) save(inp.value); self.load(); }
+              if (e.target === ov || e.target.closest('[data-close]')) { if (inp) save(clampPage(inp.value, 1)); self.load(); }
             }, true);
           }
         });
@@ -840,7 +855,7 @@
           </div>
           <div class="row" style="margin-top:12px;gap:8px;align-items:center;justify-content:center">
             <span class="fz-12 t-dim">已读到第</span>
-            <input id="rdPage" class="input" type="number" min="0" max="${res.pages || 999}" value="${savedPage || 0}" style="width:90px">
+            <input id="rdPage" class="input" type="number" min="0" max="${res.pages || 999}" value="${clampPage(savedPage || 0, 0)}" style="width:90px">
             <span class="fz-12 t-dim">页</span>
             <button class="btn btn--sm btn--primary" id="rdSave">保存进度</button>
           </div>`;
@@ -854,7 +869,12 @@
             const inp = U.$('#rdPage');
             const sb = U.$('#rdSave');
             const save = () => {
-              const p = parseInt(inp ? inp.value : '0', 10) || 0;
+              const raw = inp ? inp.value : '0';
+              const p = clampPage(raw, 0);
+              if (String(p) !== String(parseInt(raw, 10))) {
+                inp.value = p;
+                Toast.warn('页码超出范围', maxP ? `共 ${maxP} 页，已调整为 ${p}` : '不能为负数，已调整');
+              }
               API.student.saveResourceProgress(res.resId, {
                 progress: res.pages ? Math.min(100, Math.round(p / res.pages * 100)) : 0,
                 position: p

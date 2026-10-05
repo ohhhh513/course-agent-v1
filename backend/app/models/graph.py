@@ -12,7 +12,7 @@ class GraphNode(Base):
 
     id = Column(String(32), primary_key=True)         # KP01 / PB1 / G0
     graph_type = Column(String(16), primary_key=True)  # knowledge / problem / goal（联合主键）
-    course_id = Column(String(32), ForeignKey("courses.course_id"), default="C2026DS001", index=True)
+    course_id = Column(String(32), ForeignKey("courses.course_id"), index=True)
 
     name = Column(String(128), nullable=False)
     category = Column(Integer, default=0)              # categories 下标
@@ -46,7 +46,7 @@ class GraphLink(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     graph_type = Column(String(16), index=True)
-    course_id = Column(String(32), ForeignKey("courses.course_id"), default="C2026DS001", index=True)
+    course_id = Column(String(32), ForeignKey("courses.course_id"), index=True)
     source = Column(String(32), nullable=False, index=True)
     target = Column(String(32), nullable=False, index=True)
     relation = Column(String(16), nullable=False)  # pre/advance/parallel/split/map/error/support
@@ -57,7 +57,7 @@ class KpDetail(Base):
     __tablename__ = "kp_details"
 
     kp_id = Column(String(32), primary_key=True)
-    course_id = Column(String(32), ForeignKey("courses.course_id"), default="C2026DS001", index=True)
+    course_id = Column(String(32), ForeignKey("courses.course_id"), index=True)
 
     name = Column(String(128), nullable=False)
     chapter = Column(String(32), default="")
@@ -85,7 +85,7 @@ class LearningPath(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     user_id = Column(String(64), ForeignKey("users.user_id"), index=True)
-    course_id = Column(String(32), ForeignKey("courses.course_id"), default="C2026DS001", index=True)
+    course_id = Column(String(32), ForeignKey("courses.course_id"), index=True)
     step = Column(Integer, default=0)
     kp_id = Column(String(32), index=True)
     name = Column(String(128))

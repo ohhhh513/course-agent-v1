@@ -119,8 +119,6 @@ echo  ================================================
 echo.
 echo   Frontend : http://127.0.0.1:%PORT%/
 echo   API Docs : http://127.0.0.1:%PORT%/docs
-echo   Login    : student / 123456
-echo              teacher / 123456
 echo.
 echo  ================================================
 echo.

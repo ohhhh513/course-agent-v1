@@ -7,7 +7,7 @@
     render() {
       const el = U.$('#view-mastery');
       el.innerHTML = `
-      <div class="grid g-3" id="mStats" style="margin-bottom:16px">${U.skeleton(100)}</div>
+      <div class="grid g-2" id="mStats" style="margin-bottom:16px">${U.skeleton(100)}</div>
 
       <div class="card" style="margin-bottom:16px">
         <div class="card__head"><h3>${icon('play')} 资源学习进度</h3><span class="spacer"></span><span class="badge badge--outline" id="rsAvgBadge">平均 0%</span></div>
@@ -36,7 +36,7 @@
           <div class="card__body"><div class="chart" id="growthChart"></div></div>
         </div>
         <div class="card">
-          <div class="card__head"><h3>${icon('users')} 班级对比定位</h3><span class="spacer"></span>
+          <div class="card__head"><h3>${icon('users')} 课程内对比定位</h3><span class="spacer"></span>
             <span class="badge badge--brand" id="rankBadge"></span></div>
           <div class="card__body">
             <div class="chart chart--sm" id="compareChart"></div>
@@ -51,16 +51,15 @@
         const totalKp = m.totalKpCount || 0;
         const masteredKp = m.masteredKpCount || 0;
         const completedKp = m.completedKpCount || 0;
+        // 指标卡只保留两个真实可解释的口径；原第三个「能力目标达成度」已于 2026-09-29 移除
+        // （目标图谱未实现，其后端口径 goalAchieveRate 与写死的「目标基线 80%」已一并删除）。
         U.$('#mStats').innerHTML = `
-          <div class="stat" style="--_c:var(--brand-500)"><div class="stat__label">知识点完成率</div>
+          <div class="stat" style="--_c:var(--brand-500)"><div class="stat__label">知识点学习完成率</div>
             <div class="stat__value"><span data-cnt="${m.completionRate}">0</span><small>%</small></div>
             <div class="stat__hint">已完成 ${completedKp} / ${totalKp} 个知识点</div></div>
-          <div class="stat" style="--_c:var(--ok)"><div class="stat__label">知识点学习完成率</div>
+          <div class="stat" style="--_c:var(--ok)"><div class="stat__label">知识点学习掌握率</div>
             <div class="stat__value"><span data-cnt="${m.masteryRate}">0</span><small>%</small></div>
-            <div class="stat__hint">达标线 60% · 已达标 ${masteredKp} 个</div></div>
-          <div class="stat" style="--_c:var(--accent-500)"><div class="stat__label">能力目标达成度</div>
-            <div class="stat__value"><span data-cnt="${m.goalAchieveRate}">0</span><small>%</small></div>
-            <div class="stat__hint">目标基线 80% · 差距 ${(80 - m.goalAchieveRate).toFixed(1)}pp</div></div>`;
+            <div class="stat__hint">达标线 ${m.masteryThreshold}% · 已达标 ${masteredKp} 个</div></div>`;
         U.$$('[data-cnt]', el).forEach(s => U.countUp(s, +s.dataset.cnt, 1));
 
         // 资源学习进度
@@ -183,22 +182,23 @@
       });
 
       // 成长轨迹（「能力目标达成度」雷达卡已于 2026-09-24 移除：目标图谱未实现，
-      // 6 个维度恒为 0，只剩硬编码的「目标基线」有值）
+      // 6 个维度恒为 0，只剩硬编码的「目标基线」有值；其后端接口 /student/ability/radar、
+      // student.py 的 _GOAL_DIMENSIONS 与 api.js 的 abilityRadar 定义已于 2026-09-29 一并删除）
       API.student.growth().then(d => Charts.line('#growthChart', d, { area: true, max: 100, fmt: '{value}%' }));
 
       // 对比
       API.student.compare().then(c => {
-        U.$('#rankBadge').textContent = `班级第 ${c.myRank} / ${c.totalStudents} 名（前 ${100 - c.percentile}%）`;
+        U.$('#rankBadge').textContent = `课程内第 ${c.myRank} / ${c.totalStudents} 名（前 ${100 - c.percentile}%）`;
         Charts.groupBar('#compareChart', {
           categories: c.items.slice(0, 4).map(i => i.metric),
           series: [
             { name: '我的', data: c.items.slice(0, 4).map(i => i.mine), color: Charts.tokens().brand },
-            { name: '班级平均', data: c.items.slice(0, 4).map(i => i.classAvg), color: Charts.tokens().dim },
-            { name: '班级最高', data: c.items.slice(0, 4).map(i => i.classBest), color: Charts.tokens().ok }
+            { name: '课程内平均', data: c.items.slice(0, 4).map(i => i.classAvg), color: Charts.tokens().dim },
+            { name: '课程内最高', data: c.items.slice(0, 4).map(i => i.classBest), color: Charts.tokens().ok }
           ]
         });
         U.$('#compareTbl').innerHTML = `
-          <thead><tr><th>指标</th><th class="t-right">我的</th><th class="t-right">班级平均</th><th class="t-right">差值</th></tr></thead>
+          <thead><tr><th>指标</th><th class="t-right">我的</th><th class="t-right">课程内平均</th><th class="t-right">差值</th></tr></thead>
           <tbody>${c.items.map(i => `<tr>
             <td>${i.metric}</td>
             <td class="t-right num fw-6">${i.mine}</td>

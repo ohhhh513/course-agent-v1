@@ -612,4 +612,3 @@ const TeacherStructure = {
 
 window.TeacherStructure = TeacherStructure;
 Router.register('structure', { title: '课程目录与资源', mount: () => TeacherStructure.render() });
-Router.register('resource', { title: '课程目录与资源', mount: () => TeacherStructure.render() });

@@ -23,9 +23,11 @@ from ..models.graph import LearningPath, GraphLink, KpDetail
 from ..models.course import Course, Resource, ResourceProgress, ResourceStudyLog
 from ..models.user_course import UserCourse
 from ..models.graph import GraphNode
-from ..middleware.auth import get_current_user
+from ..middleware.auth import get_current_user, require_teacher
 from ..dependencies import get_current_course_id
 from ..schemas.common import ok, fail, list_response
+from ..constants import MASTERY_THRESHOLD
+from ..services.alert_detector import YELLOW_BELOW
 from ..utils import (
     loads,
     fmt_dt,
@@ -38,7 +40,7 @@ from ..media_utils import (
 )
 from ..routers.practice import _calc_question_stats
 
-router = APIRouter(prefix="/api/v1/teacher", tags=["教师端"])
+router = APIRouter(prefix="/api/v1/teacher", tags=["教师端"], dependencies=[Depends(require_teacher)])
 
 
 from ..services.catalog_helpers import (
@@ -180,8 +182,8 @@ def _get_class_info(db: Session, class_id: str):
     return class_name, students
 
 
-def _student_lp_stats(db: Session, user_ids: list) -> dict:
-    """给一批 user_id 返回 {user_id: {total, done, mastery_avg, doing_count}}"""
+def _student_lp_stats(db: Session, user_ids: list, course_id: str) -> dict:
+    """给一批 user_id 返回 {user_id: {total, done, mastery_avg, doing_count}}（限当前课程）"""
     if not user_ids:
         return {}
     from sqlalchemy import case
@@ -193,6 +195,7 @@ def _student_lp_stats(db: Session, user_ids: list) -> dict:
         func.sum(case((LearningPath.status == "doing", 1), else_=0)),
     ).filter(
         LearningPath.user_id.in_(user_ids),
+        LearningPath.course_id == course_id,
     ).group_by(LearningPath.user_id).all()
     return {
         r[0]: {"total": r[1] or 0, "done": r[2] or 0, "mastery": round(r[3] or 0, 1), "doing": r[4] or 0}
@@ -200,15 +203,18 @@ def _student_lp_stats(db: Session, user_ids: list) -> dict:
     }
 
 
-def _student_answer_stats(db: Session, user_ids: list) -> dict:
-    """返回 {user_id: {total, correct}}"""
+def _student_answer_stats(db: Session, user_ids: list, course_id: str) -> dict:
+    """返回 {user_id: {total, correct}}（限当前课程）"""
     if not user_ids:
         return {}
     rows = db.query(
         AnswerRecord.user_id,
         func.count(AnswerRecord.id),
         func.sum(AnswerRecord.is_correct),
-    ).filter(AnswerRecord.user_id.in_(user_ids)).group_by(AnswerRecord.user_id).all()
+    ).filter(
+        AnswerRecord.user_id.in_(user_ids),
+        AnswerRecord.course_id == course_id,
+    ).group_by(AnswerRecord.user_id).all()
     return {r[0]: {"total": r[1] or 0, "correct": r[2] or 0} for r in rows}
 
 
@@ -234,8 +240,8 @@ def teacher_dashboard(
     """教学驾驶舱：按 X-Course-Id 课程成员实时计算；无学生则返回空结构（无占位待办）"""
     students = _course_students(db, course_id)
     student_ids = [s.user_id for s in students]
-    lp_stats = _student_lp_stats(db, student_ids)
-    ans_stats = _student_answer_stats(db, student_ids)
+    lp_stats = _student_lp_stats(db, student_ids, course_id)
+    ans_stats = _student_answer_stats(db, student_ids, course_id)
     # 预警查询条件：课程维（class_id 可能为空，故按学生列表过滤）
     active_alerts_all = db.query(Alert).filter(
         Alert.user_id.in_(student_ids) if student_ids else Alert.user_id.is_(None),
@@ -260,13 +266,16 @@ def teacher_dashboard(
     fully_done = sum(1 for sid in student_ids if lp_stats.get(sid, {}).get("doing", 0) == 0 and lp_stats.get(sid, {}).get("total", 0) > 0)
     need_attention = sum(
         1 for sid in student_ids
-        if sum(1 for r in all_lp if r.user_id == sid and (r.mastery or 0) < 60) >= 3
+        if sum(1 for r in all_lp if r.user_id == sid and (r.mastery or 0) < MASTERY_THRESHOLD) >= 3
     )
     alert_student_count = len(set(a.user_id for a in active_alerts_all))
     alert_ratio = round(alert_student_count / n * 100, 1) if n else 0
 
-    # 目标达成度 = 全班达到「掌握率 ≥ 60」的知识点格子数 / 总格子数（全量口径，与学生端能力目标达成度一致）
-    reached = sum(1 for r in all_lp if (r.mastery or 0) >= 60)
+    # 目标达成度 = 全班达到「掌握率 ≥ MASTERY_THRESHOLD」的知识点格子数 / 总格子数（全量口径）
+    # 注：学生端同名的「能力目标达成度」指标已于 2026-09-29 随目标图谱方案一并移除，
+    #     此处是全班级聚合口径的独立指标，两者不再有关联；
+    #     但达标线（MASTERY_THRESHOLD）与学生端共用同一个常量，口径一致。
+    reached = sum(1 for r in all_lp if (r.mastery or 0) >= MASTERY_THRESHOLD)
     avg_goal_achieve = round(reached / len(all_lp) * 100, 1) if all_lp else 0
 
     # 今日活跃学生数 + 提交次数
@@ -277,6 +286,7 @@ def teacher_dashboard(
     # PracticeSession 提交
     today_sessions = db.query(PracticeSession).filter(
         PracticeSession.user_id.in_(student_ids),
+        PracticeSession.course_id == course_id,
         PracticeSession.finished_at >= today_start,
         PracticeSession.finished_at <= today_end,
     ).all()
@@ -286,6 +296,7 @@ def teacher_dashboard(
     # AnswerRecord 答题（也算活跃 + 提交次数）
     today_answers = db.query(AnswerRecord).filter(
         AnswerRecord.user_id.in_(student_ids),
+        AnswerRecord.course_id == course_id,
         AnswerRecord.created_at >= today_start,
         AnswerRecord.created_at <= today_end,
     ).all()
@@ -325,6 +336,7 @@ def teacher_dashboard(
         func.sum(AnswerRecord.is_correct).label("correct"),
     ).filter(
         AnswerRecord.user_id.in_(student_ids),
+        AnswerRecord.course_id == course_id,
         AnswerRecord.kp_id.isnot(None),
         AnswerRecord.kp_id != "",
     ).group_by(
@@ -347,7 +359,7 @@ def teacher_dashboard(
     kp_ranking = []
     for kp_id, student_rows in kp_students.items():
         masteries = [row["mastery"] for row in student_rows]
-        weak_cnt = sum(1 for mastery in masteries if mastery < 60)
+        weak_cnt = sum(1 for mastery in masteries if mastery < MASTERY_THRESHOLD)
         active_students = len(student_rows)
         avg_m = round(sum(masteries) / active_students, 1) if active_students else 0
         kp_ranking.append({
@@ -541,8 +553,8 @@ def students(
 ):
     students = _course_students(db, course_id)
     student_ids = [s.user_id for s in students]
-    lp_stats = _student_lp_stats(db, student_ids)
-    ans_stats = _student_answer_stats(db, student_ids)
+    lp_stats = _student_lp_stats(db, student_ids, course_id)
+    ans_stats = _student_answer_stats(db, student_ids, course_id)
 
     alert_by_user = defaultdict(lambda: {"red": 0, "yellow": 0, "top": "green"})
     if student_ids:
@@ -560,9 +572,11 @@ def students(
     # lastActive: 每个学生最近活跃时间（practice_sessions 或 answer_records 取 max）
     ps_rows = db.query(PracticeSession.user_id, PracticeSession.finished_at).filter(
         PracticeSession.user_id.in_(student_ids),
+        PracticeSession.course_id == course_id,
     ).all()
     ar_rows_all = db.query(AnswerRecord.user_id, AnswerRecord.created_at).filter(
         AnswerRecord.user_id.in_(student_ids),
+        AnswerRecord.course_id == course_id,
     ).all()
     last_by_user = defaultdict(lambda: None)
     for uid, ts in ps_rows:
@@ -586,7 +600,7 @@ def students(
         completion = round(lp.get("done", 0) / lp.get("total", 0) * 100, 1) if lp.get("total", 0) else 0
         mastery = lp.get("mastery", 0)
         a = alert_by_user.get(s.user_id, {"top": "green", "red": 0, "yellow": 0})
-        target = round(mastery + 15, 1) if mastery < 60 else round(mastery + 5, 1)
+        target = round(mastery + 15, 1) if mastery < MASTERY_THRESHOLD else round(mastery + 5, 1)
         items.append({
             "userId": s.user_id,
             "name": s.name,
@@ -662,6 +676,7 @@ def heatmap(
             func.count(AnswerRecord.id), func.sum(AnswerRecord.is_correct),
         ).filter(
             AnswerRecord.user_id.in_(student_ids),
+            AnswerRecord.course_id == course_id,
             AnswerRecord.kp_id.in_(kp_ids),
         ).group_by(AnswerRecord.user_id, AnswerRecord.kp_id).all()
         score_dict = {(r[0], r[1]): (r[3] / r[2] * 100) if r[2] else 0 for r in ans_rows}
@@ -674,6 +689,7 @@ def heatmap(
         # 学习完成热力图：基于 learning_paths.mastery（资源学习进度）
         lp_rows2 = db.query(LearningPath.user_id, LearningPath.kp_id, LearningPath.mastery, LearningPath.status).filter(
             LearningPath.user_id.in_(student_ids),
+            LearningPath.course_id == course_id,
             LearningPath.kp_id.in_(kp_ids),
         ).all()
         score_dict = {(r.user_id, r.kp_id): r.mastery or 0 for r in lp_rows2}
@@ -752,7 +768,10 @@ def student_profile(
         LearningPath.user_id == user_id,
         LearningPath.course_id == course_id,
     ).all()
-    ans_rows = db.query(AnswerRecord).filter(AnswerRecord.user_id == user_id).all()
+    ans_rows = db.query(AnswerRecord).filter(
+        AnswerRecord.user_id == user_id,
+        AnswerRecord.course_id == course_id,
+    ).all()
 
     total = len(lp_rows)
     done = [r for r in lp_rows if r.status == "done"]
@@ -795,7 +814,7 @@ def student_profile(
         # 避免不足 1 分钟的练习被整数除法显示成 0。
         duration_seconds = sum(max(0, a.duration_seconds or 0) for a in ar_list)
         m = round(r.mastery or 0, 1)
-        level = "danger" if m < 60 else "warn" if m < 80 else "ok"
+        level = "danger" if m < YELLOW_BELOW else "warn" if m < MASTERY_THRESHOLD else "ok"
         kp_detail.append({
             "kpId": r.kp_id,
             "name": r.name or r.kp_id,
@@ -877,6 +896,7 @@ def student_profile(
         db.query(AnswerRecord.created_at, AnswerRecord.duration_seconds)
         .filter(
             AnswerRecord.user_id == user_id,
+            AnswerRecord.course_id == course_id,
             AnswerRecord.created_at >= trend_start,
             AnswerRecord.created_at <= trend_end,
         ).all()
@@ -1038,14 +1058,14 @@ def review_alert(
             from ..services.alert_detector import (
                 ENGAGE_MIN, RED_BELOW, YELLOW_BELOW, TRIGGER, _suggestions,
             )
-            accuracy_info = quiz_accuracy_by_kp(db, alert.user_id).get(alert.kp_id)
+            accuracy_info = quiz_accuracy_by_kp(db, alert.user_id, course_id=alert.course_id).get(alert.kp_id)
             if not accuracy_info or accuracy_info[1] < ENGAGE_MIN:
                 return fail("当前作答数据不足，不能重新确认为预警", 400)
             accuracy = accuracy_info[0]
             if accuracy >= YELLOW_BELOW:
-                return fail("当前正确率已达标，不能重新确认为预警", 400)
+                return fail("当前正确率已高于预警线，不能重新确认为预警", 400)
             alert.level = "red" if accuracy < RED_BELOW else "yellow"
-            alert.desc = f"当前作答正确率 {accuracy:.0f}%，低于课程达标线 {YELLOW_BELOW}%。"
+            alert.desc = f"当前作答正确率 {accuracy:.0f}%，低于预警线 {YELLOW_BELOW}%。"
             alert.detail_json = json.dumps(
                 {"current": accuracy, "threshold": YELLOW_BELOW, "redBelow": RED_BELOW},
                 ensure_ascii=False,
@@ -1094,7 +1114,7 @@ def send_message(
 
 
 # ========== /analysis/* 错题归因（动态计算） ==========
-analysis_router = APIRouter(prefix="/api/v1/analysis", tags=["归因分析"])
+analysis_router = APIRouter(prefix="/api/v1/analysis", tags=["归因分析"], dependencies=[Depends(require_teacher)])
 
 
 @analysis_router.get("/errors")
@@ -1124,7 +1144,10 @@ def analysis_errors(
             "causes": [],
         })
 
-    q = db.query(AnswerRecord).filter(AnswerRecord.user_id.in_(student_ids))
+    q = db.query(AnswerRecord).filter(
+        AnswerRecord.user_id.in_(student_ids),
+        AnswerRecord.course_id == course_id,
+    )
     if kpId: q = q.filter(AnswerRecord.kp_id == kpId)
     if chapter:
         lp_kps = [r[0] for r in db.query(LearningPath.kp_id).filter(
@@ -1166,7 +1189,10 @@ def analysis_errors(
 
     # ----- weakChain（知识点薄弱链路 root→mid→leaf）-----
     # 取班级 mastery 最低的 3 个 kp 构成链路
-    class_lps = db.query(LearningPath).filter(LearningPath.user_id.in_(student_ids)).all()
+    class_lps = db.query(LearningPath).filter(
+        LearningPath.user_id.in_(student_ids),
+        LearningPath.course_id == course_id,
+    ).all()
     kp_mastery = defaultdict(list)
     for r in class_lps:
         if (r.mastery or 0) > 0: kp_mastery[r.kp_id].append(r.mastery or 0)
@@ -1281,68 +1307,8 @@ def analysis_errors(
     })
 
 
-@analysis_router.get("/weak-chain")
-def analysis_weak_chain(
-    classId: str = Query(None),
-    kpId: str = Query(None),
-    db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
-    course_id: str = Depends(get_current_course_id),
-):
-    """弱链条分析 — 按当前课程成员"""
-    students = _course_students(db, course_id)
-    student_ids = [s.user_id for s in students]
-
-    q = db.query(AnswerRecord).filter(AnswerRecord.user_id.in_(student_ids))
-    if kpId:
-        q = q.filter(AnswerRecord.kp_id == kpId)
-    wrong = [r for r in q.all() if not r.is_correct]
-
-    kp_wrong = defaultdict(int)
-    for r in wrong:
-        kp_wrong[r.kp_id] += 1
-    if not kp_wrong:
-        return ok(None)
-
-    top_kp = sorted(kp_wrong.items(), key=lambda x: x[1], reverse=True)[0]
-    kp_err = defaultdict(int)
-    for r in wrong:
-        if r.kp_id == top_kp[0]:
-            kp_err[r.error_type or "未分类"] += 1
-    top_err = sorted(kp_err.items(), key=lambda x: x[1], reverse=True)
-    root = {"kpId": top_kp[0], "wrongCount": top_kp[1]}
-    mid = {"errorType": top_err[0][0] if top_err else "未分类", "count": top_err[0][1] if top_err else 0}
-    return ok({
-        "root": root, "mid": mid,
-        "leaf": {"count": len(wrong)},
-        "explain": f"薄弱根因：{root['kpId']} ({root['wrongCount']} 错) → {mid['errorType']} ({mid['count']} 次)",
-    })
-
-
-@analysis_router.get("/causes")
-def analysis_causes(
-    db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
-    course_id: str = Depends(get_current_course_id),
-):
-    """通用根因分类 — 按当前课程成员的 answer_records.error_type 统计"""
-    sids = [s.user_id for s in _course_students(db, course_id)]
-    if not sids:
-        return ok({"categories": []})
-    rows = db.query(AnswerRecord.error_type, func.count(AnswerRecord.id)).filter(
-        AnswerRecord.user_id.in_(sids)
-    ).group_by(AnswerRecord.error_type).all()
-    total = sum(r[1] for r in rows)
-    return ok({
-        "categories": [
-            {"name": r[0] or "未分类", "count": r[1], "pct": round(r[1] / total * 100, 1) if total else 0}
-            for r in rows
-        ],
-    })
-
-
 # ========== /question/* AI 出题（保留，仅 question/bank 为动态） ==========
-question_router = APIRouter(prefix="/api/v1/question", tags=["AI 出题"])
+question_router = APIRouter(prefix="/api/v1/question", tags=["AI 出题"], dependencies=[Depends(require_teacher)])
 
 
 class GenQuestionReq(BaseModel):
@@ -1359,18 +1325,6 @@ class GenQuestionReq(BaseModel):
 class ReviewReq(BaseModel):
     qIds: List[str]
     action: str
-
-
-class UploadMaterialReq(BaseModel):
-    name: str
-
-
-class CreatePackReq(BaseModel):
-    kpIds: List[str]
-    userIds: Optional[List[str]] = None
-    classId: Optional[str] = None
-    count: int = 6
-    difficulty: int = 3
 
 
 @question_router.get("/gen/config")
@@ -1391,18 +1345,7 @@ def question_gen_config(
         {"key": "judge", "name": "判断题"},
         {"key": "short", "name": "简答题"},
     ]
-    return ok({"materials": [], "kpOptions": kp_options, "typeOptions": type_options})
-
-
-@question_router.post("/materials")
-def upload_material(
-    req: UploadMaterialReq,
-    user: User = Depends(get_current_user),
-):
-    """上传教材/课件 —— 生成占位素材条目，后续可接入真实文件解析"""
-    import uuid
-    file_id = "M" + uuid.uuid4().hex[:10]
-    return ok({"fileId": file_id, "name": req.name, "status": "parsing", "progress": 0})
+    return ok({"kpOptions": kp_options, "typeOptions": type_options})
 
 
 @question_router.post("/gen")
@@ -1522,17 +1465,6 @@ def ai_generate_questions(
             ensure_ascii=False)}
 
     return EventSourceResponse(gen())
-
-
-@question_router.post("/gen/stream")
-def ai_generate_questions_stream(
-    req: GenQuestionReq,
-    db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
-    course_id: str = Depends(get_current_course_id),
-):
-    """/gen 的语义化别名，行为完全一致"""
-    return ai_generate_questions(req=req, db=db, user=user, course_id=course_id)
 
 
 # ========== /question/drafts 草稿箱（教师个人，发布才进正式题库） ==========
@@ -1800,6 +1732,7 @@ def question_bank(
     q_ids = [x.q_id for x in all_items]
     ar_cnt = db.query(AnswerRecord.q_id, func.count(AnswerRecord.id), func.sum(AnswerRecord.is_correct)).filter(
         AnswerRecord.q_id.in_(q_ids),
+        AnswerRecord.course_id == course_id,
     ).group_by(AnswerRecord.q_id).all()
     correct_rate_map = {}
     for qid, total, correct in ar_cnt:
@@ -1869,10 +1802,14 @@ def update_question(
     body: dict = Body(...),
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
+    course_id: str = Depends(get_current_course_id),
 ):
     q = db.query(Question).filter(Question.q_id == q_id).first()
     if not q:
         return fail("题目不存在", 404)
+    # 课程归属校验：拿到别门课的 qId 也不能改
+    if q.course_id != course_id:
+        return fail("无权操作其它课程的题目", 403)
 
     # 基础字段直接赋值（兼容 camelCase；标签=KP）
     aliases = {
@@ -1956,9 +1893,14 @@ def review_questions(
     req: ReviewReq,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
+    course_id: str = Depends(get_current_course_id),
 ):
     from ..models.question import Question
     q_ids = req.qIds
+    rows = db.query(Question.q_id, Question.course_id).filter(Question.q_id.in_(q_ids)).all()
+    # 课程归属校验：任何一个 qId 不属于当前课程就整体拒绝，不做部分发布
+    if any(c != course_id for _q, c in rows):
+        return fail("无权操作其它课程的题目", 403)
     if req.action in ("approve", "publish"):
         db.query(Question).filter(Question.q_id.in_(q_ids)).update({"status": req.action})
     elif req.action == "reject":
@@ -1972,9 +1914,16 @@ def remove_question(
     q_id: str,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
+    course_id: str = Depends(get_current_course_id),
 ):
     from ..models.question import Question
-    db.query(Question).filter(Question.q_id == q_id).delete()
+    q = db.query(Question).filter(Question.q_id == q_id).first()
+    if not q:
+        return fail("题目不存在", 404)
+    # 课程归属校验：拿到别门课的 qId 也不能删
+    if q.course_id != course_id:
+        return fail("无权操作其它课程的题目", 403)
+    db.delete(q)
     db.commit()
     return ok({"qId": q_id, "removed": True})
 
@@ -2347,19 +2296,6 @@ def _parse_questions_from_text(text: str) -> list:
         })
 
     return questions
-
-
-@question_router.post("/packs")
-def create_pack(
-    req: CreatePackReq,
-    user: User = Depends(get_current_user),
-):
-    """生成靶向补练包"""
-    import uuid
-    return ok({
-        "packId": "PK" + uuid.uuid4().hex[:10],
-        "kpIds": req.kpIds, "count": req.count, "pushed": True,
-    })
 
 
 # =============================================================================

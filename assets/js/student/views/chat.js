@@ -94,7 +94,7 @@
       this.loadSession('new');
 
       // 侧栏 · 猜你想问：与「学习驾驶舱 - AI 助教」保持同一数据源
-      //（/student/dashboard 的 suggestedQuestions；旧接口 /ai/suggest-questions 后端恒为空，弃用）
+      //（/student/dashboard 的 suggestedQuestions；旧接口 /ai/suggest-questions 已于 2026-09-29 删除）
       API.student.dashboard().then(d => {
         const qs = ((d && d.suggestedQuestions) || []).slice(0, 4);
         const box = U.$('#askBox');
@@ -244,8 +244,8 @@
             <span>${now}</span>
             <span class="spacer"></span>
             <span class="msg__acts">
-              <button data-fb="up">${icon('thumbUp')}</button>
-              <button data-fb="down">${icon('thumbDown')}</button>
+              <button data-fb="up" data-mid="${U.esc(m.messageId || '')}">${icon('thumbUp')}</button>
+              <button data-fb="down" data-mid="${U.esc(m.messageId || '')}">${icon('thumbDown')}</button>
               <button>${icon('copy')}</button>
               ${m.outOfScope ? `<button class="btn btn--xs btn--outline" style="margin-left:6px">转人工</button>` : ''}
             </span>
@@ -269,8 +269,15 @@
         if (b.dataset.bound) return;
         b.dataset.bound = '1';
         b.addEventListener('click', () => {
-          API.ai.feedback({ type: b.dataset.fb });
-          Toast.ok('反馈已提交', '将用于 AI 知识库迭代优化');
+          // 反馈真实落库（ai_feedback）；缺少回答标识时不提交，避免产生无归属记录
+          const mid = b.dataset.mid || '';
+          if (!mid) { Toast.err('无法提交反馈', '该消息缺少回答标识，请重新提问后再试'); return; }
+          API.ai.feedback({
+            messageId: mid,
+            sessionId: this.sessionId,
+            feedback: b.dataset.fb === 'up' ? 1 : -1,
+          }).then(() => Toast.ok('反馈已提交', '将用于 AI 知识库迭代优化'))
+            .catch((e) => Toast.err('反馈提交失败', (e && e.message) || ''));
         });
       });
     },
@@ -385,9 +392,9 @@
         log.insertAdjacentHTML('beforeend', this.tpl({
           role: 'ai', content: mdToHtml(this._final || ''),
           citations: cites, outOfScope: payload.outOfScope,
-          toolLog: this._tools,
+          toolLog: this._tools, messageId: this._streamMsgId,
         }));
-        this._acc = ''; this._final = ''; this._tools = [];
+        this._acc = ''; this._final = ''; this._tools = []; this._streamMsgId = '';
         this.bindCites();
         this.scrubLog(log);
         this.scroll();
@@ -410,7 +417,11 @@
       API.ai.chatStream(
         { question, sessionId: this.sessionId },
         {
-          onMeta: (d) => { if (d.sessionId && d.sessionId !== this.sessionId) this.sessionId = d.sessionId; },
+          onMeta: (d) => {
+            if (d.sessionId && d.sessionId !== this.sessionId) this.sessionId = d.sessionId;
+            // 记录本条流式回答的标识，供点赞/点踩反馈定位到具体回答
+            if (d.messageId) this._streamMsgId = d.messageId;
+          },
           onToolStart: (d) => {
             const c = $id('streamCursor'); if (c) c.remove();
             // 新工具轮开始：结束所有未完成的 think 条目（防止跨轮拼接与重复 id）

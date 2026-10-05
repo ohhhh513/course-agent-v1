@@ -61,24 +61,6 @@
         <div class="gen-layout">
           <div class="stack" style="gap:14px">
             <div class="card">
-              <div class="card__head"><h3>${icon('upload')} 素材库</h3></div>
-              <div class="card__body">
-                <div class="upload" id="genUpload">
-                  <div style="color:var(--brand-400)">${icon('upload')}</div>
-                  <b>上传教材 / 课件 / 视频</b><span>PDF · PPT · MP4，AI 自动解析并挂载知识点</span>
-                </div>
-                <div class="stack" style="gap:6px;margin-top:10px">
-                  ${cfg.materials.map(m => `
-                    <div class="file-item">${icon(m.type === 'video' ? 'video' : m.type === 'doc' ? 'file' : 'ppt')}
-                      <b>${U.esc(m.name)}</b>
-                      <span class="fz-11 t-dim nowrap">${m.size}</span>
-                      ${m.status === 'parsing'
-                        ? `<span class="badge badge--warn">解析中 ${m.progress}%</span>`
-                        : `<span class="badge badge--ok">已解析 · ${m.kpCount} 知识点</span>`}</div>`).join('')}
-                </div>
-              </div>
-            </div>
-            <div class="card">
               <div class="card__head"><h3>${icon('settings')} 出题配置</h3></div>
               <div class="card__body stack gen-config-body" style="gap:12px">
                 <div class="gen-config-section gen-config-section--kp">
@@ -102,19 +84,6 @@
             <div id="genResult" class="gen-result-scroll"><div class="card"><div class="card__body card__body--flush" style="padding:18px">${R.empty('配置后点击「生成习题」', 'AI 将产出并预览题目与解析', 'sparkle')}</div></div></div>
           </div>
         </div>`;
-
-        U.$('#genUpload').addEventListener('click', () => {
-          Modal.open({
-            title: '上传出题素材',
-            body: `<div class="upload" style="cursor:default">${icon('upload')}<b>选择文件（演示）</b><span>真实环境此处触发分片上传与异步解析</span></div>
-              <div class="kv" style="margin-top:14px"><div class="kv__row"><span>支持格式</span><span>PDF / PPT / PPTX / MP4</span></div>
-              <div class="kv__row"><span>解析产物</span><span>知识点挂载 · 难度标注 · 溯源定位</span></div></div>`,
-            footer: `<button class="btn" data-close>关闭</button><button class="btn btn--primary" id="upOk">模拟上传</button>`,
-            onMount(ov, close) {
-              U.$('#upOk', ov).addEventListener('click', () => { API.question.upload({ name: '新素材.pdf' }).then(() => { Toast.ok('素材已上传', '开始异步解析'); close(); }); });
-            }
-          });
-        });
 
         U.$$('#genKp .chip', box).forEach(c => c.addEventListener('click', () => {
           c.classList.toggle('is-active');
@@ -251,8 +220,7 @@
       box.innerHTML = `
       <div class="card__head" style="padding:14px 16px"><h3>${icon('sparkle')} 生成预览（${list.length} 题）</h3>
         <span class="spacer"></span>
-        <button class="btn btn--sm btn--outline" id="gApprove">${icon('check')} 批量审核发布</button>
-        <button class="btn btn--sm btn--primary" id="gPack">${icon('target')} 生成靶向补练包</button></div>
+        <button class="btn btn--sm btn--outline" id="gApprove">${icon('check')} 批量审核发布</button></div>
       ${list.map((q, i) => `
         <div class="gen-q">
           <div class="gen-q__head">
@@ -274,10 +242,6 @@
       U.$('#gApprove', box).addEventListener('click', () => {
         API.question.review({ qIds: list.map(q => q.qId), action: 'publish' }).then(r =>
           Toast.ok('已审核发布', r.affected + ' 道习题进入题库'));
-      });
-      U.$('#gPack', box).addEventListener('click', () => {
-        API.question.createPack({ kpIds: list.map(q => q.kpId), count: this.gen.count, difficulty: this.gen.difficulty }).then(r =>
-          Toast.ok('靶向补练包已生成', '包号 ' + r.packId + ' · 已推送'));
       });
     },
 

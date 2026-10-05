@@ -24,7 +24,6 @@
 | `GET /graph/path` | `learningPath`（推荐学习路径数组） |
 | `GET /student/resources` | `{ total, list }`（资源中心列表） |
 | `GET /student/mastery/matrix` | `masteryMatrix`（按章分组掌握矩阵） |
-| `GET /student/ability/radar` | `abilityRadar`（能力雷达） |
 | `GET /student/growth` | `growthTrack`（成长轨迹） |
 | `GET /student/compare` | `classCompare`（班级对比） |
 | `GET /student/alerts` | `{ total, list }`（我的预警） |
@@ -129,12 +128,15 @@ Graph = {
               currentStreak, maxStreak, totalDays,
               todayStudyMinutes, todayStudySeconds, todayPracticeSeconds, todayResourceSeconds,
               status:'ok|warn|danger' },
-  coreMetrics: { completionRate, masteryRate, goalAchieveRate, updatedAt },
+  coreMetrics: { completionRate, masteryRate, totalKpCount, masteredKpCount,
+                 completedKpCount, masteryThreshold, updatedAt },
   todos: [ { id, type, level, title, desc, action, target, kpId?, kpName?, sessionId?, mode? } ],
   weakPoints: [ { kpId, name, masteryRate, chapter, errorCount, trend, level } ],
   suggestedQuestions: [ string ],
   recentActivities: [ { id, type:'practice|resource', title, meta, time, level } ] }
 ```
+> ⚠️ 2026-09-29：`goalAchieveRate` 已移除（同批删除 `/student/ability/radar`、`_GOAL_DIMENSIONS`
+> 与前端 `api.js::abilityRadar`）；`masteryThreshold`（=80，全站唯一真源 `backend/app/constants.py`）为后端常量，前端「达标线」文案由它下发。
 > `todayStudySeconds`（当天练习用时 + 当天视频观看秒数，本地日历日）用于驾驶舱
 > 「今日累计学习时长」徽标，并由 `GET /student/study-duration` 轮询刷新；
 > `todos[].target` 取值必须是前端路由名（`resource` / `practice` / `graph` / `alerts`），
@@ -214,7 +216,7 @@ GeneratedQuestion = {
 | 资源中心 | `list[].{resId,title,type,kp,views,progress,duration?\|pages?\|count?}` |
 | AI 答疑 | `content`（HTML 串）、`citations[]`、`outOfScope`、`messageId` |
 | 智能练习 | `questions[].{qId,type,stem,options,answer,analysis}`、`practiceReport` |
-| 我的学情 | `masteryMatrix`、`abilityRadar`、`growthTrack`、`classCompare` |
+| 我的学情 | `masteryMatrix`、`growthTrack`、`classCompare` |
 | 预警中心 | `studentAlerts[].{alertId,level,student,kp,type,status}` |
 | 教学驾驶舱 | `teacherDashboard.classOverview`、`liveFeed`、`todos`、`kpRanking` |
 | 学情监测看板 | `heatmap.{kpAxis,studentAxis,data,weakeSt}`、`students[]`、`studentProfile` |

@@ -3,6 +3,22 @@
   /* ================================================================
      视图 1 · 教学驾驶舱
      ================================================================ */
+  /* 待办跳转表：后端 todos[].target 是语义标识，需映射到已注册视图 + 目标卡片锚点
+     （alerts / students 不是视图名，直接 Router.go 会静默无反应）。*/
+  const TODO_TARGET = {
+    alerts: { view: 'monitor', anchor: '#alList' },     // 学情监测看板 → 异常预警列表
+    students: { view: 'monitor', anchor: '#stuList' },  // 学情监测看板 → 学生学情列表
+  };
+
+  /** 跳到待办对应的视图并滚动到目标卡片 */
+  function gotoTodoTarget(target) {
+    const cfg = TODO_TARGET[target];
+    if (!cfg) return;
+    Router.go(cfg.view);
+    const box = cfg.anchor && document.querySelector(cfg.anchor);
+    if (box) box.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }
+
   const Dash = {
     rankingTone(value) {
       const mastery = Number(value) || 0;
@@ -192,13 +208,13 @@
               // 点击 todo 非按钮区域仍按原 target 跳转
               t.addEventListener('click', e => {
                 if (e.target === t || e.target.closest('.todo__main') || e.target.closest('.todo__ico')) {
-                  if (t.dataset.target) Router.go(t.dataset.target);
+                  if (t.dataset.target) gotoTodoTarget(t.dataset.target);
                 }
               });
             } else {
               t.addEventListener('click', e => {
                 if (e.target.closest('.dash-todo-ignore')) return;
-                if (t.dataset.target) Router.go(t.dataset.target);
+                if (t.dataset.target) gotoTodoTarget(t.dataset.target);
               });
             }
           });

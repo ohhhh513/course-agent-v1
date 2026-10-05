@@ -110,7 +110,7 @@
         });
         U.$('#weakChips').innerHTML = (h.weakest && h.weakest.length)
           ? h.weakest.map(w =>
-              `<span class="chip">${icon('alert')} ${U.esc(w.name)} <b class="mono">${w.avg}%</b></span>`).join('')
+              `<span class="chip">${icon('alert')}<span class="chip__txt">${U.esc(w.name)} <b class="mono">${w.avg}%</b></span></span>`).join('')
           : `<span class="empty" style="padding:14px 0">暂无低于 80% 的知识点${this.heatType === 'mastery' ? '（题库未导入时无答题记录，暂不展示）' : ''}</span>`;
       });
     },
@@ -335,7 +335,7 @@
                       }],
                     },
                   },
-                  { name: '达标线 60%', data: labels.map(() => 60), color: Charts.tokens().dim, dashed: true },
+                  { name: '预警线 60%', data: labels.map(() => 60), color: Charts.tokens().dim, dashed: true },
                 ],
               }, { max: 100, fmt: '{value}%', right: 46, top: 44 });
             }

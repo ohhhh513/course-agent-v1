@@ -93,6 +93,20 @@ def profile(
 
 
 @router.post("/logout")
-def logout():
-    """退出登录（后端端可做 token 黑名单，原型仅返回成功）"""
+def logout(
+    request: Request,
+    user: User = Depends(get_current_user),
+):
+    """退出登录：吊销当前 token（进程内黑名单），旧 token 立即不可用。
+
+    2026-09-29 之前是空实现（只回 `{ok:true}`，不吊销任何东西）—— 前端清掉本地
+    token 后，旧 token 在 7 天有效期内仍可继续调用接口（共用电脑上有安全风险）。
+    现在改为：把当前 token 的 jti 记入吊销表，get_current_user 随即拒绝它。
+
+    实现范围：仅当前后端进程有效 —— 进程重启后旧 token 会重新可用；
+    多 worker / 多实例部署时各进程不共享该表（当前为单进程 uvicorn）。
+    """
+    from ..middleware.auth import decode_jwt, extract_token, revoke_token
+
+    revoke_token(decode_jwt(extract_token(request) or ""))
     return ok({"ok": True})

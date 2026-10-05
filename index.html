@@ -67,15 +67,15 @@
   U.$('#authFeats').innerHTML = [
     ['book',  '沉浸式学习导航与可追溯 AI 答疑'],
     ['grid',  '班级学情热力图与共性薄弱点定位'],
-    ['route', 'AI 自动归因与干预策略推荐'],
+    ['route', '错题自动归因分析'],
     ['file',  '一键生成可分享的学情分析报告']
   ].map(([n, t]) => '<li>' + icon(n) + t + '</li>').join('');
 
   // 角色切换（支持 ?role=teacher|admin 预选）—— 真实生效：切换即改表单状态，登录时校验角色匹配
   const ROLE_LABEL = { student: '学生', teacher: '教师', admin: '管理员' };
   const DEMO_HINT = {
-    student: '师生账号由管理员在管理端创建；学生示例 <b>student</b> / 123456',
-    teacher: '师生账号由管理员在管理端创建；教师示例 <b>teacher</b> / 123456',
+    student: '账号由管理员在管理端创建',
+    teacher: '账号由管理员在管理端创建',
     admin:   '初始管理员 <b>admin</b> / admin（后端首次启动自动创建）'
   };
   const qRole = new URLSearchParams(location.search).get('role') || 'student';

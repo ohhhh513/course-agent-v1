@@ -13,8 +13,7 @@ from pydantic import BaseModel
 from typing import Optional
 
 from ..database import get_db
-from ..models.ai import ChatSession, ChatMessage
-from ..models.intervention import TeacherClassDashboard
+from ..models.ai import ChatSession, ChatMessage, AiFeedback
 from ..middleware.auth import get_current_user
 from ..dependencies import get_current_course_id
 from ..schemas.common import ok, fail
@@ -37,6 +36,7 @@ class ChatReq(BaseModel):
 
 class FeedbackReq(BaseModel):
     messageId: str
+    sessionId: Optional[str] = None
     feedback: int = 1   # 1=点赞 -1=点踩
 
 
@@ -105,6 +105,7 @@ def ai_session_messages(
         return ok([])
     items = [
         {
+            "messageId": f"M{m.id}",
             "role": m.role, "method": m.method, "content": m.content,
             "time": m.time_str, "citations": loads(m.citations) or [],
             "toolLog": loads(getattr(m, "tool_log", None)) or [],
@@ -112,18 +113,6 @@ def ai_session_messages(
         for m in rows
     ]
     return ok(items)
-
-
-@router.get("/suggest-questions")
-def suggest_questions(
-    db: Session = Depends(get_db),
-    user=Depends(get_current_user),
-):
-    """推荐提问方向 —— 不再硬编码，返回空列表让前端展示默认提示"""
-    row = db.query(TeacherClassDashboard).filter(TeacherClassDashboard.data_type == "suggested_questions").first()
-    if row:
-        return ok(loads(row.data_json))
-    return ok([])
 
 
 def _agent_events(req: ChatReq, user, course_id=None):
@@ -233,7 +222,22 @@ async def ai_chat_stream(
 @router.post("/feedback")
 def ai_feedback(
     req: FeedbackReq,
+    db: Session = Depends(get_db),
     user=Depends(get_current_user),
+    course_id: str = Depends(get_current_course_id),
 ):
-    """点赞/点踩反馈，用于知识库迭代 —— TODO"""
+    """点赞/点踩反馈 —— 真实写入 ai_feedback（按用户 + 课程归属）
+
+    2026-09-29 之前是 TODO 空实现（只回 `{"accepted": true}`，不落任何库）。
+    """
+    if req.feedback not in (1, -1):
+        return fail("feedback 只能为 1（点赞）或 -1（点踩）", 400)
+    db.add(AiFeedback(
+        message_id=req.messageId,
+        session_id=req.sessionId or "",
+        user_id=user.user_id,
+        course_id=course_id,
+        feedback=req.feedback,
+    ))
+    db.commit()
     return ok({"accepted": True})

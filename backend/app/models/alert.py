@@ -11,7 +11,7 @@ class Alert(Base):
     __tablename__ = "alerts"
 
     alert_id = Column(String(32), primary_key=True)
-    course_id = Column(String(32), ForeignKey("courses.course_id"), default="C2026DS001", index=True)
+    course_id = Column(String(32), ForeignKey("courses.course_id"), index=True)
     user_id = Column(String(64), ForeignKey("users.user_id"), index=True)                 # 学生 ID
     class_id = Column(String(32), ForeignKey("classes.class_id"), index=True)
 

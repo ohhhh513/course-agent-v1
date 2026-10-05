@@ -10,7 +10,7 @@ class Question(Base):
     __tablename__ = "questions"
 
     q_id = Column(String(32), primary_key=True)               # Q1024
-    course_id = Column(String(32), ForeignKey("courses.course_id"), default="C2026DS001", index=True)
+    course_id = Column(String(32), ForeignKey("courses.course_id"), index=True)
     # 归属章 + 考查 KP（可多）；kp_id 保留为主 KP（兼容组卷/统计）
     chapter_id = Column(String(32), default="", index=True)
     chapter = Column(String(64), default="")

@@ -87,9 +87,9 @@ def get_graph(
 
     # ---------- 预计算：每个 knowledge 节点的真实掌握率 ----------
     # 同时融合答题正确率与资源学习进度
-    kp_mastery = _mastery_for_user(uid, db) if uid else {}
+    kp_mastery = _mastery_for_user(uid, db, courseId) if uid else {}
     # 仅答题正确率 + 是否有作答记录：用于判定节点状态（categories 下标）
-    kp_quiz = _quiz_mastery_for_user(uid, db) if uid else {}
+    kp_quiz = _quiz_mastery_for_user(uid, db, courseId) if uid else {}
     kp_has_quiz = set(kp_quiz.keys())
 
     # ---------- 预计算：每个 knowledge 节点的错误统计（供 problem 图谱用） ----------
@@ -241,7 +241,7 @@ def kp_detail(
 
     # 个人掌握率：融合答题正确率与资源进度
     if uid:
-        personal_mastery = _mastery_for_user(uid, db).get(kp_id, personal_mastery)
+        personal_mastery = _mastery_for_user(uid, db, course_id).get(kp_id, personal_mastery)
 
     # 班级平均掌握率
     class_avg = 0
@@ -352,16 +352,19 @@ def kp_detail(
     })
 
 
-def _mastery_from_records(user_id: str, db: Session):
-    """从 answer_records 计算每个知识点的真实掌握率。"""
-    ans_rows = db.query(
+def _mastery_from_records(user_id: str, db: Session, course_id: str | None = None):
+    """从 answer_records 计算每个知识点的真实掌握率（course_id 给定时只统计该课程）。"""
+    ans_q = db.query(
         AnswerRecord.kp_id,
         func.count(AnswerRecord.id),
         func.sum(AnswerRecord.is_correct),
     ).filter(
         AnswerRecord.user_id == user_id,
         AnswerRecord.kp_id.isnot(None),
-    ).group_by(AnswerRecord.kp_id).all()
+    )
+    if course_id:
+        ans_q = ans_q.filter(AnswerRecord.course_id == course_id)
+    ans_rows = ans_q.group_by(AnswerRecord.kp_id).all()
     return {
         kp_id: round((correct or 0) / total * 100, 1)
         for kp_id, total, correct in ans_rows if total
@@ -388,24 +391,26 @@ def _resource_mastery(user_id: str, db: Session):
     }
 
 
-def _mastery_for_user(user_id: str, db: Session):
+def _mastery_for_user(user_id: str, db: Session, course_id: str | None = None):
     """综合掌握率 = 每知识点 max(答题正确率[按题去重], 资源学习完成率)。
 
     以「答题正确率」为主，资源进度作为兜底（看完的视频/文档也算掌握）。
     两者都无数据 → 该知识点不出现（视作 0）。口径与预警/靶向一致（按题去重）。
     算法已集中到 services/kp_stats.mastery_by_kp，供学生/教师多入口复用同一口径。
+    course_id 给定时只统计该课程（默认 None = 该生全部课程）。
     """
     from ..services.kp_stats import mastery_by_kp
-    return mastery_by_kp(db, user_id)
+    return mastery_by_kp(db, user_id, course_id=course_id)
 
 
-def _quiz_mastery_for_user(user_id: str, db: Session):
+def _quiz_mastery_for_user(user_id: str, db: Session, course_id: str | None = None):
     """按知识点聚合用户的答题正确率（题库导入后使用）。
 
     当前题库尚未导入，因此该接口自然返回空或全 0；后续只需保证
     answer_records 有数据即可自动生效，无需修改此处逻辑。
+    course_id 给定时只统计该课程（默认 None = 该生全部课程）。
     """
-    return _mastery_from_records(user_id, db)
+    return _mastery_from_records(user_id, db, course_id)
 
 
 def _status_from_mastery(mastery: float) -> str:
@@ -468,8 +473,8 @@ def _ensure_learning_path(user_id: str, course_id: str, db: Session):
     """
     from ..services.learning_path import sync_user
 
-    mastery_map = _mastery_for_user(user_id, db)
-    quiz_map = _quiz_mastery_for_user(user_id, db)
+    mastery_map = _mastery_for_user(user_id, db, course_id)
+    quiz_map = _quiz_mastery_for_user(user_id, db, course_id)
     has_quiz = set(quiz_map.keys())
 
     def state_of(kp_id: str):
@@ -495,8 +500,8 @@ def learning_path(
     ).order_by(LearningPath.step.asc()).all()
 
     # 同步刷新：资源进度/答题记录变化后，已有 LP 的 mastery/status 可能已过时
-    mastery_map = _mastery_for_user(user.user_id, db)
-    quiz_map = _quiz_mastery_for_user(user.user_id, db)
+    mastery_map = _mastery_for_user(user.user_id, db, courseId)
+    quiz_map = _quiz_mastery_for_user(user.user_id, db, courseId)
     has_quiz = set(quiz_map.keys())
     # 资源数：以 resources 表为准实时统计。
     # learning_paths.res_count 只是派生缓存——历史上仅在教师端上传/删除资源时同步，

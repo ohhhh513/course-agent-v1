@@ -18,20 +18,26 @@ from ..models.practice import AnswerRecord
 from ..models.user_course import UserCourse
 
 
-def mastery_by_kp(db: Session, user_id: str) -> dict:
-    """某用户各知识点的综合掌握率（答题正确率与资源完成率取较优）。"""
+def mastery_by_kp(db: Session, user_id: str, course_id: str | None = None) -> dict:
+    """某用户各知识点的综合掌握率（答题正确率与资源完成率取较优）。
+
+    course_id 给定时只统计该课程的资源与作答（默认 None = 保持历史口径：该生全部课程）。
+    """
     if not user_id:
         return {}
     from .resource_progress import progress_map
     from .scoring import quiz_accuracy_by_kp
 
-    res_rows = db.query(Resource.kp_id, Resource.res_id).filter(Resource.kp_id.isnot(None)).all()
+    res_q = db.query(Resource.kp_id, Resource.res_id).filter(Resource.kp_id.isnot(None))
+    if course_id:
+        res_q = res_q.filter(Resource.course_id == course_id)
+    res_rows = res_q.all()
     prog = {rid: (row.progress or 0) for rid, row in progress_map(db, user_id).items()}
     kp_res = defaultdict(list)
     for kp_id, res_id in res_rows:
         kp_res[kp_id].append(prog.get(res_id, 0))
     by_res = {k: round(sum(v) / len(v), 1) for k, v in kp_res.items() if v}
-    by_quiz = {kp: acc for kp, (acc, _n) in quiz_accuracy_by_kp(db, user_id).items()}
+    by_quiz = {kp: acc for kp, (acc, _n) in quiz_accuracy_by_kp(db, user_id, course_id=course_id).items()}
     return {kp: max(by_res.get(kp, 0), by_quiz.get(kp, 0)) for kp in set(by_res) | set(by_quiz)}
 
 
@@ -118,7 +124,7 @@ def kp_course_stats(db: Session, course_id: str, kp_id: str, video_res_ids) -> d
     mastery = {}
     for u in uids:
         try:
-            mastery[u] = float(mastery_by_kp(db, u).get(kp_id, 0) or 0)
+            mastery[u] = float(mastery_by_kp(db, u, course_id).get(kp_id, 0) or 0)
         except Exception:
             mastery[u] = 0.0
 

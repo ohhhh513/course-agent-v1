@@ -172,13 +172,13 @@
         <div class="card">
           <div class="card__head"><h3>${icon('target')} 学情速览</h3></div>
           <div class="card__body">
+            <!-- 环形图只保留两个真实口径；原第三个「能力目标达成度」已于 2026-09-29 移除 -->
             <div class="rings">
-              <div class="ring-cell" data-goto="mastery">${U.ring(m.completionRate, 'var(--brand-500)', '知识点完成率', '共 46 个', 96)}</div>
-              <div class="ring-cell" data-goto="mastery">${U.ring(m.masteryRate, 'var(--ok)', '知识点学习完成率', '达标线 60%', 96)}</div>
-              <div class="ring-cell" data-goto="mastery">${U.ring(m.goalAchieveRate, 'var(--accent-500)', '能力目标达成度', '基线 80%', 96)}</div>
+              <div class="ring-cell" data-goto="mastery">${U.ring(m.completionRate, 'var(--brand-500)', '知识点学习完成率', `共 ${m.totalKpCount} 个`, 96)}</div>
+              <div class="ring-cell" data-goto="mastery">${U.ring(m.masteryRate, 'var(--ok)', '知识点学习掌握率', `达标线 ${m.masteryThreshold}%`, 96)}</div>
             </div>
             <div class="callout callout--brand" style="margin-top:14px">
-              ${icon('info')}<div>指标每日 06:00 全量刷新，练习提交后分钟级增量更新。点击环形图可下钻至<b>我的学情</b>。</div>
+              ${icon('info')}<div>指标为实时口径：每次打开页面都按当前学习进度与答题记录即时汇总，无定时快照，刷新即为最新值。点击环形图可下钻至<b>我的学情</b>。</div>
             </div>
           </div>
         </div>

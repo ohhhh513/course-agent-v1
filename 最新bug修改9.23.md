@@ -101,11 +101,11 @@
 
 - 背景：删掉两块（十二/十三节）后页面只剩三块内容、大片留白，显得简略。本次在不改后端、不加接口的前提下重排版式。
 - `assets/js/teacher/views/analysis.js`：页面结构改为「范围条 → 概览指标 → 错题排行 → 双栏明细 → 数据口径脚注」：
-  - **范围条**：原单行 callout 改为「图标 + 分析范围 chip（课程名/章节/时间范围）+ 一句话说明」的卡片。课程名取自 `GET /course/my`（原来只会显示 `C8WBRZKV` 这类课程号）。
+  - **范围条**：原单行 callout 改为「图标 + 分析范围 chip（课程名/章节/时间范围）+ 一句话说明」的卡片。课程名取自 `GET /course/my`（原来只会显示 `C8WBRZKV` 这类课程号）。⚠️ **该卡片已整体删除，且随之取消 `GET /course/my` 调用，见第三十一节（2026-09-29）**。
   - **概览指标**：新增 4 张 `.stat` 卡（高频错题道数 / 累计答错次数 / 涉及知识点数 / 待关注学生数），全部由 `/analysis/errors` 返回数据现算，每张卡的 hint 注明口径，无估算、无新增接口。
   - **错题排行**：`高频错题 Top 5` 每条改为「排名徽标 + 题干 + 知识点/难度/主要错项 meta + 右侧错误率数值与进度条 + 答错次数」，颜色按错误率 60% / 30% 两档分级；空态改用带图标与引导文案的 `R.empty`。
   - **双栏明细**：共性薄弱条目追加「出错人数/学习人数」徽标与占比进度条、右侧百分比；个性异常条目改为「头像 + 姓名 + 问题标签 + 描述 + 查看学情」行式卡片；两栏空态都写明判定线。
-  - **数据口径脚注**：新增卡片，逐条说明高频错题排序与错误率算法、共性薄弱（≥2 人且占比 ≥30%）、个体异常（有效学习点 ≥3 且平均掌握率 <40% 或完成率 <30%）的判定线。
+  - **数据口径脚注**：新增卡片，逐条说明高频错题排序与错误率算法、共性薄弱（≥2 人且占比 ≥30%）、个体异常（有效学习点 ≥3 且平均掌握率 <40% 或完成率 <30%）的判定线。⚠️ **该脚注已于 2026-09-29 按反馈移除**，见第三十一节。
 - 样式仅在本视图内新增一段 `<style>`（`assets/css/*.css` 未改动），复用既有设计令牌与 `.stat / .chip / .badge / .bar / .empty` 组件，全站风格一致。
 - 未改动：接口、字段、判定阈值与 `主要错项`（仍是后端启发式给出的 B/C，如需调整另议）。
 - **行为变更备注（本次唯一改变渲染语义的地方）**：「个性异常」条目的严重度配色由原来的 `issue.includes('未登录') || issue.includes('滞后')` 改为 `/滞后|极低/`。原判断里的「未登录」后端从不产出（属死条件），结果是「掌握率极低」显示黄色、「进度严重滞后」显示红色，严重度正好反了；现在两者都按红色呈现。该变更由本次改动负责，如需与改动前逐字一致，改回原判断即可（一行）。
@@ -388,103 +388,426 @@
   - 前端过滤后：26 个知识点中隐藏 6 个 —— `KP004 顺序表`、`KP005 链表`、`KP010 串的模式匹配`、`KP012 广义表`、`KP018 拓扑与关键路径`、`KP022 排序算法概述`；无「整章全空」的章节。
   - 对照截图的「第9章 排序」：**KP022 排序算法概述（0 题）已隐藏**，保留 KP023 交换排序 5 题 / KP024 插入排序 8 题 / KP025 选择排序 10 题 / KP026 归并排序 4 题。
   - **关键断言**：把显示出来的 20 个知识点逐个拿去组卷，**没有一个返回空池**；被隐藏的 6 个逐个组卷全部 `total=0`。
-- ⚠️ 需重启后端（新接口才存在；实测当前进程仍是旧代码：`/practice/kp-pool` → 404，`/practice/modes` → 401）。前端刷新即可。
+- ⚠️ 需重启后端（新接口才存在；实测当前进程仍是旧代码：`/practice/kp-pool` → 404、`/practice/modes` → 401）。前端刷新即可。
 
----
+## 三十一、教师端「归因与错题分析」两个列表：卡内滚动 + 两卡等高 + 移除口径脚注（2026-09-29）
 
-## 三十一、题目归属口径统一：主 KP ∪ `kp_ids` 标签（修「子知识点预警永远消不掉」）（2026-09-29）
+- `assets/js/teacher/views/analysis.js`（前端）：新增 `syncListWindows(boxes, n)` —— 「共性薄弱（班级层面）」与「个性异常（个体层面）」两个列表卡**共用同一个窗口高度，只完整显示 5 条**，其余条目在卡内滚动查看。
+- **高度不写死像素**：量取各列表「前 5 行的真实排版高度」（首行顶部 → 第 5 行底部，含行底分隔线），取两者的**较大值**作为统一窗口 H —— 描述文字换行、字号变化时窗口仍正好 5 条，且两侧恒等高（与 `monitor.js::_clampAlertList` 固定 4 张预警卡片同一套思路）。
+- **两卡等高**：内容超出 H 的一侧 `max-height:H` + 卡内滚动；**不足 H 的一侧 `min-height:H` 撑齐**（而不是把卡片缩矮）。于是两卡的标题栏、列表底边、卡片底边逐像素对齐。两侧都不足 5 条时，取内容较高的一侧作统一高度，同样等高（内容高度按亚像素取整，避免 0.4px 级别的参差）。
+- 样式：列表容器加 `an-list`，卡片加 `an-card`（`align-self:start` —— 卡片高度只由「标题栏 + 窗口」决定，两侧窗口同高故卡片恒等高）；滚动条沿用项目既有观感（`scrollbar-width:thin`、6px、thumb `--brand-300`、track `--surface-3`、`scrollbar-gutter:stable`），**只在真的溢出时才加 `an-list--scroll`**，未溢出不留白。`resize` 时重算（描述换行会改行高），容器离开文档后自行摘掉监听。
+- **移除页面底部的「数据口径」脚注卡片**：按反馈删掉该介绍性字段（连同 `an-note` 相关 CSS）。列表空态里的"判定线"说明保留 —— 那是空态自解释，不是页面级介绍。
+- 动机：截图显示该页「共性薄弱」命中 17 个知识点、「个性异常」5 名学生，两个列表把页面拉得很长；固定为 5 条后一屏可见，其余滚动。随后发现两卡高度不一（一侧滚动、一侧缩矮）影响观感，故改为共用窗口高度。
+- 实测（无头 Chrome 1500×1180，数据库副本，**未触碰真实库 `course_agent.db`**）：
+  - **两卡完全对齐**：`cardTop / cardBottom / cardHeight` 与列表 `boxTop / boxBottom / boxHeight` **全部相等** —— 卡片高均为 465px、列表高均为 411px（共性薄弱 17 条 → `max-height:411px` + 滚动；个性异常 5 条 → `min-height:411px` 撑齐）。
+  - **共性薄弱**：17 条 → 可见 411px / 内容 1396px；**完整可见正好 5 条**，第 5 行底边 1342.4 与容器底边 1342.4 齐平、第 6 行完全不可见；滚到底部仍只完整显示 5 条且最后一行与容器底对齐。
+  - **表头固定**：卡内 `scrollTop=300` 时 `card__head` 位置不变（878 → 878），滚动只发生在列表区。
+  - **`resize` 后**两卡仍等高（465 = 465）、窗口仍等于 5 行真实高度（411 = 411 = clientHeight）。
+  - **「数据口径」卡片已删除**：`#view-analysis .an-note` 计数 0，页面卡片标题只剩「高频错题 Top 5 / 共性薄弱 / 个性异常」，最后一张卡即「个性异常」。
+- **同日续 ①：删除范围卡里的一行说明文字** —— 「按答题记录与学习路径实时统计（不做估算），用于定位共性薄弱知识点与需要关注的学生。」按反馈删除（连同已无用的 `#view-analysis .an-scope p` 样式）。当时范围卡只保留「分析范围 + 课程 / 章节 / 时间三个 chip」。实测 `.an-scope` 内 `p` 计数 **0**、chips 文本仍为 `["数据结构与算法","全部章节","全部时间"]`，两卡仍等高（465 = 465、列表 411 = 411）。
+- **同日续 ②：整块「分析范围」卡片全部删除**（按反馈「全部删掉」）—— 卡片标记、7 条 `.an-scope*` 样式，以及**只为它服务**的数据依赖一并去掉，不留死代码、不留无用请求：
+  - 模板：删掉 `<div class="card">…<b>分析范围</b>…三个 chip…</div>` 整块，页面第一个元素由「范围卡」变为「概览指标」四张 stat 卡；
+  - 样式：`#view-analysis .an-scope{...}` / `.an-scope__ico` / `.an-scope__ico svg` / `.an-scope__head` / `.an-scope__head b` / `.an-scope__head .chip` / `.an-scope__head .chip svg` 共 7 条全部删除；
+  - 数据依赖：`Promise.all([analysis.errors, course.my])` 收敛为 `API.analysis.errors({}).then(d => …)`，删除 `scope` / `cur` / `courseLabel` / `timeLabel` 四个变量（`cur` 是 `Array.isArray(courses).find(...)`，仅被 `courseLabel` 使用）。**副作用是少发一次 `GET /course/my`**；
+  - 顶部文件注释同步改写：去掉「范围条」「课程名取自 GET /course/my」，并把本次删除登记为第 4 条变更。
+- **实测（无头 Chrome 1500×1180，数据库副本，未触碰真实库）**
+  - 结构：`.an-scope` 计数 **0**、`.an-scope__ico` **0**、页面内文本不含「分析范围/数据结构与算法/全部章节/全部时间」、**样式表里 `an-scope` 规则也不存在**（`scopeCssRule:false`，确认不是只删 DOM）；
+  - 卡片标题只剩 `["高频错题 Top 5","共性薄弱（班级层面）","个性异常（个体层面）"]`，第一个 `.grid` 的子元素为 `stat`；
+  - 请求：一次完整加载（启动 + 归因页渲染）**只有 1 次 `/api/v1/course/my`**、1 次 `/analysis/errors`，`/analysis/causes` 与 `/analysis/weak-chain` 均为 0（已于本日下线）；
+  - **发起者归因**（CDP `Network.requestWillBeSent` 取 initiator 调用栈）：那唯一一次 `/course/my` 的栈为 `api.js:72 ← api.js:813 ← app.js:52 ← app.js:83` —— **来自应用外壳的课程切换器，栈中没有 `analysis.js`**；即删除后归因页确实不再发起该请求（对比：手动调一次 `API.course.my()`，计数由 1 变 2，证明该口径能测出新增请求）；
+  - 回归：两卡仍恒等高 —— 卡片 465 = 465、列表 411 = 411，`共性薄弱 17 条`设 `max-height:411px` 卡内滚动、`个性异常 5 条`设 `min-height:411px` 撑齐，两卡底边一致（1213.9 = 1213.9）；页面无未捕获异常。
+- 纯前端改动，**刷新页面即可，无需重启后端**；未改接口、未改表结构与数据。
 
-### 用户报告的问题
+## 三十二、接口占位与伪数据清理（P10–P16 · 2026-09-29）
 
-「做题时分了主知识点和子知识点：答错会按权重同时压低主、子知识点的正确率，但**重新做题时只有主知识点回升**；而且如果某个子知识点根本没有题，它出的预警**永远消不掉**。」
+- 背景：`待修复清单.md` 第三节「三、接口占位与伪数据」（P10–P16）逐条复核后按用户确认的方案处置：
+  **两个占位接口下线 + 反馈真落库；冗余端点/别名一律删净；退出登录改为真实吊销 token**。
+- **先核对再动手**：出方案前先用只读 SQLite 连接实测当前库，得到硬证据（不改任何数据）：
+  - `teacher_class_data`（`TeacherClassDashboard`）**0 行** → `/ai/suggest-questions` 恒返回 `[]`；
+  - `intervention_templates` **0 行**、`interventions` **0 行** → `/intervention/{id}/effect` 的"对照组"没有任何真实来源；
+  - `questions` 229 行 / `answer_records` 645 行，`error_type` **非空 0 条**（属 P8，本轮未动）。
+- **后端**：
+  1. `routers/teacher.py`：删除 `POST /question/materials`（假 `fileId`，不落盘不解析）、`POST /question/packs`（假 `packId` + `pushed:true`，不落库）、
+     `POST /question/gen/stream`（`/gen` 的纯别名，全库零调用）、`GET /analysis/weak-chain`、`GET /analysis/causes`（实现真实但前端从未调用），
+     以及只为它们存在的 `UploadMaterialReq` / `CreatePackReq`；`GET /question/gen/config` 不再返回恒空的 `materials` 字段（前端已无消费方）。
+  2. `routers/intervention.py`：删除 `GET /intervention/{ivId}/effect`（对照组序列 `min(rate+8,100)` 系编造）；
+     `GET /intervention/templates` 移除 `successRate`（原 `70+use_count*2`）与 `avgLift`（原 `5+use_count*0.5`）两个编造字段，
+     只保留按 `interventions` 真实统计的 `useCount`；顺带删掉未被使用的 `done_ivs` 变量与 `date/timedelta` 导入。
+  3. `routers/ai.py`：删除 `GET /ai/suggest-questions`（查恒空表）；`POST /ai/feedback` **由 TODO 空实现改为真实落库**；
+     `GET /ai/sessions/{id}/messages` 每条消息补 `messageId`（`M{chat_messages.id}`），供反馈定位到具体回答。
+  4. **新增数据表** `ai_feedback`（`models/ai.py::AiFeedback`）：`id / message_id / session_id / user_id / course_id / feedback / created_at`；
+     由 `init_db()` 的 `create_all` 建出（**已获用户同意**）。
+     `course_id` 来自 `get_current_course_id`（含成员校验），**不给默认值**，避免落进演示课；`feedback` 仅接受 `1 / -1`，其它取值返回 `code=400` 信封。
+  5. **P14 退出登录吊销 token**（`middleware/auth.py` + `routers/auth.py`，用户选定「进程内黑名单 + jti」）：
+     `create_jwt` 增加 `jti`；新增吊销表 `_REVOKED_JTI`（`jti → exp`，写入/校验时惰性清理过期项）与 `revoke_token()` / `is_revoked()`；
+     `POST /auth/logout` 改为**依赖登录**并写入吊销；`get_current_user` / `get_current_user_optional` 命中吊销即 401（`登录状态已失效，请重新登录`）。
+     ⚠️ **已知限制（已写入文档）**：吊销表在进程内 —— 进程重启后旧 token 会重新可用；多 worker / 多实例不共享。当前单进程 uvicorn 下「登出即失效」成立。
+- **前端**：
+  - `teacher/views/question.js`：删除「素材库」卡（含 `${cfg.materials.map(...)}` 渲染）、「模拟上传」弹窗与其点击绑定、生成结果区的「生成靶向补练包」按钮及绑定 —— 出题页不再有任何"点了会说成功、实际没产物"的入口。
+  - `student/views/chat.js`：👍/👎 按钮带 `data-mid="${m.messageId}"`；点击改为提交 `{messageId, sessionId, feedback: 1|-1}`；
+    `onMeta` 记录流式回答的 `messageId`，`finish()` 回填到消息对象；无标识时拒绝提交并提示，`catch` 后提示失败（新增两条错误 Toast 文案）。
+  - `api.js`：删除 `question.upload`、`question.createPack`、`ai.suggestQuestions`、`ai.chat`、`analysis.weakChain`、`analysis.causes`、
+    `intervention.effect` 定义，以及**只被 `ai.chat` 使用的 `mockAnswer` 整段死代码**（约 100 行）。
+- **文档**：同步更新 `docs/接口文档.md`（注销状态改 ✅、删 6 个端点行、补 `/ai/feedback` 说明、`templates` 去伪说明）、
+  `docs/页面与功能清单.md`、`docs/后端对接指南.md`、`docs/项目真实交互梳理.md`（ai.py 端点表、僵尸表、死接口、待决项逐条改写），
+  `待修复清单.md`（P10–P16 速查表与正文全部标 `[x]` 并附处置说明）。
+- **回归脚本修正（附带发现）**：`backend/regression_test.py` 有两处**早就失效**的问题，本次一并修好：
+  1. 用例表里的账号 `student/123456`、`teacher/123456` 在当前库中**不存在**（真实账号为 `stu01…stu10` / `wangjg`），按原脚本登录直接崩；
+     现改为可配置（`STUDENT_USER` / `TEACHER_USER` / `PASSWORD`，默认取真实账号），并把 `login()` 对失败响应的处理改为容错；
+  2. 硬编码的 `classId=CL2301`、`course_id="C001"` 均已过期（真值 `CL2601` / `CCHYJTKE`），改为**运行时动态发现**（`/course/my`、`/teacher/classes`、`/teacher/students`）；
+  3. 新增断言：8 个已删端点必须 `404/405`；`/ai/feedback` 真落库（含缺 `messageId` → 422、非法值被拒、点踩落库）；`/auth/logout` 后旧 token → 401；
+     并放宽 SSE 出题用例的入参（该端点要求至少一个知识点，原脚本必然拿 400）。
+- **实测（独立 8010 实例 + `sqlite3.backup()` 数据库副本，全程未触碰用户 8000 与真实库）**：
+  - `regression_test.py`（`BASE=http://127.0.0.1:8010`）：**`ALL PASS  total=44 passed=44`**，
+    其中 `auth/logout (revoke token) -> logout=200 reuse_old_token=401`、`ai/feedback -> up=200 noMessageId=422 badValue=200/code=400 down=200`、
+    8 条 `GONE -> 404/405` 全部通过。
+  - `dev_tools/verify_p10_16.py`：**`ALL PASS passed=16 failed=0`**。关键证据：
+    - 反馈真落库：请求前后 `ai_feedback` 行数 `6 → 7`，落库行 `('M-VERIFY-UP','CH-VERIFY','2026010101','CCHYJTKE',1)` 与请求完全一致；点踩存 `-1`；
+    - 被拒请求（`feedback=0`）**不落库**；
+    - `templates` 去伪：插入 1 个模板 + 2 条同场景干预后，`useCount=2`（真实统计），返回字段为
+      `['desc','name','resources','scene','steps','tags','tplId','useCount']` —— **`successRate` / `avgLift` 已不存在**；
+    - 吊销粒度：token A 登出后 A → 401，同一用户的 token B 仍 200（按 token 作废，不是清空该用户全部会话）；
+    - 表结构：`ai_feedback` 由启动建表产生，7 列齐全，且记录带真实 `course_id`。
+  - 无头 Chrome（真实 Chrome + CDP，1500×1100 @2x，3 组探针，页面无未捕获异常）：
+    - 教师端 `#question`：`hasGenBtn=true`、知识点 chip **26** 个（页面本身正常），而 `hasMaterialUpload=false`、页面文本**不含「素材库」**、
+      `hasPackBtn=false`、`window.API.question.upload` 为 `undefined`；`API.question` 键为
+      `["genConfig","generate","genStream","ingestStats","drafts","draftUpdate","draftDelete","draftPublish","bank","update","review","remove","importBatch"]`（无 `upload` / `createPack`）；
+    - 学生端 `#ai`：2 个反馈按钮**全部带 `data-mid`**（值 `M12`，来自接口下发）；
+    - 点击点赞 → 网络探针抓到 `POST /ai/feedback`，body `{"messageId":"M12","sessionId":"CHD175B97EE4","feedback":1}`；
+    - **闭环**：随后查副本库，`ai_feedback` 新增第 9 行 `('M12','CHD175B97EE4','2026010101','CCHYJTKE',1)` —— 界面一次点击 → 真实入库。
+- 影响面与后续：
+  - 前端为静态资源，**刷新页面即生效**；后端改动需重启（用户 8000 端口实例仍是旧代码）。
+  - 素材上传请改用真实入口 `POST /teacher/resources/upload`；题目文件导入用 `POST /question/import/file`。
+  - `/ai/chat`（非流式）**保留**：它是真实实现且被接口文档、智能体工作流说明引用，供无头/脚本调用。
+  - 若要跨重启持久化吊销记录，需另建 `revoked_tokens` 表（属表结构变更，需先议）。
+  - `teacher_class_data` 表已无任何读取方（唯一读者已删除），可随下次删库重建一并移除。
+  - 本次未动的邻近问题：P7（`mainWrongOption` 仍是 `"B" if wc>t*0.6 else "C"` 启发式）、P8（题库无错误类型标注入口）、P17/P38（越权类）。
 
-### 实测结论（先把事实说清，库副本实测，未触碰真实库）
+## 三十三、隔离与权限：角色校验 + 课程归属（P17 / P18 / P38 / P39 + 补做 P4 / P9 · 2026-09-30）
 
-1. **计分本身没有偏心**：同一道「主 KP017 + 标签 KP018」的题，
-   - 答错后：主 `KP017` 100%→**75%**、子 `KP018` 100%→**75%**（两边同步下降）；
-   - 再答对：主 → **100%**、子 → **100%**（**两边都会回升**）。
-2. **预警的生命周期也没有坏**：把挂了 `KP018` 标签的题连错 6 道 → `KP018` 掉到 25% → 检测生成 `red/open` 预警；再把这些题全部重做答对 → `KP018` 回到 100% → 检测把该预警**删除**（`deleted: 2`）。
-3. **真正的根因是"口径不一致"**：正确率/预警按「主 KP ∪ 标签（主 1.0 / 标签 0.3）」算，但**抽题与题数统计只认主 KP**。于是像
-   `KP018 拓扑与关键路径`（主题 **0** 道、被当标签 **24** 次）、`KP005 链表`（0 / 10）、`KP022 排序算法概述`（0 / 4）、`KP010 串的模式匹配`（0 / 2）
-   这类子知识点：
-   - 能掉分、能出预警（标签加权在起作用），
-   - 但 `create_session(kpIds=['KP018'])` 修复前返回 **0 题**、`/practice/kp-pool` 也报 **0 题**（顺序练习据此把它隐藏），
-   - 学生点「去练习 / 靶向练习」只会看到"该知识点暂无可用题目"，**没有任何入口**去把分数练回来 —— 预警就成了永远摘不掉的红点。
+- 背景：处理 `待修复清单.md` 第四节「四、隔离与权限」。经用户确认本轮范围为**安全隔离四件套（P38 + P17 + P39 + P18）**；
+  P40（打卡/资源时长表加 `course_id`）**本次跳过、保持登记**；越权一律返回 **403**；v1 实际缺失的 §一/§二 条目本轮**只补 P4 / P9**。
+- **后端**：
+  1. `middleware/auth.py`：新增 `require_teacher` 依赖 —— `role != "teacher"` 直接 `HTTPException(403, "仅教师可访问该接口")`。
+  2. `routers/teacher.py`：`router` / `analysis_router` / `question_router` 三个 router 统一挂
+     `dependencies=[Depends(require_teacher)]`（一处挂载即覆盖该前缀下全部端点，无需逐端点改）。
+  3. `routers/intervention.py`：`intervention_router` / `report_router` 同样挂载。
+  4. **P17 课程归属校验**：`teacher.py::update_question` / `remove_question` / `review_questions` 增加
+     `q.course_id != course_id → fail("无权操作其它课程的题目", 403)`；`remove_question` 由「先删再判」改为
+     「先查 → 判归属 → 再删」（避免已删除才报错）；`intervention.py::report_detail` / `export_report`
+     按 `detail_json.meta.courseId` 判归属 → `fail("无权查看/导出其它课程的报告", 403)`。
+  5. **P39 课程收敛**：`teacher.py` 的今日 `PracticeSession`、今日 `AnswerRecord`、学生最近活跃、个体画像答题明细、
+     活跃趋势时长、预警趋势作答、归因答题集、薄弱链路、题库正确率聚合，以及 `teacher_dashboard` 的 `kpRanking` 聚合、
+     热力图的「掌握率」分支，全部补 `course_id` 等值过滤；`_student_lp_stats` / `_student_answer_stats` 补 `course_id` 形参
+     （4 个调用点同步）；`_generate_interventions_from_db` 补 `course_id` 形参与过滤 —— 并因此发现
+     `intervention_list` 端点原先**没有** `course_id` 依赖（改签名后直接 500），本轮一并补上。
+     ⚠️ 首轮用**单行扫描器**排查时漏掉了多行写法的查询（统计 helper、`kpRanking`、热力图掌握率分支、干预生成），
+     后改用多行（括号配对）扫描全量复查才补齐 —— 教训：静态扫描要能处理换行。
+  6. **P18**：删除 `models/{alert,course,graph,practice,question}.py` 中 **9 处** `default="C2026DS001"`
+     （`Alert`/`Resource`/`GraphNode`/`GraphLink`/`KpDetail`/`LearningPath`/`PracticeSession`/`AnswerRecord`/`Question`）：
+     此后 `course_id` 必须显式传入，漏传即报错，不再静默落到演示课。
+  7. **补做 v1 缺失项**：P4 —— `analysis_errors` 的答题集与 `class_lps` 补 `course_id`；
+     P9 —— `student.py::student_dashboard` 的 `ans_dates` / `cur_week_rows` / `last_week_rows` / `weakPoints[].errorCount` 补 `course_id`。
+- **回归脚本**（`backend/regression_test.py`）：新增 `check_forbidden()`（同时接受 HTTP 403 与信封 `code=403`）；
+  新增 6 条 P38 断言（学生 token 打教师接口 → 403）与 2 条 P17 断言（不存在的 `qId` → 404，验证新校验路径未引入 500 或静默成功）。
+- **文档**：`docs/接口文档.md` 新增 §1.6「角色与课程隔离」（两种 403 的落点区别），并给 §7 教师端 / §8 归因（`course_id` 收敛）/
+  §9 题库 / §12 干预与报告补 🔒 角色说明；§10.2 里"模型 `course_id` 默认值 `C2026DS001`"改为**历史说明 + 已删除**；
+  `待修复清单.md` 第四节 P17/P18/P38/P39 标 `[x]` 并附处置与实测，另加「v1/v2.1 归属提醒」。
+- **实测（独立 8010 实例 + `sqlite3.backup()` 数据库副本，全程未触碰用户 8000 与真实库）**：
+  - `regression_test.py`：**`ALL PASS  total=52 passed=52`**（其中 `P38 student->teacher/*` 6 条全 403、
+    `P17 question PUT/DELETE unknown -> 404` 2 条通过）。
+  - `dev_tools/verify_p17_38_39.py`：**`ALL PASS  passed=20 failed=0`**。关键证据：
+    - **P18**：反射 `Base.metadata.tables` 遍历所有表，`course_id` 列 `default` **全部为 `None`**（0 处残留）
+      —— 用反射而非 grep，可覆盖 `**values` 动态赋值等 grep 看不到的写法；
+    - **P17**：跨课程 改题 / 删题 / 审核 / 读报告 / 导出报告 **5 项全部 403**；反证别门课题目 `difficulty/status`
+      未被改动（仍为 `(3, 'published')`）；对照组本课题目可正常修改（`code=0`）；
+    - **P38**：学生 token 打 8 个教师端接口（`teacher/classes`、`teacher/dashboard`、`teacher/heatmap`、`teacher/students`、
+      `analysis/errors`、`question/bank`、`report/list`、`intervention/list`）**全部 HTTP 403**；教师 token 对照组正常；
+    - **两级噪声敏感性对照**（向第二门课注入数据后比对 11 个接口的响应 JSON）：
+      **L1 合法噪声**（第二门课自己的 12 条今日错答 + 3 条练习会话 + 3 条学习路径，归属一致）→ **逐字不变**；
+      并用"不过滤 vs 过滤"的原始 SQL 计数证明噪声足够强（该生：今日答题 不过滤 **20** → 过滤后 **0**；
+      全部答题 **133 → 113**；学习路径 **31 → 26**；练习会话 **25 → 22**），即"不变"确实来自课程过滤，不是噪声太弱的假通过。
+  - 无头 Chrome（真实 Chrome + CDP，1600×1150 @2x）：教师端 8 个入口（驾驶舱 / 学情监测 / 归因分析 / 题库 / 报告 /
+    干预兜底路由 / 课程目录 / 知识图谱编排）全部正常渲染、课程上下文正确（`CCHYJTKE`）、渲染量与真实库一致、
+    **页面未捕获异常：无** —— 证明加 `require_teacher` 后教师端自身不受影响。
+- **已知残余（已登记，本轮按约定未改）**：
+  - **P43**：L2 脏数据（行内 `course_id` 与 `kp_id/q_id` 归属不一致）下 `student/dashboard`、`student/mastery/matrix`、
+    `student/alerts` 三个接口会变 —— 根因是 `services/scoring.quiz_accuracy_by_kp` 等按 `user_id` 取值、**无课程参数**。
+    这正是清单 P43 所述「靠 KP id 全局唯一做课程隔离」风险在真实接口上的可复现证据。
+  - **P40**：`study_checkins` / `resource_study_log` 缺 `course_id` 列（属表结构变更，需先议）。
+  - **P5 / P6 / P7 / P8**：v1 仍未落地（章记录来自同源 v2.1 仓库），另开一轮。
+- **影响面与后续**：
+  - 前端为静态资源，**无需改动、刷新即生效**；后端改动需**重启**（用户 8000 端口实例仍是旧代码）。
+  - **破坏性变更（有意为之）**：凡"允许教师跨课程操作任意题目 / 报告"的用法，现在一律 403。
+    前端教师端本身只操作当前课程，实测无影响；第三方脚本若依赖旧行为需同步调整。
 
-### 修改（后端，4 个文件；口径统一到项目已有的 `question_kp_ids`）
 
-> `services/catalog_helpers.py` 里**早就存在** `question_kp_ids()`（主 KP ∪ `kp_ids` 标签），资源的统计也正是用这个口径（`resource_hits_kp`）；只是题目这边没有跟上。
+## 三十四、学情监测「共性薄弱识别」chip 内数字与名称基线错位（2026-09-30）
 
-- `services/catalog_helpers.py`：新增 `question_kp_clause(model, kp_ids)` —— 生成「主 KP ∪ 标签」的 SQL 条件，用**带引号的 LIKE 精确匹配** JSON 元素（避免 `KP01` 误命中 `KP018`）。
-- `routers/practice.py`：
-  - 组卷（`kpIds` 分支）与随机练习（`random`）改用新条件取题；
-  - `/practice/kp-pool` 的题量改为「主 ∪ 标签」（同一题只计一次）；
-  - `_order_pool` 排序键扩展为 **(知识点优先级, 是否纯标签命中, 做错过, 难度)** —— **主命中优先，纯标签命中排在同档之后**，其余不变。
-- `routers/graph.py`：学生端知识点详情「题库 N 题」改为同一口径。
-- `routers/teacher.py`：教师端知识点详情面板「关联题目」、课程目录 `qCount` 改为同一口径（面板里的「关联资源」本来就是这个口径，现在两个数字同一规则）。
+- 现象（用户截图）：`teacher.html#monitor` 底部「共性薄弱识别（班级平均学习完成率低于 80% 的知识点）」
+  的 chip 里，百分比数字比知识点名称**高 2px**，肉眼看着上下错位。
+- 先排除数据问题：按 `learning_paths`（`course_id=CCHYJTKE` 且 `status != 'todo'` 的 `mastery`）复算班级平均，
+  与截图**逐项一致**（选择排序 55.8 / 广义表 59.9 / 栈 62.4 / 查找 63.2 / 最短路径与生成树 64.3）
+  —— 数据没配错，是渲染问题（名称与数值的配对由 `heatmap` 同一 `j` 下标取 `kp_names[j] / kp_avg[j]`，无错位空间）。
+- 根因：`base.css` 的 `.chip` 是 `display:inline-flex; align-items:center`，而 `teacher/views/monitor.js`
+  模板写的是「图标 svg + **裸文本**知识点名 + `<b class="mono">数字</b>`」——名称（匿名 flex 项）与数字
+  （`.mono` → `--font-num` = Bahnschrift）成了**两个独立的 flex 项**，被 `align-items:center` **各自按盒子居中**；
+  两者字体的 ascent 不同（中文 13 / Bahnschrift 10），基线于是差了 2px。
+  实测 `baselineDelta = -2px`（数字基线上移）、名称项居中 0、图标居中 0。
+- 修法（**局部**，不动全局 `.chip`）：
+  - `assets/js/teacher/views/monitor.js`：把名称与数字包进同一个基线组
+    `<span class="chip__txt">${name} <b class="mono">${avg}%</b></span>`；
+  - `assets/css/base.css`：新增 `.chip__txt { display:inline-flex; align-items:baseline; gap:5px }`
+    与 `.chip__txt b { line-height:0 }`。
+- 为什么不直接给 `.chip` 加 `align-items: baseline`：**注入式对照实验**实测，该改法虽能把基线差归零，
+  但会把整组文字相对 chip **顶高 3px**（`textOffCenter = -3`），纯文字 chip 会被一起顶起来 —— 故改为局部包装。
+- 数字为什么要 `line-height: 0`：Bahnschrift 默认行高约 18px > 中文行盒 16px，会把基线组撑高 2px，
+  整组居中后名称反而上移 1px（第二组注入对照：`textOff` 0→-1）。让数字不参与行盒高度后，
+  名称停在**原位**、只有数字落下来对齐。
+- 实测（独立 8010 + `sqlite3.backup()` 副本，无头 Chrome 真实量测全部 5 个 chip）：
+  `baselineDelta = 0`（5/5）、名称 `textOffCenter = 0`（与原位置逐像素相同）、数字下移 2px（`pctOffCenter` -0.5 → +1.5）、
+  图标仍居中（0）、chip 高 **28px** / chip 间距 **6px** / 名称到数字间距 **5px** 全部不变；页面未捕获异常：无。
+  教师端 8 个入口冒烟复跑仍全部正常。
+- 未改（同源但差异 < 1px，未获指示）：`practice.js` 章节 chip 的 `.chip__count`（同族字体、10.5px，基线差约 0.8px）。
+- 影响面：纯前端静态资源，**Ctrl+F5 强刷即生效**，无需重启后端。
 
-### 影响面
+## 三十五、隔离与权限（第二轮）：统计口径补课程参数 + 预警生命周期（P41 / P43 / P44 / P47 / P48 · 2026-09-30）
 
-| 项 | 变化 |
+本轮按确认的范围处理清单第四大节剩余条目：**P43 / P44 / P47 / P48 全部落地，P41 两处都修**；
+P40（打卡/资源时长表加列）与 P45（题库按主 KP、图谱按主∪标签的两套口径）按决定**跳过、保持登记**。
+
+### P43 · 统计口径函数补 `course_id`
+
+- 改动：`services/scoring.quiz_accuracy_by_kp(db, user_id, secondary_weight, course_id=None)` 与
+  `services/kp_stats.mastery_by_kp(db, user_id, course_id=None)` 新增**可选** `course_id`（默认 `None` = 保持历史口径）；
+  作答记录 / 资源表按 `course_id` 过滤。
+- 消费方全部收敛：`routers/graph.py::_mastery_for_user / _quiz_mastery_for_user / _mastery_from_records`（共 6 个调用点）、
+  `routers/student.py`（驾驶舱 / 资源进度同步 / 学情矩阵）、`routers/practice.py::_random_scope_kp_ids`、
+  `routers/teacher.py::review_alert`（用 `alert.course_id`）、`services/alert_detector.py`（改为**按课程分组**检测：
+  每个学生遍历「有作答记录的课程 ∪ 现有预警所在的课程」）。
+- 为什么平时看不到 bug：`graph_nodes` 主键是 `(id, graph_type)`（不含 `course_id`），同一 graph_type 下 KP 号
+  在 DB 层本就唯一（`teacher._next_graph_id` 全表取 max+1）。本条是把「靠唯一性间接隔离」换成显式按课程收敛。
+- 实测（8010 + 库副本 + 注入第二门课 `CVERIFY2`）：旧口径（`course_id=None`）混入别课知识点 `VFY2KP01/02/03`
+  （键集合 25 → 28），新口径完全不含；学生端 3 个接口 × 10 名学生 + 教师端 6 个接口共 **36 个响应逐字不变**
+  （比对时忽略信封 `traceId`）。
+
+### P44 · 预警生命周期兜底
+
+- `services/alert_detector.py::detect_alerts` 主循环改为「现有预警 ∪ 本次证据」**并集遍历**：
+  证据不足（不在正确率表里，或不同题数低于门槛）的旧预警删除，`ignored`（教师判定过的历史记录）保留；
+  评估范围覆盖「有作答记录的课程 ∪ 现有预警所在的课程」，所以**答题记录被清空**时也会走到该课程把预警清掉。
+- 实测：清除学生 `2026010104` 在 `KP015` 上的 3 条答题记录后再跑检测 → 该 `open` 红警被删除
+  （`deleted=1`，复查剩余 0）；反证：清除后该知识点已离开 `quiz_accuracy_by_kp` 的返回 —— 旧逻辑的循环根本不会到达它。
+
+### P47 · 薄弱点清单让有预警的知识点优先占位
+
+- 新增 `services/scoring.weak_kp_ids(db, user_id, course_id, candidates, limit)` 作为「薄弱点判定 + 排序 + 截断」的
+  唯一入口，排序键 = **「有未处理红/黄预警优先 → 加权正确率升序」**；
+  `/student/dashboard` 的 `weakPoints` 与 `/practice/modes` 的 `weak` 题量共用它，两边口径不再各写一份。
+- 实测（构造性）：学生 `2026010106` 的 `KP010`（是薄弱点、当前无预警、排不进前 5）插入一条预警 → 立刻挤进前 5
+  （`[…, KP015]` → `[…, KP010]`）；移除该预警 → 顺序**逐字还原**。
+
+### P48 · 纯标签点预警门槛提到 ≥3 道
+
+- `services/alert_detector.py` 按知识点区分门槛：本课程里**没有一道题以它为主 KP**（纯标签点）
+  → `ENGAGE_MIN + 1 = 3` 道不同题；有主命中题的点保持 `ENGAGE_MIN = 2`。
+- 实测：本课程纯标签点 = `KP005 / KP010 / KP012 / KP018 / KP022`；6 个「该点上 `hits=2` 且正确率 <60%」的组合
+  （`2026010105/KP005`、`2026010106/KP010`、`2026010107/KP010`、`2026010108/KP010`、`2026010109/KP005`、`2026010109/KP010`）
+  在旧门槛下会建预警、现已全部挡掉；主命中点的同条件组合仍正常挂预警（0 例漏挂）。
+
+### P41 · 练习模式文案与实现对齐
+
+- 顺序练习卡片文案：「按章节与知识点前后置顺序逐题推进」→「选定章节或知识点后逐题推进，做错过的题优先」
+  （后端从未按 `graph_links(relation='pre')` 排序，本课关系边 0 条、`kp_details.pre_kp` 全空）；
+  前端 `assets/js/student/views/practice.js` 的「按前后置关系排序」同步改为「做错过的题优先」。
+- 薄弱点强化卡片题量：由「全课题数」改为按**真实薄弱点题池**（前 5 个薄弱知识点下的已发布题数）统计。
+- 实测：某学生 `weak.count = 2` = 真实题池 2（全课 229 题），证明不再用全课口径。
+
+### 验证与影响面
+
+- `regression_test.py` → **ALL PASS total=52 passed=52**（无回归）。
+- `dev_tools/verify_p41_43_44_47_48.py` → **ALL PASS passed=25 failed=0**。
+- 无头 Chrome（学生端 `stu07`）：驾驶舱 / 智能练习 / 我的学情 / 预警与提醒 四个入口正常渲染，
+  **页面未捕获异常：无**。
+- 全程使用 8010 独立实例 + `sqlite3.backup()` 生成的库副本，真实库仅 `mode=ro` 只读查询，未改动。
+- 同步文档：`待修复清单.md`（P41/P43/P44/P47/P48 标 `[x]` + 速查表 + 表头）、
+  `docs/接口文档.md`（§1.6 补统计口径隔离与薄弱点口径统一；`/practice/modes` 表格行补口径）。
+
+## 三十六、前端残留（第五大节）：mock 分支彻底删除 + 断链/死文件/失效文案清理（P19–P26 / P36 · 2026-09-30）
+
+本轮按确认的范围把清单第五大节 8 条**一起做完**（P19 / P20 / P22 / P23 / P24 / P25 / P26 / P36），
+并把复核后确认**早已自愈**的 P21 一并结案。决策口径：
+**P20 → 改跳已有视图**；**P23 → 删掉示例账号字样**；**P22 → 彻底删除 mock 分支**；
+其余按「只做既有文案替换/更正，不新增任何可见文案」执行。
+
+### P22 · `assets/js/api.js` 彻底删除 mock 分支（本轮最大改动）
+
+- 复核结论：比清单写的更严重 —— `window.MOCK` **全仓已无定义**，mock 分支不是"显示假数据"而是**一跑就抛错**。
+- 删除：`config.mode` / `config.latency` / `delay()` / `ok()` / `const M = () => window.MOCK;` /
+  本地账号表（`ACCOUNTS_KEY` / `getAccounts` / `saveAccounts` / `toUser`）/ 无人调用的 `ai.agentStatus`
+  （`analysis.weakChain` / `causes` / `student.abilityRadar` 已于 2026-09-29 随 P1、P8 删除）。
+- `request` / `download` 摘掉 `if (config.mode === 'http') { … }` 包装，函数体归一缩进（去掉一层嵌套）。
+- **59 处 mock resolver 实参**（每个方法的第 4 个参数）全部删除 —— 23 处内联兜底 `() => ({…})`、
+  33 处 `M().xxx`、以及 `intervention.list` 的多行 resolver。
+  用「括号配对 + 字符串感知」的扫描器按顶层逗号切分参数，`len(args) == 4` 才删第 4 个，避免误伤。
+- 保留：`config.activeCourseId`（被大量使用）与 `auth.logout()` 的本地清 token 行为（不扩大范围）。
+- 结果：文件 **710 → 575 行**；`mock` / `M()` / `window.MOCK` 字样仅剩文件头「已于 2026-09-30 彻底移除」的说明。
+
+### P19 · 删除教师端死文件 `teacher/views/resource.js`
+
+- 复核更正：不是"被 `structure.js` 覆盖"，而是 `teacher.html` **从未加载**该文件；
+  且 `Router.register('resource', …)` 定义在 `structure.js:615`、渲染目标却是 `#view-structure`，
+  所以直接访问 `#resource` 会是**白屏**（清单未登记的连带隐患）。
+- 处置：删除整文件（16KB）+ 清三处配套死链 —— `teacher.html` 的 `<section id="view-resource">`、
+  `structure.js:615` 的 `Router.register('resource', {…})`（保留 `'structure'`）、
+  `assets/js/teacher/app.js` 的 `ViewFns.resource`。
+- ⚠️ 保留 `assets/css/app.css:1269/1274` 的 `#view-resource …` 规则 —— 经核实**是学生端在用**
+  （`student/views/resource.js:41/55/70`），不能删。
+
+### P20 · 驾驶舱待办断链改跳已有视图
+
+- 根因：`Router.go(key)` 对未注册 key **静默 return**（`if (!this.views[key]) return;`），
+  而后端 `todos[].target` 给的是语义标识 `alerts` / `students`，从来不是视图名 —— **两条待办都断链**。
+- 处置：`assets/js/teacher/views/dash.js` 增加 `TODO_TARGET` 映射表 + `gotoTodoTarget()`，
+  把 `target` 映射到「已注册视图 + 目标卡片锚点」再平滑滚动：
+  `alerts → monitor#alList`（学情监测看板 · 异常预警列表）、`students → monitor#stuList`（学情监测看板 · 学生学情列表）。
+  两处点击处理器统一改走 `gotoTodoTarget()`。**未新增任何可见文案。**
+
+### P23 / P24 / P25 / P26 / P36 · 失效文案与注释
+
+| 条目 | 位置 | 改动 |
+| --- | --- | --- |
+| P23 | `index.html` `DEMO_HINT`、`start.bat` 横幅 | 三角色提示统一为「账号由管理员在管理端创建」（admin 保留真实存在的 `admin` 说明）；`start.bat` 按**字节**精确删除两行 `student / 123456`、`teacher / 123456` |
+| P24 | `assets/js/student/views/practice.js` 报告卡 | 「能力目标增益」→「**答对得分**」（数值实为本次答对题的分值合计，与目标图谱无关） |
+| P25 | `index.html` 功能列表、`home.html` | 「AI 自动归因与干预策略推荐」→「错题自动归因分析」；`home.html` 四处对齐现状（含清单**漏登记的 3 处**：徽标「三图谱导航」、教师端「AI 自动归因并推荐干预策略」/「教学干预」），并把**写错的学期**更正为库中真实值「2026-2027 学年 第一学期」 |
+| P26 | `assets/js/charts.js` 分节注释 | 「1. 三大图谱（力导向关系图）」→「1. **知识图谱**（力导向关系图）」；依据：本课程 `graph_nodes` 只有 `chapter`(9) + `knowledge`(26)，**problem / goal 恒为 0** |
+| P36 | `assets/js/student/views/mastery.js` | 5 处统一为课程内口径：卡片标题「课程内对比定位」、徽标「课程内第 N / M 名」、图表系列「课程内平均」/「课程内最高」、表头「课程内平均」 |
+
+### P21 · 复核确认已不存在（结案，非本轮改动）
+
+- `assets/js/student/views/dashboard.js:177` 早已改用真实值 `m.totalKpCount`，8010 实测渲染 **「共 26 个」**
+  （＝本课程知识节点真实数）。清单原写的「实际 32 个」也已过时（旧课程/旧编号的数字），属早期迭代自然修复。
+
+### 验证与影响面
+
+- `regression_test.py` → **ALL PASS total=52 passed=52**（无回归）。
+- 无头 Chrome（真实点击 / 真实取数）：
+  - 登录页 + 首页：三种角色提示无假账号、`123456` 零残留；旧字样（三大图谱/三图谱/AI 自动归因/教学干预）4 项残留检查全 false；学期徽标＝真实学期。
+  - 学生端：环形图「共 26 个」；我的学情卡片/徽标/表头全为「课程内」口径，「班级」零残留。
+  - P24 真实练习：跑 3 题（1 对 2 错）→ 报告卡 `['正确率','答对 / 总题数','总用时','答对得分']` = `['33.3%','1/3','12"','+5']`。
+  - 教师端：点「去处理」→ `#monitor` + `#alList` 可见；`gotoTodoTarget('students')` → `#monitor` + `#stuList` 可见；
+    `#view-resource` 已不存在、`resource.js` 加载数 0、`location.hash='#resource'` 回落 `view-dashboard` 无白屏；8 个入口全渲染。
+  - 以上各页 **未捕获异常均为：无**；7 个改动 JS 全过 `node --check`。
+- **前端渲染层**（`assets/js/**`、`*.html`）旧文案扫描：`三大图谱` / `三图谱` / `student / 123456` /
+  `teacher / 123456` / `能力目标增益` / `班级对比定位` / `班级第` → **0 处**。
+- ⚠️ 例外（**不在本轮范围、未动**）：后端 `models/graph.py` / `routers/graph.py` 的模块 docstring 仍写「三大图谱」——
+  这两处**描述是准确的**（v1 的 `graph_nodes.graph_type` 与 `CATEGORY_COLORS` 确实同时支持 `knowledge` / `problem` / `goal`，
+  problem / goal 的下线属清单 §一 的 P2 / P3，已约定另开一轮）；另有 4 份 `docs/*.md`
+  （`数据模型与Mock说明.md`、`数据模型与字段说明.md`、`课程结构与图谱编辑-设计方案.md`、`项目真实交互梳理.md`）
+  含「三大图谱 / 三图谱」，属清单 **P29（文档口径过时）**，本轮未动。
+- 全程使用 8010 独立实例 + `sqlite3.backup()` 生成的库副本，真实库仅只读、用户 8000 实例未触碰。
+- 同步文档：`待修复清单.md`（第五大节 8 条标 `[x]` + P21 结案注 + 速查表 9 行 + 表头）、`docs/README.md`、
+  根 `README.md`、`docs/前端架构与运行.md`、`docs/后端对接指南.md`、`docs/接口文档.md`、
+  `docs/团队交接与开发指南.md`、`docs/鉴权与会话方案.md`、`docs/页面与功能清单.md`、`docs/项目真实交互梳理.md`
+  （9 个文档同步 mock 移除 / 三图谱纠正 / 视图名与目录树更新，全部保留 CRLF）。
+
+## 三十七、仓库卫生与文档（第六大节）：脱管大文件 + 清垃圾文件 + 文档口径更正（P27 / P28 / P29 · 2026-09-30）
+
+本轮按确认的范围处理清单第六大节三条。决策口径：**P27 → B 档（脱管 + 删 pytest 残留）**；
+**P29 → 清单登记的 3 个文件 + 漏登记的 3 个文件**；本轮只改文件，**不执行 git commit**。
+
+### P27 · Git 脱管大文件与临时库
+
+- 复核更正：清单写「`rag.db` 28MB、6 个 `course_agent.db.bak.*`、`resource_registry_snapshot.json`」——实测
+  `rag.db` 只有 **2.14 MB**，6 个 bak 与快照**早已不在仓库**。真正的元凶是 `backend/data/.pytest-tmp-*`：
+  **27 个文件 / 15.56 MB**（2026-09-06 的 pytest 残留，占当时被跟踪总体积的 **74%**）。
+- 处置：`git rm -r --cached backend/app/data/st/rag.db backend/data` —— **只清索引，磁盘文件原样保留**
+  （`rag.db` 是 RAG 库，代码运行时要读）；`backend/data/.pytest-tmp-*` 三个目录**移入隔离区**而非直接删除。
+- 结果：被跟踪文件 **206 → 175 个**，总体积 **21.10 MB → 3.40 MB**；
+  `git ls-files | grep -E "\.db($|-)|pytest-tmp|_snapshot\.json"` → **无输出**。
+- ⚠️ `.git` 历史里的 35.84 MiB 大对象（`rag.db` 曾 11 个版本、原始 129.89 MB；`main.db` 12 个版本）**未处理** ——
+  彻底瘦身要 `git filter-repo` + **force push**（改写已推送哈希、协作者需重新 clone），属 C 档，未执行。
+
+### P28 · 垃圾文件
+
+- `assets/js/teacher/views/111.txt`、`backend/app/111.txt`（内容 `Ciallo～(∠・ω<)⌒☆`，sha1 相同）、根目录空文件 `1.55.3`（0 字节）。
+- 全仓**无任何代码引用**（`1.55.3` 只作为 `requirements.txt` 里 `openai>=1.55.3` 的版本号出现，与文件无关）。
+- 处置：各留副本到 `<workspace>/verify_20260930_p6_repo/backup/` 后 `git rm`。
+
+### P29 · 文档口径更正（18 + 14 处）
+
+| 文件 | 更正内容 |
 | --- | --- |
-| 学生端练习 | 薄弱点/靶向、顺序、随机练习都能抽到"标签命中"的题；子知识点不再返回空池 |
-| 顺序练习章节列表 | 之前被隐藏的 4 个子知识点重新出现（演示库：KP005 10 题 / KP010 2 题 / KP018 24 题 / KP022 4 题） |
-| 题数显示 | 学生端 KP 详情、教师端 KP 面板、教师端课程目录三处一致 |
-| **不变** | 正确率公式与权重（主 1.0 / 标签 0.3）、预警阈值与门槛、数据库表结构、错题本、教师端「题库管理」按 KP 的筛选（仍按主 KP，题库维护视角，见待修复清单 P45） |
+| 根 `README.md` | ① 演示账号表（`student` / `teacher` + 陈思远 / 李文博）→ 改为「账号来自数据库：`admin` / `admin` + 由管理员创建」；② "种子写入 12 名学生 + 1 名教师…首次启动会执行 `run_seed()` 填演示数据" → **事实错误**，实际由 `DEMO_SEED=1` 门控、默认关闭；③ §6 模块现状表三条（"数据为空 / `answer_records` 仅 2 条"、"雷达"、"占位清单"、"批量导入 401 bug"）全部重写为真实状态 |
+| `docs/README.md` | `config.mode = 'http'`（P22 已删该配置）→ `config.baseURL`；端点数 **130 → 101**；数据规模 408 全 `todo` / 仅 2 条 → **645 / 260 / 51**；两端视图明细 |
+| `docs/项目真实交互梳理.md` | `POST /logout` 写"占位" → 已真实吊销；`student.py`「输出恒 0/空」→ 数据已非空；§三 实测行数表整表（`users` 13→12、`courses` `C2026DS001`→`CCHYJTKE`、`graph_nodes` 67(34/19/14)→35(26+9)、`graph_links` 79→34、`answer_records` 2→645、`alerts` 0→51、`messages` 0→18、`resource_progress` 0→401、`study_checkins` 1→125、`practice_sessions` 40→163、`reports` 1→4 等）；§3.3 结构性缺口重写；§四 耦合点 #1/#2/#3/#4/#5 改写、#10 标已解除；§五 `chunks 1480 → 458`；附录两条验证项 |
+| `docs/团队协作开发手册.md` | 更新日期 2026-09-11 → 2026-09-30；"当前仅 2 条，是首要补齐目标" → 实测 645；§3.4 数据规模表整表重写；§3.3 上方"两者都空转"改为"输入数据为空时"；故障表里 `C88QUSR4`（**同源 v2.1** 的课程号）→ 改为不依赖具体课程号的表述 |
+| `docs/后端对接指南.md` | "用演示账号 student/123456 进学生端；teacher/123456 进教师端" → 账号来自数据库 |
+| `docs/团队交接与开发指南.md` | 交接清单的登录校验项去掉不存在账号；"已知两大缺口（AI 未接、题库/学情不足）" → 实际缺口改为"空库无教师/学生账号" |
 
-### 实测（修复后，库副本）
+**只做事实替换，未新增任何说明性文案。**
 
-- 子知识点组卷：`kpIds=['KP005']` **0→10 题**、`['KP010']` **0→2 题**、`['KP018']` **0→10 题**、`['KP022']` **0→4 题**。
-- `/practice/kp-pool`：`KP005=10 / KP010=2 / KP018=24 / KP022=4`；与「主 ∪ 标签」的 SQL 直查**逐点一致**（25 个知识点，0 处不一致），无前缀误伤。
-- **端到端**：`KP018` 被压低到 25% → 生成 `red/open` 预警 → 「薄弱点强化」按 `kpIds=['KP018']` 组卷 **10 题** → 做完 → `KP018` **100%** → 检测 `deleted: 2`，预警**清空**。
-- 回归：`kpIds=['KP001']` 仍以主命中题优先（2/2 都是主 KP001 的题）；教师端与课程目录三处题数均为 `KP018=24 / KP005=10 / KP001=2`。
-- ⚠️ **需要重启后端**才生效（前端无需改动）。
+### 补充更正（同日）
 
----
+- `.gitignore` 末尾那段「已跟踪文件脱管清单」是**给本次任务留的待办指令**，随 P27 完成改为已执行记录；
+  其中「请保留 `st_bank/after_class.json` / `ai_samples.json`」**已失效** —— 两文件已不在仓库与磁盘上，
+  题库切片的唯一通道是 `ingest_question_bank()`（切主库 `questions` 表），原先读该文件的路径已废除
+  （`agent_st/rag/ingest.py` 与 `rag/bank.py` 均有注明）。
+- `backend/run_st_ingest.py` 的 docstring 第 1 步同步更正（仍写"课后题库 after_class.json"，实际走
+  `ingest_question_bank()`）；该脚本正是 `.gitignore` 尾注推荐的重建命令，口径必须一致。
+- 以上均为注释 / docstring，**零行为改动**。
 
-## 三十二、「预警 → 去练习」点了没反应：练习页二次进入没处理待办目标（2026-09-29 · 纯前端）
+### 验证与影响面
 
-### 现象（用户报告）
+- `git ls-files` 三项校验：无 `*.db` / 无 `pytest-tmp` / 无 `_snapshot.json` / 无 `111.txt` / 无 `1.55.3`。
+  被跟踪 **206 → 175 个**、**21.10 → 3.40 MB**。
+- `backend/app/data/st/rag.db` 仍在磁盘（2240512 字节）—— 脱管 ≠ 删除。
+- 六个文档全部保留 **CRLF**（脚本逐文件断言 `CRLF == LF`）。
+- 过时标记复扫：`student/123456`、`teacher/123456`、`config.mode`、`12 名学生`、`约 130 个端点`、
+  `408`、`全部 todo`、`仅 2 条` 在文档层已无残留（历史快照类文档中的 `C2026DS001` 有意保留）。
+- 本轮**未改任何代码**，`run_seed` / `bootstrap` 的 `DEMO_SEED=1` 门控是既有实现，仅据实写进文档。
+- ⚠️ 本轮**未执行 `git commit`**（按约定由用户在交互终端自行提交）。
 
-在 **学生端 → 学情中心 → 预警与提醒** 点某条预警的「去练习」后，**不会直接进入靶向练习**；
-要点一次「薄弱点强化」再退出，才会进到那个界面。用户以为是"子知识点特有的错误"。
+### 未做（保持登记）
 
-### 根因（与知识点类型无关，是通用流程缺陷）
+- **C 档历史瘦身**：`.git` 内 35.84 MiB 大对象需 `git filter-repo` + force push，未做。
+- **同类过时口径 3 处**（本轮确认范围外）：
+  `docs/数据模型与字段说明.md:104`（"`learning_paths` 共 408 行，全部为 `todo`"）、
+  `docs/数据模型与字段说明.md:277`（"答题记录仅 2 条、学习路径全为 `todo`"）、
+  `docs/接口文档.md:85`（`/course/{courseId}` 的"默认 `C2026DS001`、返回统计是种子演示常数" ——
+  实测该端点已无默认值，`chapters` / `knowledgePoints` / `resources` / `questions` 均由 `func.count` 实时聚合）。
 
-`assets/js/student/views/practice.js` 里的视图注册：
+## 三十八、资源页码禁止越界：PDF「跳转页码」与 PPT「已读到第 N 页」钳制（2026-09-30）
 
-```js
-Router.register('practice', {
-  mount:  () => Practice.render(),
-  update: () => { if (Practice._pendingResume) Practice.render(); },   // ← 漏了 _pendingTarget
-});
-```
+用户截图实测：PDF「共 17 页」的跳转页码能输 **946**、PPT「页数 4 页」的「已读到第」能填 **208** ——
+输入框虽有 `min/max` 属性，但 `type=number` 的属性**不拦手输**，跳转/保存逻辑也没有钳制，
+越界值直接入库（配合「进度不回退」逻辑会**永久保留**）。
 
-- 预警页的「去练习」是「先设待办、再跳转」：`Practice._pendingTarget = {kpId,…}; Router.go('practice')`；
-  `_pendingTarget` 只在 `renderSelect()` 里被消费。
-- `Router.go` 的规则是：**本次会话第一次进该视图**走 `mount()`（会重绘 → 待办被消费）；
-  **之后每次进入**只走 `update()`。而 `update()` 只认 `_pendingResume` ——
-  于是"**第二次及以后**"从预警点「去练习」时，页面停在原来的模式选择界面，`_pendingTarget` 一直被搁置。
-- 它最终生效的时机，正是你观察到的那个动作：点「薄弱点强化」→ 退出（`collapsePanel()`）→ 触发 `renderSelect()` → 这时才把待办消费掉。
-- 顺带发现一个相邻隐患：`render()` 画出的标签页固定是「智能练习」高亮，但**没有把 `this.tab` 复位**。
-  如果上一次停留在「错题本」，再进本页时 `renderSelect()` 的 `stale()`（`this.tab !== 'quiz'`）会直接 return →
-  页面停在骨架屏、待办同样不生效。
+### 处置
 
-### 修改（`assets/js/student/views/practice.js`，两行）
+**前端 `assets/js/student/views/resource.js`（`_openDoc` 两个分支共用一个钳制函数）**
+- `_openDoc` 顶部新增 `clampPage(v, min)`：总页数已知（`res.pages > 0`）时钳到 `[min, 总页数]`；
+  页数未知时只约束下限（PDF ≥1 / PPT ≥0），不再受原模板里 `max=999` 假上限影响。
+- **PDF 分支**：① 弹窗打开时的初始页码与 `#page=` 定位也走钳制（历史越界的 `savedPage` 被拉回）；
+  ② 「跳转」点击：钳制 → 把输入框值改回 → `Toast.warn('页码超出范围', '共 N 页，已调整为 p')` → 跳转并保存；
+  ③ 关闭/点遮罩的兜底保存同样钳制。
+- **PPT/doc 分支**：① 初始值钳制；② 「保存进度」点击：钳制 + 输入框回写 + Toast 提示。
 
-1. `render()` 开头补 `this.tab = 'quiz';` —— 与它画出的标签页保持一致，避免 stale 判定把整次渲染丢掉。
-2. `update: () => { if (Practice._pendingResume || Practice._pendingTarget) Practice.render(); }`
-   —— 带待办进入时立即重绘，待办当场生效。
+**后端 `backend/app/routers/student.py::save_resource_progress`（前端之外的兜底，直接调接口也无法越界）**
+- `r.type in ("ppt","doc") and r.pages` 时：`position = min(position, r.pages)`（`progress` 原有 `0~100` 钳制不变）。
+- **历史越界值收敛**：落库前的 `prev_position` 同步钳到总页数 —— 修复「进度不回退」会把
+  越界旧值（如 946）**永久保留**的问题；合法区间内「只增不减」语义不变。
+- 视频分支不受影响（`position` 是秒数，不按页码钳制）。
 
-### 影响面
+### 验证（8010 + 库副本；真实库只读）
 
-- 只影响"**带待办进入练习页**"的重绘条件：进行中的练习不受影响（此时两个待办都是空，`update()` 依旧不重绘，不会被打断）；
-- 「预警 → 去练习」现在**第一次和后续每次**都会直接组卷进入题目；两个待办（继续挑战 / 靶向练习）走同一套逻辑；
-- 与知识点是主 KP 还是子 KP **无关**（用户原先的"子知识点固有错误"判断不成立）。
-
-### 验证
-
-- `node --check` 通过；改动仅 2 行（见上方 diff）。
-- ⚠️ **需要你点一次确认**：本机沙箱里无头浏览器（Edge headless）无法启动，我没法自动跑点击流程；
-  请在「预警与提醒」点任意一条预警的「去练习」，应**直接出现题目**（Toast 提示「靶向练习：已按「XX」组卷」）。
-- 前端改动，**刷新页面即可，无需重启后端**。
+- **接口层（以库中值断言）**：R001（doc,17 页）传 946 → 库 `(17,100)`；R002（ppt,43 页）传 208 → 库 `(43,100)`；
+  R001 传合法值 5 → 库仍 17（**不回退**）；R003（ppt,4 页）预置脏行 208 → 传 2 → 库收敛 **4**；
+  R006（doc,26 页）预置 500 → 收敛 **26**；R004（video）传秒 100 → 100（不误伤视频）；
+  GET progress 返回钳后值（前端续看读到的就是它）。**10/10 通过**。
+- **UI 层（无头 Chrome，真实点击）**：PDF 弹窗输 946 → 点「跳转」→ 输入框**钳回 17**、toast 出现、
+  抓到的请求体 `{"progress":100,"position":17}`（946 没有发出去）；PPT 弹窗输 208 → 保存 → **钳回 4**、
+  请求体 `position:4`；**页面未捕获异常：无**。截图 `verify_20260930_pclamp/`。
+- `regression_test.py` → **ALL PASS total=52 passed=52**；`node --check` / `py_compile` 均通过。
+- ⚠️ 本轮改了后端 `student.py`，**需重启 8000 端口实例**后接口兜底才生效（前端钳制刷新页面即生效）。
+- 清单 P30（自报进度模型）**保持登记**：本条只做"输入不越界"，未改"页码自报、进度只增不减"的模型本身。

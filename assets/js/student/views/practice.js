@@ -79,7 +79,7 @@
           const weakBanner = wps.length
             ? `<b>系统已为你定位 ${wps.length} 个薄弱知识点</b>` +
               wps.map(w => `<span class="badge badge--danger" style="margin:4px 4px 0 0">${U.esc(w.name)} ${w.accuracyRate}%</span>`).join('') +
-              `<div style="margin-top:6px">推荐使用「薄弱点强化」模式，习题将自动命中上述知识点并按前后置关系排序。</div>`
+              `<div style="margin-top:6px">推荐使用「薄弱点强化」模式，习题将自动命中上述知识点，做错过的题优先。</div>`
             : `<b>暂无可定位的薄弱知识点</b><div style="margin-top:6px">` +
               `每个知识点<b>至少作答 2 道不同题</b>（与预警同一门槛）后才会计入薄弱点与靶向练习；` +
               `可先用「顺序练习」或「随机练习」积累答题记录。</div>`;
@@ -575,7 +575,7 @@
         <div class="stat" style="--_c:var(--info)"><div class="stat__label">总用时</div>
           <div class="stat__value">${U.dur(r.durationSeconds)}</div>
           <div class="stat__hint">均每题 ${r.avgSeconds ?? 0} 秒</div></div>
-        <div class="stat" style="--_c:var(--accent-500)"><div class="stat__label">能力目标增益</div>
+        <div class="stat" style="--_c:var(--accent-500)"><div class="stat__label">答对得分</div>
           <div class="stat__value">+${r.scoreGain ?? 0}</div></div>
       </div>
 

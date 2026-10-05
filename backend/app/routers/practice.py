@@ -11,7 +11,7 @@ from typing import Optional, List
 from ..database import get_db
 from ..models.practice import PracticeSession, AnswerRecord
 from ..models.question import Question
-from ..models.graph import GraphNode
+from ..models.graph import GraphNode, LearningPath
 from ..models.user import User
 from ..models.intervention import TeacherClassDashboard
 from ..models.course import Resource
@@ -82,18 +82,14 @@ def _random_scope_kp_ids(db: Session, user_id: str, course_id: str) -> list[str]
 
     口径与 `services/scoring.quiz_accuracy_by_kp` 一致（含多标签的加权：主 KP 1.0 / 其它 0.3）。
 
-    **课程隔离**（2026-09-24 核实后更正）：`quiz_accuracy_by_kp(db, user_id)` 只按 user 聚合、
-    **没有 course 参数**，返回的是该生「所有课程」的知识点正确率表 —— 所以它的**键集合跨课程**。
-    但每个 KP 的**数值本身不跨课**：KP id 全局唯一（`teacher._next_graph_id` 全表取 max+1），
-    一道题只属一门课、其主 KP 与其它标签都指向本课的知识点（库副本实测 0 条例外），
-    且「只取该课程作答记录」重算的结果与全量口径**逐点完全一致**。
-    因此这里按"本课程的知识点"过滤，是为了确定**这门课该在哪些知识点里抽题**
-    （否则切到另一门课时会拿别的课的知识点当范围，那些点在本课根本无题可抽），
-    而不是因为正确率算错了。
+    **课程隔离**（2026-09-30 起直接传 `course_id`）：`quiz_accuracy_by_kp(db, user_id, course_id=...)`
+    只统计该课程的作答记录，键集合与数值都限定在本课程内 —— 不再依赖「KP id 全局唯一」来间接隔离
+    （清单 P43）。下面的 `course_kps` 过滤保留：它负责剔除「本课程知识点表里不存在的 kp」
+    （题目 kp_id 指向已删除节点等情况）。
     """
     from ..services.scoring import quiz_accuracy_by_kp
 
-    acc = quiz_accuracy_by_kp(db, user_id)
+    acc = quiz_accuracy_by_kp(db, user_id, course_id=course_id)
     course_kps = {r[0] for r in db.query(GraphNode.id).filter(
         GraphNode.graph_type == "knowledge",
         GraphNode.course_id == course_id,
@@ -179,7 +175,7 @@ def practice_modes(
 
     base = [
         {"key": "weak", "name": "薄弱点强化", "desc": "系统按掌握率自动组卷，命中薄弱知识点", "icon": "target", "recommend": True},
-        {"key": "order", "name": "顺序练习", "desc": "按章节与知识点前后置顺序逐题推进", "icon": "list"},
+        {"key": "order", "name": "顺序练习", "desc": "选定章节或知识点后逐题推进，做错过的题优先", "icon": "list"},
         {"key": "random", "name": "随机练习", "desc": "只在「学过且做错过」的知识点里随机抽题", "icon": "shuffle"},
         {"key": "wrong", "name": "错题重练", "desc": "重做历史错题，验证是否真正掌握", "icon": "refresh"},
     ]
@@ -192,9 +188,28 @@ def practice_modes(
             Question.status == "published",
             question_kp_clause(Question, random_scope),
         ).scalar() or 0
+    # 薄弱点强化的题量同理：按"真实薄弱点题池"统计（与驾驶舱 weakPoints 同一入口
+    # services/scoring.weak_kp_ids），不再用全课题数 —— 否则会出现卡片写 10 题、
+    # 组卷出来只有 3 题（清单 P41）。
+    from ..services.scoring import weak_kp_ids
+    weak_scope = weak_kp_ids(
+        db, user.user_id, course_id,
+        [k for (k,) in db.query(LearningPath.kp_id).filter(
+            LearningPath.user_id == user.user_id,
+            LearningPath.course_id == course_id,
+        ).all()],
+        limit=5,
+    )
+    weak_cap = 0
+    if weak_scope:
+        weak_cap = db.query(func.count(Question.q_id)).filter(
+            Question.course_id == course_id,
+            Question.status == "published",
+            Question.kp_id.in_(weak_scope),
+        ).scalar() or 0
     for m in base:
         key = m["key"]
-        cap = {"weak": total_qs, "order": total_qs, "random": random_cap, "wrong": wrong_count}[key]
+        cap = {"weak": weak_cap, "order": total_qs, "random": random_cap, "wrong": wrong_count}[key]
         m["count"] = min(_BASE_COUNTS[key], cap)
         if cap == 0:
             m["count"] = 0

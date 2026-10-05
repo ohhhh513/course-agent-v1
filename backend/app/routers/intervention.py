@@ -4,7 +4,7 @@
 全部从真实 DB 动态聚合
 """
 import uuid, json as _json
-from datetime import datetime, date, timedelta
+from datetime import datetime
 from collections import defaultdict
 from fastapi import APIRouter, Depends, Query, Body, HTTPException
 from fastapi.responses import StreamingResponse
@@ -19,13 +19,14 @@ from ..models.alert import Alert
 from ..models.graph import LearningPath, GraphNode
 from ..models.practice import AnswerRecord
 from ..models.question import Question
-from ..middleware.auth import get_current_user
+from ..middleware.auth import get_current_user, require_teacher
 from ..dependencies import get_current_course_id
-from ..schemas.common import ok, list_response
+from ..schemas.common import ok, fail, list_response
 from ..utils import loads, fmt_dt
+from ..constants import MASTERY_THRESHOLD
 
-intervention_router = APIRouter(prefix="/api/v1/intervention", tags=["教学干预"])
-report_router = APIRouter(prefix="/api/v1/report", tags=["学情报告"])
+intervention_router = APIRouter(prefix="/api/v1/intervention", tags=["教学干预"], dependencies=[Depends(require_teacher)])
+report_router = APIRouter(prefix="/api/v1/report", tags=["学情报告"], dependencies=[Depends(require_teacher)])
 
 
 # ====== Pydantic ======
@@ -67,6 +68,7 @@ def intervention_list(
     size: int = Query(20),
     db: Session = Depends(get_db),
     user=Depends(get_current_user),
+    course_id: str = Depends(get_current_course_id),
 ):
     """干预建议列表 — 优先读 Interventions 表，若为空则从 alerts + learning_paths 动态生成"""
     # 先读真实干预表
@@ -98,14 +100,14 @@ def intervention_list(
 
     # 如果没有真实干预记录，从 alerts + learning_paths 动态生成建议
     if not items:
-        items = _generate_interventions_from_db(db, classId)
+        items = _generate_interventions_from_db(db, classId, course_id)
 
     total = len(items)
     start = (page - 1) * size
     return ok(list_response(items[start:start + size], total))
 
 
-def _generate_interventions_from_db(db: Session, classId: str) -> list:
+def _generate_interventions_from_db(db: Session, classId: str, course_id: str) -> list:
     """从真实 DB 数据动态生成干预建议（当 interventions 表为空时）"""
     from sqlalchemy import func
 
@@ -122,7 +124,10 @@ def _generate_interventions_from_db(db: Session, classId: str) -> list:
     iv_counter = 0
 
     # 1. 共性薄弱点：班级 average mastery 最低且有 >= 2 个学生 status != todo 的 kp
-    lp_rows = db.query(LearningPath).filter(LearningPath.user_id.in_(student_ids)).all()
+    lp_rows = db.query(LearningPath).filter(
+        LearningPath.user_id.in_(student_ids),
+        LearningPath.course_id == course_id,
+    ).all()
     kp_mastery = defaultdict(list)  # kp_id -> [mastery > 0 的值列表]
     kp_started_count = defaultdict(int)
     for r in lp_rows:
@@ -135,7 +140,8 @@ def _generate_interventions_from_db(db: Session, classId: str) -> list:
     for kid, vals in kp_mastery.items():
         kp_avg[kid] = round(sum(vals) / len(vals), 1) if vals else 0
 
-    kp_id_name = {n.id: n.name for n in db.query(GraphNode).filter(GraphNode.graph_type == "knowledge").all()}
+    kp_id_name = {n.id: n.name for n in db.query(GraphNode).filter(
+        GraphNode.graph_type == "knowledge", GraphNode.course_id == course_id).all()}
 
     # 取 avg < 50 且 started_count >= 3 的 kp 作为共性薄弱
     common_weak = sorted(
@@ -153,7 +159,7 @@ def _generate_interventions_from_db(db: Session, classId: str) -> list:
             "scope": "common",
             "title": f"针对班级共性薄弱点「{kp_name}」的集体干预",
             "target": f"{class_name} · {kp_started_count.get(kid, 0)} 名学生学习过",
-            "reason": f"班级平均掌握率 {avg}%（{kp_started_count.get(kid, 0)} 名学习过的学生），低于 60% 达标线",
+            "reason": f"班级平均掌握率 {avg}%（{kp_started_count.get(kid, 0)} 名学习过的学生），低于 {MASTERY_THRESHOLD}% 达标线",
             "steps": [
                 "推送针对性补练资源到该知识点",
                 "课上组织 10 分钟集体讲解",
@@ -292,67 +298,6 @@ def reject_intervention(
     return ok({"ivId": iv_id, "status": "rejected"})
 
 
-# ====== 干预效果对比（从 answer_records 真实数据构建） ======
-@intervention_router.get("/{iv_id}/effect")
-def intervention_effect(
-    iv_id: str,
-    db: Session = Depends(get_db),
-    user=Depends(get_current_user),
-):
-    """干预前后学情对比 — 从 answer_records 真实数据构建"""
-    # 先尝试从 Intervention 表找到关联的 class_id 和目标
-    iv = db.query(Intervention).filter(Intervention.iv_id == iv_id).first()
-
-    # 从真实 answer_records 构建最近 10 天答题正确率曲线
-    today = date.today()
-    x_axis = []
-    mastery_data = []
-    compare_data = []
-    has_data = False
-
-    for offset in range(9, -1, -1):
-        d = today - timedelta(days=offset)
-        day_start = datetime.combine(d, datetime.min.time())
-        day_end = datetime.combine(d, datetime.max.time())
-
-        q = db.query(AnswerRecord).filter(
-            AnswerRecord.created_at >= day_start,
-            AnswerRecord.created_at <= day_end,
-        )
-        if iv and iv.scope == "individual" and iv.target:
-            q = q.filter(AnswerRecord.user_id == iv.target.strip())
-        total = q.count()
-        correct = q.filter(AnswerRecord.is_correct == True).count()
-        if total > 0:
-            has_data = True
-            rate = round(correct / total * 100, 1)
-        else:
-            # 没有真实数据的日期留 null，不在图表中连线
-            rate = None
-        x_axis.append(f"{d.month}/{d.day}")
-        mastery_data.append(rate)
-        compare_data.append(rate if rate is None else min(rate + 8, 100))
-
-    if has_data:
-        valid = [v for v in mastery_data if v is not None]
-        summary_text = "干预后答题正确率有明显改善，建议持续跟进观察"
-        if valid and valid[-1] > valid[0]:
-            gain = round(valid[-1] - valid[0], 1)
-            summary_text = f"干预后答题正确率提升 {gain}pp，效果显著"
-    else:
-        summary_text = "暂无该干预相关的答题记录，无法评估效果"
-
-    return ok({
-        "hasData": has_data,
-        "xAxis": x_axis,
-        "series": [
-            {"name": "干预组掌握率", "data": mastery_data, "color": "#22c55e"},
-            {"name": "对照组掌握率", "data": compare_data, "color": "#94a3b8"},
-        ],
-        "summary": summary_text,
-    })
-
-
 # ====== 策略库（从 InterventionTemplate 表 + Intervention 动态统计） ======
 @intervention_router.get("/templates")
 def templates(
@@ -364,7 +309,7 @@ def templates(
     """策略库模板 — 从 InterventionTemplate 真实表读 + 动态统计使用情况"""
     rows = db.query(InterventionTemplate).all()
 
-    # 从 interventions 表统计每个模板的使用情况（简化：按 scene 分组）
+    # 使用次数：按 scene 从 interventions 表真实统计（无对应干预记录即为 0）
     iv_rows = db.query(Intervention).all()
     iv_by_scene = defaultdict(list)
     for iv in iv_rows:
@@ -374,13 +319,7 @@ def templates(
     for tpl in rows:
         steps = loads(tpl.steps_json) or []
         resources = loads(tpl.resources_json) or []
-        # 动态计算使用次数：从 interventions 表中近似估算
-        use_count = len(iv_by_scene.get(tpl.scene, [])) or 0
-
-        # 根据场景生成合理的成功率/提升数据（基于真实执行状态）
-        done_ivs = [x for x in iv_by_scene.get(tpl.scene, []) if x.status in ("done", "running")]
-        success_rate = 70 + min(use_count * 2, 20)  # 70~90
-        avg_lift = 5 + min(use_count * 0.5, 15)     # 5~20pp
+        use_count = len(iv_by_scene.get(tpl.scene, []))
 
         if scene and scene != tpl.scene:
             continue
@@ -395,9 +334,11 @@ def templates(
             "tags": steps[:3] if steps else ["补练", "讲解", "复测"],
             "steps": steps,
             "resources": resources,
+            # 注意：不返回 successRate / avgLift。
+            # 这两个值此前是按 use_count 编造的公式（70+use*2 / 5+use*0.5），
+            # 没有任何真实来源（干预执行结果没有被回写、也没有对照数据），
+            # 2026-09-29 按「不留伪数据」原则移除。
             "useCount": use_count,
-            "successRate": success_rate,
-            "avgLift": round(avg_lift, 1),
         })
 
     return ok(items)
@@ -578,8 +519,8 @@ def generate_report(
         "bullets": [
             f"知识点完成率：{avg_completion}%（{done_count}/{len(lp_rows)}）",
             f"平均掌握率：{avg_mastery}%",
-            f"达标知识点：{sum(1 for _, m in kp_mastery.items() if sum(m)/len(m) >= 60)} 个 / 共 {len(kp_mastery)} 个",
-            f"待加强知识点：{sum(1 for _, m in kp_mastery.items() if sum(m)/len(m) < 60)} 个",
+            f"达标知识点：{sum(1 for _, m in kp_mastery.items() if sum(m)/len(m) >= MASTERY_THRESHOLD)} 个 / 共 {len(kp_mastery)} 个",
+            f"待加强知识点：{sum(1 for _, m in kp_mastery.items() if sum(m)/len(m) < MASTERY_THRESHOLD)} 个",
         ],
     }
     section_weakness = {
@@ -615,13 +556,13 @@ def generate_report(
         effect_bullets = ["建议对红色预警学生完成针对性练习后进行复测，并持续记录干预结果。"]
     # 已按需求去除"四、干预效果"section（2026-09-24）
     mastery_by_kp = {kid: round(sum(values) / len(values), 1) for kid, values in kp_mastery.items() if values}
-    achieved_kp_count = sum(1 for mastery in mastery_by_kp.values() if mastery >= 60)
+    achieved_kp_count = sum(1 for mastery in mastery_by_kp.values() if mastery >= MASTERY_THRESHOLD)
     goal_rate = round(achieved_kp_count / total_kp * 100, 1) if total_kp else 0
     section_goal = {
         "title": "四、目标达成度",
-        "paragraphs": [f"按平均掌握率达到 60% 作为阶段性达标线，当前 {achieved_kp_count}/{total_kp} 个知识点达到目标，目标达成度为 {goal_rate}%。"],
+        "paragraphs": [f"按平均掌握率达到 {MASTERY_THRESHOLD}% 作为阶段性达标线，当前 {achieved_kp_count}/{total_kp} 个知识点达到目标，目标达成度为 {goal_rate}%。"],
         "bullets": [
-            f"阶段性目标：知识点掌握率达到 60%（当前达成 {achieved_kp_count} 个）",
+            f"阶段性目标：知识点掌握率达到 {MASTERY_THRESHOLD}%（当前达成 {achieved_kp_count} 个）",
             f"后续重点：优先补强 {len(weak_kps)} 个低掌握知识点，并在下一统计周期复评。",
         ],
     }
@@ -692,13 +633,18 @@ def report_detail(
     report_id: str,
     db: Session = Depends(get_db),
     user=Depends(get_current_user),
+    course_id: str = Depends(get_current_course_id),
 ):
     r = db.query(Report).filter(Report.report_id == report_id).first()
     if not r:
         return ok({"reportId": report_id, "detail": {"error": "报告不存在"}})
+    detail = loads(r.detail_json) or {}
+    # 课程归属校验：报告按详情中的课程 ID 隔离（与 /report/list 同口径）
+    if ((detail.get("meta") or {}).get("courseId")) != course_id:
+        return fail("无权查看其它课程的报告", 403)
     return ok({
         "reportId": r.report_id, "title": r.title, "status": r.status,
-        "detail": loads(r.detail_json) or {},
+        "detail": detail,
     })
 
 
@@ -709,6 +655,7 @@ def export_report(
     req: ExportReportReq,
     db: Session = Depends(get_db),
     user=Depends(get_current_user),
+    course_id: str = Depends(get_current_course_id),
 ):
     """导出报告为 .pdf、.html 或 .docx，并直接交给浏览器下载"""
     import io, html as _html
@@ -719,6 +666,9 @@ def export_report(
         return ok({"url": "", "format": fmt, "error": "报告不存在"})
 
     detail = loads(r.detail_json) or {}
+    # 课程归属校验：报告按详情中的课程 ID 隔离（与 /report/list 同口径）
+    if ((detail.get("meta") or {}).get("courseId")) != course_id:
+        return fail("无权导出其它课程的报告", 403)
     title = r.title or "学情分析报告"
     sections = detail.get("sections", [])
 

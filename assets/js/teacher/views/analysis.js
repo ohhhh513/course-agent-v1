@@ -8,9 +8,15 @@
           （前者只是把掌握率最低的 3 个知识点摆成"链路"，后者是 error_type 的
           GROUP BY + 硬编码文案表），详见 最新bug修改9.23.md 第十三节；
        2) 保留下来的三块（高频错题 / 共性薄弱 / 个性异常）重排为
-          「范围条 + 概览指标 + 错题排行 + 双栏明细 + 口径脚注」，避免页面空简。
-     数值全部来自 GET /analysis/errors 的真实统计（后端未改动）；
-     课程名取自 GET /course/my，仅用于展示。
+          「概览指标 + 错题排行 + 双栏明细」。
+     数值全部来自 GET /analysis/errors 的真实统计（后端未改动）。
+
+     2026-09-29 调整：
+       3) 「共性薄弱 / 个性异常」两个列表改为卡内滚动，窗口高度固定为 5 条数据，
+          其余条目滚动查看 —— 与教师端「异常预警」列表同一套做法
+          （见 monitor.js::_clampAlertList），高度按真实行高算出，不写死像素。
+       4) 移除「数据口径」脚注卡片，以及「分析范围」卡片（课程/章节/时间三个 chip）——
+          后者一并去掉只为它服务的 GET /course/my 请求与 courseLabel/timeLabel 变量。
      ================================================================ */
 
   /** 错误率 / 占比 → 配色与进度条档位（数值越高越需要关注） */
@@ -21,6 +27,58 @@
     return { c: 'var(--ok)', bg: 'var(--ok-soft)', bar: 'dashGreen' };
   }
 
+  /**
+   * 「共性薄弱 / 个性异常」两张列表卡**共用同一个窗口高度**，可见 n 条数据。
+   *
+   * 高度不写死像素：量取各列表「前 n 行的真实排版高度」（首行顶部 → 第 n 行底部，
+   * 含行底分隔线），取两者的**较大值**作为统一窗口 H ——
+   * 这样描述文字换行、字号变化时，窗口仍然正好是 n 条，且两侧恒等高。
+   *
+   * 内容超出 H 的一侧在卡内滚动；不足 H 的一侧撑到 H（而不是把卡片缩矮），
+   * 于是两卡的标题栏、列表底边、卡片底边都逐像素对齐。
+   * 单侧没有行（空态提示语）时不算窗口，仍按内容高度让两卡对齐。
+   */
+  function syncListWindows(boxes, n) {
+    if (!boxes || !boxes.length) return;
+
+    // 先复位，避免上一轮写入的 max/min-height 干扰本轮量取
+    boxes.forEach(b => {
+      b.style.maxHeight = '';
+      b.style.minHeight = '';
+      b.classList.remove('an-list--scroll');
+    });
+
+    const rowsOf = b => U.$$('.an-row', b);
+    // 各列表前 n 行的真实高度；条数不足 n 条时为 null（不参与统一、由其自然高度兜底）
+    const windows = boxes.map(b => {
+      const rows = rowsOf(b);
+      if (rows.length < n) return null;
+      const top = rows[0].getBoundingClientRect().top;
+      const bottom = rows[n - 1].getBoundingClientRect().bottom;
+      return Math.ceil(bottom - top);
+    });
+
+    // 各列表的真实内容高度（亚像素取整），用于判定溢出与兜底对齐
+    const contentHeights = boxes.map(b => Math.ceil(b.getBoundingClientRect().height));
+
+    let H = Math.max(0, ...windows.filter(v => v !== null));
+    if (!H) {
+      // 两侧都不足 n 条：取内容最高的那一侧作统一高度，同样做到两卡等高
+      H = Math.max(0, ...contentHeights);
+    }
+    if (!H) return;
+
+    boxes.forEach((b, i) => {
+      // 用 +1 容忍亚像素取整，避免刚好等高的列表被误判为溢出而挂上滚动条
+      if (contentHeights[i] > H + 1) {
+        b.style.maxHeight = H + 'px';
+        b.classList.add('an-list--scroll');
+      } else {
+        b.style.minHeight = H + 'px';
+      }
+    });
+  }
+
   const Analysis = {
     render() {
       const el = U.$('#view-analysis');
@@ -29,20 +87,11 @@
         el.innerHTML = `<div class="card"><div class="card__body"><div class="empty" style="padding:48px;text-align:center"><b>尚未创建或选择课程</b><p class="fz-12 t-dim">请先建课后再查看归因分析。</p></div></div></div>`;
         return;
       }
-      Promise.all([
-        API.analysis.errors({}),
-        API.course.my().catch(() => []),
-      ]).then(([d, courses]) => {
+      API.analysis.errors({}).then(d => {
         const topWrongQuestions = Array.isArray(d.topWrongQuestions) ? d.topWrongQuestions : [];
         const commonVsIndividual = d.commonVsIndividual || { common: [], individual: [] };
         const common = Array.isArray(commonVsIndividual.common) ? commonVsIndividual.common : [];
         const individual = Array.isArray(commonVsIndividual.individual) ? commonVsIndividual.individual : [];
-        const scope = d.scope || {};
-        const cur = (Array.isArray(courses) ? courses : []).find(
-          c => c.courseId === (scope.classId || API.config.activeCourseId)
-        );
-        const courseLabel = (cur && cur.name) || API.config.activeCourseId || '当前课程';
-        const timeLabel = { '7d': '近 7 天', '30d': '近 30 天' }[scope.timeRange] || '全部时间';
 
         /* 概览指标：全部由本页返回的数据现算，口径写在每张卡的 hint 里 */
         const wrongTimes = topWrongQuestions.reduce((sum, q) => sum + (Number(q.count) || 0), 0);
@@ -117,14 +166,6 @@
 
         el.innerHTML = `
         <style>
-          #view-analysis .an-scope{display:flex;gap:12px;align-items:flex-start}
-          #view-analysis .an-scope__ico{flex:0 0 34px;height:34px;border-radius:var(--r-md);display:grid;place-items:center;background:rgba(99,102,241,.12);color:var(--brand-400)}
-          #view-analysis .an-scope__ico svg{width:18px;height:18px}
-          #view-analysis .an-scope__head{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
-          #view-analysis .an-scope__head b{font-size:13px}
-          #view-analysis .an-scope__head .chip{cursor:default;height:24px;font-size:11.5px}
-          #view-analysis .an-scope__head .chip svg{width:13px;height:13px;color:var(--text-3)}
-          #view-analysis .an-scope p{font-size:12px;color:var(--text-3);margin:8px 0 0;line-height:1.7}
           #view-analysis .an-item{display:flex;gap:12px;align-items:flex-start;padding:13px 16px;border-bottom:1px solid var(--border-soft)}
           #view-analysis .an-item:last-child{border-bottom:none}
           #view-analysis .an-item:hover{background:var(--surface-2)}
@@ -151,26 +192,17 @@
           #view-analysis .an-row__pct b{font-size:18px;font-weight:700}
           #view-analysis .an-row__pct small{font-size:11px;color:var(--text-3)}
           #view-analysis .an-avatar{flex:0 0 34px;height:34px;border-radius:var(--r-full);display:grid;place-items:center;font-size:14px;font-weight:600}
-          #view-analysis .an-note__t{display:flex;align-items:center;gap:7px;font-size:12.5px;font-weight:650;color:var(--text-2)}
-          #view-analysis .an-note__t svg{width:15px;height:15px;color:var(--brand-400)}
-          #view-analysis .an-note ul{margin:9px 0 0;padding-left:18px;font-size:12px;color:var(--text-3);line-height:1.85}
-          #view-analysis .an-note b{color:var(--text-2)}
+          /* 两张列表卡共用窗口高度（5 条数据，由 syncListWindows 按真实行高算出，不写死像素）；
+             align-self:start 让卡片高度只由「标题栏 + 窗口」决定 ——
+             两侧窗口同高，卡片因此恒等高、底边对齐 */
+          #view-analysis .card.an-card{align-self:start}
+          #view-analysis .an-list{scrollbar-width:thin;scrollbar-color:var(--brand-300) var(--surface-3)}
+          #view-analysis .an-list--scroll{overflow-y:auto;overflow-x:hidden;scrollbar-gutter:stable}
+          #view-analysis .an-list--scroll::-webkit-scrollbar{width:6px}
+          #view-analysis .an-list--scroll::-webkit-scrollbar-track{background:var(--surface-3);border-radius:var(--r-full)}
+          #view-analysis .an-list--scroll::-webkit-scrollbar-thumb{background:var(--brand-300);border-radius:var(--r-full)}
+          #view-analysis .an-list--scroll::-webkit-scrollbar-thumb:hover{background:var(--brand-400)}
         </style>
-
-        <div class="card" style="margin-bottom:16px">
-          <div class="card__body an-scope">
-            <div class="an-scope__ico">${icon('flask')}</div>
-            <div style="flex:1;min-width:0">
-              <div class="an-scope__head">
-                <b>分析范围</b>
-                <span class="chip">${icon('book')}${U.esc(courseLabel)}</span>
-                <span class="chip">${icon('layers')}${U.esc(scope.chapter || '全部章节')}</span>
-                <span class="chip">${icon('clock')}${U.esc(timeLabel)}</span>
-              </div>
-              <p>按答题记录与学习路径实时统计（不做估算），用于定位共性薄弱知识点与需要关注的学生。</p>
-            </div>
-          </div>
-        </div>
 
         <div class="grid g-4" style="margin-bottom:16px">
           ${stats.map(s => `
@@ -195,45 +227,48 @@
         </div>
 
         <div class="grid g-2">
-          <div class="card" style="min-height:212px">
+          <div class="card an-card" style="min-height:212px">
             <div class="card__head">
               <h3>${icon('users')} 共性薄弱（班级层面）</h3>
               <span class="spacer"></span>
               <span class="badge ${common.length ? 'badge--danger' : 'badge--ok'}">${common.length ? common.length + ' 个知识点' : '正常'}</span>
             </div>
-            <div class="card__body card__body--flush">
+            <div class="card__body card__body--flush an-list">
               ${common.length
                 ? common.map(commonRow).join('')
                 : R.empty('暂无共性薄弱知识点', '判定线：学习过该知识点的学生中，出现错题 ≥2 人且占比 ≥30%；当前没有知识点达到', 'target')}
             </div>
           </div>
-          <div class="card" style="min-height:212px">
+          <div class="card an-card" style="min-height:212px">
             <div class="card__head">
               <h3>${icon('user')} 个性异常（个体层面）</h3>
               <span class="spacer"></span>
               <span class="badge ${individual.length ? 'badge--warn' : 'badge--ok'}">${individual.length ? individual.length + ' 名学生' : '正常'}</span>
             </div>
-            <div class="card__body card__body--flush">
+            <div class="card__body card__body--flush an-list">
               ${individual.length
                 ? individual.map(individualRow).join('')
                 : R.empty('暂无个体异常学生', '判定线：有效学习点 ≥3 个的学生中，平均掌握率 <40% 或完成率 <30%；当前没有学生达到', 'user')}
             </div>
           </div>
-        </div>
-
-        <div class="card an-note" style="margin-top:16px">
-          <div class="card__body">
-            <div class="an-note__t">${icon('info')} 数据口径</div>
-            <ul>
-              <li><b>高频错题</b>：按每道题的答错次数降序取前 5；错误率 = 该题答错次数 ÷ 该题作答次数（取自答题记录）。</li>
-              <li><b>共性薄弱</b>：学习过该知识点的学生中，出现错题的人数占比 ≥30% 且至少 2 人。</li>
-              <li><b>个体异常</b>：有效学习点 ≥3 个的学生中，平均掌握率 <40% 或完成率 <30%。</li>
-            </ul>
-          </div>
         </div>`;
 
         U.$$('[data-cnt]', el).forEach(s => U.countUp(s, +s.dataset.cnt, 0));
         U.$$('[data-uid]', el).forEach(b => b.addEventListener('click', () => Monitor.openProfile(b.dataset.uid)));
+
+        /* 「共性薄弱 / 个性异常」两卡共用同一窗口高度（5 条数据），超出部分在卡内滚动。
+           宽度变化会让描述文字重新折行、行高随之改变，所以在 resize 时重算；
+           容器一旦随路由切换离开文档，就自行摘掉监听，避免残留。 */
+        const boxes = U.$$('.an-list', el);
+        const syncRows = () => {
+          if (!boxes.some(b => b.isConnected)) {
+            window.removeEventListener('resize', syncRows);
+            return;
+          }
+          syncListWindows(boxes, 5);
+        };
+        syncRows();
+        window.addEventListener('resize', syncRows);
       }).catch(err => {
         el.innerHTML = `<div class="card"><div class="card__body" style="padding:24px;text-align:center;color:var(--danger)">
           ${icon('alert')}<h3 style="margin:0">加载失败</h3><p class="fz-12 t-dim">${U.esc(err.message || err)}</p></div></div>`;

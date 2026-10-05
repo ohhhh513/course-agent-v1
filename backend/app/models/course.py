@@ -55,7 +55,7 @@ class Resource(Base):
     __tablename__ = "resources"
 
     res_id = Column(String(32), primary_key=True)
-    course_id = Column(String(32), ForeignKey("courses.course_id"), default="C2026DS001", index=True)
+    course_id = Column(String(32), ForeignKey("courses.course_id"), index=True)
     title = Column(String(256), nullable=False)
     type = Column(String(16), nullable=False)  # video / ppt / doc / quiz
     # 目录 = 章（第x章）；标签 = KP（可多）

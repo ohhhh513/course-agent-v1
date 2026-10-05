@@ -3,14 +3,15 @@
 按真实学习数据生成 / 刷新 / 删除 Alert：
 正确率 = 该知识点下「每道题最近一次作答」的对错（按题去重，避免重复作答 / 补救练习拉偏）：
 - 学生达到预警条件 → 生成 Alert（level / type / class_id / trigger / detail_json，status=open）；
-- 条件恢复（掌握率回到达标线以上）→ 直接删除对应的自动预警记录；
+- 条件恢复（掌握率回到预警线以上）→ 直接删除对应的自动预警记录；
 - 教师确认只表示已复核，系统仍按最新学习数据刷新红黄等级并自动解除；
 - 教师忽略的告警固定按 green / ignored 处理，不再被检测服务重新激活。
 
-分级（掌握率，达标线 60%）：
-  - mastery < 50  → red   / mastery_low（预警）
-  - 50 ≤ mastery < 60 → yellow / mastery_low（需关注）
-  - mastery ≥ 60 → 正常（不生成告警；若有有效预警则删除）
+分级（掌握率，预警线；注意「预警线」与 app/constants.py 的掌握率「达标线」是两个概念，
+本模块既不引用也不跟随达标线变动）：
+  - mastery < RED_BELOW    → red   / mastery_low（预警）
+  - RED_BELOW ≤ mastery < YELLOW_BELOW → yellow / mastery_low（需关注）
+  - mastery ≥ YELLOW_BELOW → 正常（不生成告警；若有有效预警则删除）
 
 「已学」门槛：该知识点至少作答过 ENGAGE_MIN 道【不同】题，避免对未开始/证据不足的知识点误报。
 """
@@ -84,61 +85,91 @@ def detect_alerts(db: Session, users=None) -> dict:
         ignored_row.suggestions_json = "[]"
         updated += 1
 
+    from .scoring import quiz_accuracy_by_kp
+    from ..models.question import Question
+
     for u in users:
-        # 该生每个知识点的「答题正确率」——统一口径（services/scoring：按题去重取最近一次）
-        from .scoring import quiz_accuracy_by_kp
-        acc_map = {kp: acc for kp, (acc, n) in quiz_accuracy_by_kp(db, u.user_id).items()
-                   if n >= ENGAGE_MIN}
-        if not acc_map:
-            continue
-
-        kp_rows = db.query(GraphNode.id, GraphNode.name, GraphNode.course_id).filter(
-            GraphNode.graph_type == "knowledge", GraphNode.id.in_(list(acc_map.keys())),
-        ).all()
-        kp_names = {i: n for i, n, _c in kp_rows}
-        kp_course = {i: c for i, _n, c in kp_rows}
-        existing = {a.kp_id: a for a in db.query(Alert).filter(
+        # 该生需要评估的课程 = 「有作答记录的课程」∪「现有预警所在的课程」。
+        # 后者保证「答题记录被清空 / 题目被下架」时仍会走到该课程，把失去依据的旧预警清掉（P44）。
+        ans_courses = {c for (c,) in db.query(AnswerRecord.course_id).filter(
+            AnswerRecord.user_id == u.user_id,
+            AnswerRecord.course_id.isnot(None),
+        ).distinct().all() if c}
+        alert_courses = {c for (c,) in db.query(Alert.course_id).filter(
             Alert.user_id == u.user_id, Alert.type == ALERT_TYPE,
-        ).all()}
+        ).distinct().all() if c}
 
-        for kp, mastery in acc_map.items():
-            name = kp_names.get(kp, kp)
-            level = _level_of(mastery)
-            row = existing.get(kp)
+        for course_id in ans_courses | alert_courses:
+            # 统一口径的「答题正确率」表（按题去重取最近一次），**限定在本课程内**
+            acc_map = quiz_accuracy_by_kp(db, u.user_id, course_id=course_id)
 
-            if level:
-                title = f"「{name}」掌握率偏低"
-                desc = f"当前作答正确率 {mastery:.0f}%，低于课程达标线 {YELLOW_BELOW}%。"
-                detail = json.dumps(
-                    {"current": mastery, "threshold": YELLOW_BELOW, "redBelow": RED_BELOW},
-                    ensure_ascii=False,
-                )
-                sugs = _suggestions(db, kp, name)
-                # 课程归属取自知识点本身（GraphNode.course_id）。
-                # ⚠️ 历史上这里写死演示课 "C2026DS001"，而真实库里没有这门课，
-                # 建预警会直接外键失败（异常被上层吞掉 → 学生端/教师端预警永远是空的）。
-                kp_course_id = kp_course.get(kp)
-                if not kp_course_id:
+            # P48：本课程里「以它为主 KP」的题量。为 0 说明该点只靠 kp_ids 标签命中，
+            # 分母天生就小（全课仅 2 道标签题 → 错 1 道就到 50%），门槛相应提到 ≥3 道不同题。
+            primary_q_count = {kp: n for kp, n in db.query(
+                Question.kp_id, func.count(Question.q_id),
+            ).filter(
+                Question.course_id == course_id,
+                Question.kp_id.isnot(None),
+            ).group_by(Question.kp_id).all()}
+
+            kp_rows = db.query(GraphNode.id, GraphNode.name).filter(
+                GraphNode.graph_type == "knowledge",
+                GraphNode.course_id == course_id,
+            ).all()
+            kp_names = {i: n for i, n in kp_rows}
+            existing = {a.kp_id: a for a in db.query(Alert).filter(
+                Alert.user_id == u.user_id,
+                Alert.course_id == course_id,
+                Alert.type == ALERT_TYPE,
+            ).all()}
+
+            # P44：「现有预警 ∪ 本次证据」并集遍历 —— 只遍历证据会漏掉「证据已消失」的旧预警，
+            # 那条预警既不会更新也不会删除，学生端会一直挂着一条谁也消不掉的红点。
+            for kp in set(acc_map) | set(existing):
+                rate, hits = acc_map.get(kp) or (None, 0)
+                threshold = ENGAGE_MIN if primary_q_count.get(kp, 0) > 0 else ENGAGE_MIN + 1
+                row = existing.get(kp)
+
+                if rate is None or hits < threshold or kp not in kp_names:
+                    # 证据不足（题目被删 / 标签被改 / 记录被清）→ 预警失去依据，删除。
+                    # ignored 是教师主动判定过的历史记录，继续保留。
+                    if row is not None and row.status != "ignored":
+                        db.delete(row)
+                        deleted += 1
                     continue
-                if row is None:
-                    db.add(Alert(
-                        alert_id="AL" + uuid.uuid4().hex[:10], course_id=kp_course_id,
-                        user_id=u.user_id, class_id=cmap.get(u.class_name) or None,
-                        level=level, type=ALERT_TYPE, title=title, desc=desc,
-                        trigger=TRIGGER, kp_id=kp, kp_name=name,
-                        detail_json=detail, suggestions_json=sugs, status="open",
-                    ))
-                    created += 1
-                elif row.status in ("open", "read", "reviewed"):
-                    row.level, row.title, row.desc, row.trigger, row.detail_json, row.suggestions_json = level, title, desc, TRIGGER, detail, sugs
-                    updated += 1
-                # ignored → 教师已判定无需处理，保持 green / ignored，不重新激活
-            else:
-                # 恢复：直接删除自动预警；确认过或已读的记录也一并移除。
-                # ignored 是教师主动处理的历史记录，继续保留。
-                if row is not None and row.status != "ignored":
-                    db.delete(row)
-                    deleted += 1
+
+                name = kp_names.get(kp, kp)
+                level = _level_of(rate)
+                if level:
+                    title = f"「{name}」掌握率偏低"
+                    desc = f"当前作答正确率 {rate:.0f}%，低于课程达标线 {YELLOW_BELOW}%。"
+                    detail = json.dumps(
+                        {"current": rate, "threshold": YELLOW_BELOW, "redBelow": RED_BELOW},
+                        ensure_ascii=False,
+                    )
+                    sugs = _suggestions(db, kp, name)
+                    # 课程归属取自本次评估的课程（知识点已确认属于该课程）。
+                    # ⚠️ 历史上这里写死演示课 "C2026DS001"，而真实库里没有这门课，
+                    # 建预警会直接外键失败（异常被上层吞掉 → 学生端/教师端预警永远是空的）。
+                    if row is None:
+                        db.add(Alert(
+                            alert_id="AL" + uuid.uuid4().hex[:10], course_id=course_id,
+                            user_id=u.user_id, class_id=cmap.get(u.class_name) or None,
+                            level=level, type=ALERT_TYPE, title=title, desc=desc,
+                            trigger=TRIGGER, kp_id=kp, kp_name=name,
+                            detail_json=detail, suggestions_json=sugs, status="open",
+                        ))
+                        created += 1
+                    elif row.status in ("open", "read", "reviewed"):
+                        row.level, row.title, row.desc, row.trigger, row.detail_json, row.suggestions_json = level, title, desc, TRIGGER, detail, sugs
+                        updated += 1
+                    # ignored → 教师已判定无需处理，保持 green / ignored，不重新激活
+                else:
+                    # 恢复：直接删除自动预警；确认过或已读的记录也一并移除。
+                    # ignored 是教师主动处理的历史记录，继续保留。
+                    if row is not None and row.status != "ignored":
+                        db.delete(row)
+                        deleted += 1
 
     db.commit()
     return {"created": created, "updated": updated, "deleted": deleted}

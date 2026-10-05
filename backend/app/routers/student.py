@@ -20,6 +20,8 @@ from ..middleware.auth import get_current_user
 from ..dependencies import get_current_course_id
 from ..schemas.common import ok, fail, list_response
 from ..utils import loads, fmt_dt
+from ..constants import MASTERY_THRESHOLD
+from ..services.alert_detector import YELLOW_BELOW
 
 router = APIRouter(prefix="/api/v1/student", tags=["学生端"])
 
@@ -30,6 +32,10 @@ _CN_TZ = timezone(timedelta(hours=8))
 # 与「成长轨迹」用同一口径；想改学期长度只改这里。
 SEMESTER_START = date(2026, 8, 31)   # 2026 秋季学期第 1 周周一
 SEMESTER_WEEKS = 18                  # 学期周数
+
+# 「知识点达标」阈值统一由 app/constants.py 的 MASTERY_THRESHOLD 定义（唯一真源）：
+# 该值同时用于 masteredKpCount 与前端「达标线」文案（经 coreMetrics.masteryThreshold 下发），
+# 并与教师端目标达成度、干预模块达标统计共用同一个数，避免各处各写一份而对不上。
 
 
 def _to_local(dt: datetime | None) -> datetime | None:
@@ -158,10 +164,10 @@ def student_dashboard(
 
     # 综合掌握率（答题正确率 ∪ 资源完成率）→ 资源中心展示用
     from ..routers.graph import _mastery_for_user
-    from ..services.scoring import quiz_accuracy_by_kp
+    from ..services.scoring import quiz_accuracy_by_kp, weak_kp_ids
     from ..services.alert_detector import ENGAGE_MIN    # 与预警共用同一门槛（≥2 道不同题）
-    mastery_map = _mastery_for_user(uid, db)
-    acc_by_kp = quiz_accuracy_by_kp(db, uid)   # {kp: (加权正确率, 含次要命中的不同题数)}
+    mastery_map = _mastery_for_user(uid, db, course_id)
+    acc_by_kp = quiz_accuracy_by_kp(db, uid, course_id=course_id)   # {kp: (加权正确率, 含次要命中的不同题数)}
 
     # --- learning_path（用户专属）---
     lp_rows = db.query(LearningPath).filter(
@@ -206,6 +212,7 @@ def student_dashboard(
     # --- streakDays：answer_records 日期去重后算连续天数（从今天往前数）---
     ans_dates = db.query(func.date(AnswerRecord.created_at)).filter(
         AnswerRecord.user_id == uid,
+        AnswerRecord.course_id == course_id,
     ).distinct().all()
     ans_date_set = {datetime.strptime(d[0], "%Y-%m-%d").date() for d in ans_dates if d[0]}
 
@@ -236,6 +243,7 @@ def student_dashboard(
         AnswerRecord.kp_id, func.count(AnswerRecord.id), func.sum(AnswerRecord.is_correct)
     ).filter(
         AnswerRecord.user_id == uid,
+        AnswerRecord.course_id == course_id,
         func.date(AnswerRecord.created_at) >= week_start,
     ).group_by(AnswerRecord.kp_id).all()
     cur_week_stats = {row[0]: (row[1], row[2] or 0) for row in cur_week_rows}
@@ -244,6 +252,7 @@ def student_dashboard(
         AnswerRecord.kp_id, func.count(AnswerRecord.id), func.sum(AnswerRecord.is_correct)
     ).filter(
         AnswerRecord.user_id == uid,
+        AnswerRecord.course_id == course_id,
         func.date(AnswerRecord.created_at) >= last_week_start,
         func.date(AnswerRecord.created_at) < last_week_end,
     ).group_by(AnswerRecord.kp_id).all()
@@ -263,8 +272,8 @@ def student_dashboard(
         q = acc_by_kp.get(r.kp_id)
         # 薄弱点（= 靶向练习的候选）判定与**预警同一门槛**（2026-09-24 统一）：
         #   ① 该知识点上做过至少 ENGAGE_MIN 道不同题（题做太少不算证据，避免"1 道题定生死"）
-        #   ② 加权答题正确率 < 60（靶向盯的是做题，不看资源进度）
-        if q and q[1] >= ENGAGE_MIN and q[0] < 60:
+        #   ② 加权答题正确率 < YELLOW_BELOW（靶向盯的是做题，不看资源进度；故用预警线而非掌握率达标线）
+        if q and q[1] >= ENGAGE_MIN and q[0] < YELLOW_BELOW:
             level = "danger" if q[0] < 40 else "warn"
             weak_points.append({
                 "kpId": r.kp_id, "name": r.name,
@@ -273,12 +282,18 @@ def student_dashboard(
                 "chapter": r.chapter,
                 "errorCount": db.query(AnswerRecord).filter(
                     AnswerRecord.user_id == uid, AnswerRecord.kp_id == r.kp_id,
+                    AnswerRecord.course_id == course_id,
                     AnswerRecord.is_correct == 0,
                 ).count(),
                 "level": level,
                 "trend": _trend_pp(r.kp_id),
             })
-    weak_points.sort(key=lambda x: x["accuracyRate"])
+    # P47：有未处理预警的知识点优先占位 —— 否则会出现「预警页提示 KP018 有问题、
+    # 薄弱点清单前 5 名里却找不到它」，像两个功能在说不同的话。
+    # 顺序由 services/scoring.weak_kp_ids 统一给出，「薄弱点强化」的卡片题量走同一入口。
+    _wp_order = {kp: i for i, kp in enumerate(weak_kp_ids(
+        db, uid, course_id, [r.kp_id for r in lp_rows], limit=5))}
+    weak_points.sort(key=lambda x: _wp_order.get(x["kpId"], len(_wp_order) + 1))
     weak_points = weak_points[:5]
 
     # --- alerts 相关：系统当前有效的红/黄预警才算需要关注 ---
@@ -430,10 +445,10 @@ def student_dashboard(
     if not suggested_questions:
         suggested_questions = ["请帮我梳理数据结构课程的知识体系", "如何高效准备期末考试？", "推荐一些经典的算法练习"]
 
-    # --- 能力目标达成度：达标知识点数（完成率>=60%）/ 总知识点数 ---
-    goal_achieve_rate = round(
-        sum(1 for r in lp_rows if mastery_map.get(r.kp_id, 0) >= 60) / lp_total * 100, 1
-    ) if lp_total else 0
+    # --- 达标知识点数：单知识点综合掌握率 ≥ MASTERY_THRESHOLD 的知识点个数 ---
+    mastered_kp_count = sum(
+        1 for r in lp_rows if mastery_map.get(r.kp_id, 0) >= MASTERY_THRESHOLD
+    )
 
     # 用户名：取 user.name 或 user.username 的 "下午好，XXX" 形式
     display_name = user.name or user.username or "同学"
@@ -462,10 +477,10 @@ def student_dashboard(
         "coreMetrics": {
             "completionRate": course_progress,
             "masteryRate": mastery_rate,
-            "goalAchieveRate": round(goal_achieve_rate, 1),
             "totalKpCount": lp_total,
-        "masteredKpCount": sum(1 for r in lp_rows if mastery_map.get(r.kp_id, 0) >= 60),
+            "masteredKpCount": mastered_kp_count,
             "completedKpCount": len(lp_done),
+            "masteryThreshold": MASTERY_THRESHOLD,
             "updatedAt": datetime.now().strftime("%Y-%m-%d %H:%M"),
         },
         "todos": todos,
@@ -636,6 +651,9 @@ def save_resource_progress(
     position = int(body.get("position", 0) or 0)
     progress = max(0, min(100, progress))
     position = max(0, position)
+    # 文档/课件：页码不得越过总页数 —— 前端钳制之外的兜底（直接调接口也无法越界）
+    if r.type in ("ppt", "doc") and r.pages:
+        position = min(position, int(r.pages))
 
     # 视频：用秒计算百分比更准
     if r.type == "video" and not progress:
@@ -651,6 +669,8 @@ def save_resource_progress(
     p = _consolidate(db, user.user_id, res_id)
     prev_progress = p.progress if p else 0
     prev_position = p.position if p else 0
+    if r.type in ("ppt", "doc") and r.pages:
+        prev_position = min(prev_position or 0, int(r.pages))
     if not p:
         p = ResourceProgress(user_id=user.user_id, res_id=res_id)
         db.add(p)
@@ -678,13 +698,13 @@ def save_resource_progress(
     # 先 flush，确保上方写入的 ResourceProgress 对掌握率计算可见（避免读到旧值）
     db.flush()
     if r.kp_id:
-        _sync_lp_from_resource_progress(db, user.user_id, r.kp_id)
+        _sync_lp_from_resource_progress(db, user.user_id, r.kp_id, r.course_id)
 
     db.commit()
     return ok({"resId": res_id, "progress": progress, "position": position})
 
 
-def _sync_lp_from_resource_progress(db: Session, user_id: str, kp_id: str):
+def _sync_lp_from_resource_progress(db: Session, user_id: str, kp_id: str, course_id: str | None = None):
     """根据用户在某知识点下所有资源的真实进度，刷新 learning_paths 的 mastery/status。
 
     当学生看视频/文档后，左侧学习路径和学情矩阵应同步变化，而不是一直显示“未开始”。
@@ -697,8 +717,8 @@ def _sync_lp_from_resource_progress(db: Session, user_id: str, kp_id: str):
     )
 
     # 计算该知识点当前学习完成率（资源进度）与习题掌握率（答题记录）
-    mastery_map = _mastery_for_user(user_id, db)
-    quiz_map = _quiz_mastery_for_user(user_id, db)
+    mastery_map = _mastery_for_user(user_id, db, course_id)
+    quiz_map = _quiz_mastery_for_user(user_id, db, course_id)
     has_quiz = set(quiz_map.keys())
     mastery = mastery_map.get(kp_id, 0)
     quiz = quiz_map.get(kp_id, 0)
@@ -877,8 +897,8 @@ def mastery_matrix(
     # 实时掌握率（答题正确率 + 资源进度），直接由权威数据源计算，
     # 不依赖可能滞后的 learning_paths.mastery，保证学情矩阵与资源进度永远同步。
     from ..routers.graph import _mastery_for_user, _mastery_from_records
-    mastery_map = _mastery_for_user(uid, db)
-    quiz_mastery_map = _mastery_from_records(uid, db)
+    mastery_map = _mastery_for_user(uid, db, course_id)
+    quiz_mastery_map = _mastery_from_records(uid, db, course_id)
 
     result = []
     for chapter_name in sorted(by_chapter, key=_ch_num):
@@ -919,61 +939,6 @@ def mastery_matrix(
             "items": items,
         })
     return ok(result)
-
-
-# =============================================================================
-# 能力雷达图 — 从 goal 图谱 + learning_paths 动态计算
-# =============================================================================
-
-# goal → 维度映射
-_GOAL_DIMENSIONS = {
-    "G1": ("线性结构运用", ["KP11", "KP12", "KP13", "KP14", "KP21", "KP22", "KP23", "KP24"]),
-    "G2": ("树形结构构建", ["KP31", "KP32", "KP33", "KP34", "KP44"]),
-    "G3": ("图结构与算法", ["KP41", "KP42", "KP43", "KP51", "KP52", "KP53"]),
-    "G4": ("复杂度分析", ["KP01", "KP02"]),
-    "G5": ("算法设计与实现", ["KP01", "KP13", "KP24", "KP32", "KP43", "KP51", "KP52"]),
-    "G6": ("工程问题建模", ["KP52", "KP44", "KP21"]),
-}
-
-
-@router.get("/ability/radar")
-def ability_radar(
-    db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
-):
-    """能力目标达成度 — 从 learning_paths 动态计算 6 个维度"""
-    uid = user.user_id
-    lp_map = {lp.kp_id: lp for lp in db.query(LearningPath).filter(LearningPath.user_id == uid).all()}
-
-    dim_names = [name for name, _ in _GOAL_DIMENSIONS.values()]
-    my_data = []
-    for dim_name, kp_ids in _GOAL_DIMENSIONS.values():
-        scores = [lp_map[kp].mastery for kp in kp_ids if kp in lp_map and lp_map[kp].mastery and lp_map[kp].mastery > 0]
-        my_data.append(round(sum(scores) / len(scores), 1) if scores else 0)
-
-    # 班级平均：按真实同学 learning_paths 掌握率逐维度聚合（无数据则为 0，而非伪造）
-    stu = db.query(User).filter(User.user_id == uid).first()
-    class_name = stu.class_name if stu else None
-    class_ids = [c.user_id for c in db.query(User).filter(
-        User.role == "student", User.class_name == class_name).all()] if class_name else []
-    class_lps = db.query(LearningPath).filter(LearningPath.user_id.in_(class_ids)).all() if class_ids else []
-    class_avg_data = []
-    for dim_name, kp_ids in _GOAL_DIMENSIONS.values():
-        all_scores = [lp.mastery for lp in class_lps
-                      if lp.kp_id in kp_ids and lp.mastery and lp.mastery > 0]
-        class_avg_data.append(round(sum(all_scores) / len(all_scores), 1) if all_scores else 0)
-
-    return ok({
-        "categories": dim_names,
-        "indicators": [
-            {"name": n, "max": 100} for n in dim_names
-        ],
-        "series": [
-            {"name": "我的达成度", "data": my_data},
-            {"name": "班级平均", "data": class_avg_data},
-            {"name": "目标基线", "data": [80, 80, 80, 80, 75, 75]},
-        ],
-    })
 
 
 # =============================================================================
@@ -1036,7 +1001,7 @@ def growth(
     mastered_kps = db.query(LearningPath).filter(
         LearningPath.user_id == uid,
         LearningPath.course_id == course_id,     # 课程隔离
-        LearningPath.mastery >= 80,
+        LearningPath.mastery >= MASTERY_THRESHOLD,
     ).count()
     mastered_ratio = round(min(mastered_kps, total_kp) / total_kp * 100, 1)
 

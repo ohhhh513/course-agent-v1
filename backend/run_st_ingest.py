@@ -1,6 +1,7 @@
 """
 离线构建 RAG 知识库（rag.db），**按课程**执行：
-  1. 课后题库 after_class.json（题干 + 解析切片）—— 仅当该课程是配置声明的题库归属课程
+  1. 题库切片 —— 直接切主库 questions 表（ingest_question_bank()；原先读
+     st_bank/after_class.json 的路径已废除）
   2. 该课程的资源库文件 —— 从 resources 表按 course_id 读取清单，
      经 media_utils.url_to_path() 反解磁盘文件（统一路径
      resources/{course_id}/{res_id}/{文件名}），切片以 `{res_id}/{文件名}` 为来源标识
