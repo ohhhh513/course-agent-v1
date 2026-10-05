@@ -225,7 +225,19 @@ def run_turn(
 
     course_id 是本轮的数据隔离边界：写入侧进 chat_sessions/草稿，
     读取侧经 context['courseId'] 传给 RAG 检索工具。缺失时检索一律返回空。
+
+    运行层可切换：`AGENT_RUNTIME=sdk` 时交给 sdk_runner（OpenAI Agents SDK），
+    事件契约完全一致，前端与路由不用改；默认仍是下方这套手写工具循环。
     """
+    from . import sdk_runner
+
+    if (get_settings().agent_runtime or "legacy").strip().lower() == "sdk" and sdk_runner.available():
+        yield from sdk_runner.run_turn_sdk(
+            message=message, flow_id=flow_id, session_id=session_id, context=context,
+            store=store, user_id=user_id, course_id=course_id,
+        )
+        return
+
     ensure_bank_indexed(course_id=course_id or (context or {}).get("courseId") or None)
     persona = load_persona()
     flow_id = flow_id or persona.get("default_flow", "explain")

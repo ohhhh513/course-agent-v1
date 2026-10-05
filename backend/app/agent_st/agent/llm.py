@@ -17,12 +17,10 @@ def chat_available() -> bool:
 
 def _client():
     settings = get_settings()
-    # 统一走 agent_st.net：默认忽略系统代理（本机挂着不通的 VPN 时，
-    # httpx 会静默走它并导致所有调用 APIConnectionError）。
+    # 统一走 agent_st.net 构造客户端（超时按流式对话设定，网络策略遵循标准环境变量）
     from ..net import sync_client
 
-    return sync_client(settings.llm_base_url, settings.llm_api_key,
-                       use_env_proxy=bool(getattr(settings, "llm_use_env_proxy", False)))
+    return sync_client(settings.llm_base_url, settings.llm_api_key)
 
 
 def complete(messages: list[dict], tools: list[dict] | None) -> dict:

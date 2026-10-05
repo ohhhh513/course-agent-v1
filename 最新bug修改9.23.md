@@ -488,3 +488,59 @@ Router.register('practice', {
 - ⚠️ **需要你点一次确认**：本机沙箱里无头浏览器（Edge headless）无法启动，我没法自动跑点击流程；
   请在「预警与提醒」点任意一条预警的「去练习」，应**直接出现题目**（Toast 提示「靶向练习：已按「XX」组卷」）。
 - 前端改动，**刷新页面即可，无需重启后端**。
+
+---
+
+## 三十三、P0：对话运行层接入 OpenAI Agents SDK（运行层可切换，事件契约不变）（2026-10-05）
+
+### 目标
+
+把「AI 智能答疑」的运行层换成 OpenAI Agents SDK，为后续「学情智能体 + 工具审批 + MCP 导出」打底。
+**约束（用户）**：行为规范最终写成 skill（放 `agent_st/agent/skills/`）、**不动数据库**、不写"补丁性代码"（系统要部署到服务器）。
+
+### 实测结论（先把能跑通的事实列清楚）
+
+用真实 DeepSeek key 跑通（模型 `deepseek-flash`，OpenAI 兼容端点）：
+
+- **没有 OpenAI key 也能用**：tracing 默认外发到 OpenAI 平台，这里 `set_tracing_disabled(True)` 关掉，模型层用 `OpenAIChatCompletionsModel(model=..., openai_client=AsyncOpenAI(base_url=<DeepSeek>))`；
+- **依赖不冲突**：`openai-agents 0.3.3` 会连带装 `mcp`，而 `mcp` 只要求 `starlette>=0.27`、`sse-starlette>=1.6.1` —— pip 之所以把 starlette 升到 1.7.0 只是"没人约束"。把项目的 `starlette==0.38.6` / `sse-starlette==2.1.3` 装回去后，`fastapi 0.115 + agents` 共存，`app.main` 与 SDK 均可导入，**不需要升级 Web 框架**；
+- **逐 token 流式保住了**：SDK 对 chat completions 端点会把 `ResponseTextDeltaEvent` 包在 `RawResponsesStreamEvent` 里透出，映射回我们原有的 `text` / `think` 事件，前端体验与旧实现一致；
+- **工具不重写**：现有注册表（`registry`）的 JSON Schema 与 `execute()` 直接复用；同步工具用 `asyncio.to_thread` 执行，避免阻塞事件循环导致 SSE 卡住。
+
+### 改动
+
+| 文件 | 内容 |
+| --- | --- |
+| `app/agent_st/net.py`（新增） | OpenAI 兼容客户端的统一构造（同步/异步）。**只统一"怎么建客户端"**：超时按流式对话设定（连接 10s / 读 300s / 写 60s / 池 10s）；代理等网络策略遵循 httpx 标准环境变量，代码不额外干预 |
+| `app/config.py` | 新增 `AGENT_RUNTIME`（`legacy` \| `sdk`，默认 `legacy`） |
+| `app/agent_st/settings_bridge.py` | 桥接 `agent_runtime` 给 agent 模块 |
+| `app/agent_st/agent/llm.py`、`rag/embed.py` | 改用 `net.sync_client()` 构造客户端（行为不变，超时统一） |
+| `app/agent_st/agent/sdk_runner.py`（新增） | SDK 运行层：FunctionTool 适配、事件映射（text/think/tool_start/tool_end/draft/citations/done）、会话与 tool_log 落库、tracing 关闭 |
+| `app/agent_st/agent/runtime.py` | `run_turn` 顶部按 `AGENT_RUNTIME` 委派给 `sdk_runner`；未装包/没配 key 时自动回退原实现 |
+| `dev_tools/smoke_agent_sdk.py`（新增） | 同一句话分别跑 legacy / sdk 两条路径，打印事件流、工具调用、引用数、回答文本；**默认在库副本上跑**，不污染真实库 |
+
+### 实测（库副本，未触碰真实库）
+
+同一句话「我现在有哪些预警？分别是什么知识点？」（学生 刘欣然 / 课程 CCHYJTKE）：
+
+| | legacy | sdk |
+| --- | --- | --- |
+| 事件序列 | session → tool_start/tool_end ×2 → text → citations → done | session → tool_start ×2 → tool_end ×2 → text ×6 → citations → done |
+| 工具调用 | `resolve_topic`、`retrieve_chunks` | 同上 |
+| citations | 6 条 | 8 条 |
+| 持久化 | 会话/消息/tool_log 正常 | 同上（title 取自首条提问、rounds=1、flow_id=explain、tool_log 2 条） |
+
+**已知差异**：SDK 会把同一轮的多个工具**并行**执行（旧实现顺序执行），因此事件顺序可能是 `start,start,end,end`。前端按卡片渲染不受影响；若将来要严格串行，可在模型设置里关掉并行工具调用。
+
+### 用法
+
+```bash
+# 切换运行层（默认 legacy，切换后无需改路由与前端）
+AGENT_RUNTIME=sdk
+
+# 两条路径对照冒烟（用 backend/.venv 的解释器，它装了 openai + openai-agents）
+python dev_tools/smoke_agent_sdk.py --runtime legacy --user stu07
+python dev_tools/smoke_agent_sdk.py --runtime sdk    --user stu07
+```
+
+⚠️ **需要重启后端**才生效；`AGENT_RUNTIME=sdk` 还要求运行服务的解释器里装了 `openai-agents`（目前只有 `backend/.venv` 有）。

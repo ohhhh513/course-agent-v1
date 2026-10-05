@@ -40,13 +40,9 @@ class Settings(BaseSettings):
     LLM_BASE_URL: str = os.getenv("LLM_BASE_URL", "https://api.deepseek.com")
     LLM_API_KEY: str = os.getenv("LLM_API_KEY", "")
     LLM_MODEL: str = os.getenv("LLM_MODEL", "deepseek-chat")
-    # 是否沿用系统代理环境变量（HTTP_PROXY / HTTPS_PROXY / ALL_PROXY）。
-    # 默认 False：本机若挂着不通的 VPN/代理，httpx 会静默走它，表现为所有请求
-    # APIConnectionError（远程主机强迫关闭连接 / 目标计算机积极拒绝）。
-    # DeepSeek、SiliconFlow 均可国内直连，通常不需要代理；确实要走代理时在
-    # .env 里设 LLM_USE_ENV_PROXY=1。
-    LLM_USE_ENV_PROXY: bool = os.getenv("LLM_USE_ENV_PROXY", "").strip().lower() in (
-        "1", "true", "yes", "on")
+    # 对话运行层：legacy（现有手写工具循环）| sdk（OpenAI Agents SDK）
+    # 默认沿用现有实现，切换成 sdk 后 /ai/chat/stream 的事件契约与前端完全不变。
+    AGENT_RUNTIME: str = os.getenv("AGENT_RUNTIME", "legacy")
     # Embeddings；留空 KEY 时用本地哈希向量（local-hash-256）
     EMBEDDING_BASE_URL: str = os.getenv("EMBEDDING_BASE_URL", "")
     EMBEDDING_API_KEY: str = os.getenv("EMBEDDING_API_KEY", "")
