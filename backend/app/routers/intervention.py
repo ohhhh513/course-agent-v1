@@ -20,12 +20,17 @@ from ..models.graph import LearningPath, GraphNode
 from ..models.practice import AnswerRecord
 from ..models.question import Question
 from ..middleware.auth import get_current_user
-from ..dependencies import get_current_course_id
+from ..dependencies import get_current_course_id, require_teacher
 from ..schemas.common import ok, list_response
 from ..utils import loads, fmt_dt
 
-intervention_router = APIRouter(prefix="/api/v1/intervention", tags=["教学干预"])
-report_router = APIRouter(prefix="/api/v1/report", tags=["学情报告"])
+# 角色闸门：这两个前缀目前只服务教师端页面（学生页只调用 /student、/practice、
+# /graph、/ai、/course）。学生 token 访问一律 403；将来学生自助报告要另开
+# /student/reports/* 之类的前缀，不要把闸门直接摘掉。
+intervention_router = APIRouter(prefix="/api/v1/intervention", tags=["教学干预"],
+                                dependencies=[Depends(require_teacher)])
+report_router = APIRouter(prefix="/api/v1/report", tags=["学情报告"],
+                          dependencies=[Depends(require_teacher)])
 
 
 # ====== Pydantic ======

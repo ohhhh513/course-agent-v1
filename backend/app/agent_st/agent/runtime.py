@@ -258,6 +258,16 @@ def run_turn(
         yield {"type": "done"}
         return
 
+    # 任务流级角色校验：flow 里声明的 roles 是"谁能用这条流"（服务端按登录用户角色判断，
+    # 模型无法指定）。出题流会写草稿，只允许教师/管理员。
+    role = str((context or {}).get("role") or "").strip()
+    allowed_roles = flow.get("roles") or persona.get("roles") or []
+    if role and allowed_roles and role not in allowed_roles:
+        yield {"type": "error",
+               "message": f"当前角色（{role}）不能使用「{flow.get('name') or flow_id}」"}
+        yield {"type": "done"}
+        return
+
     store = store or AgentStore(user_id=user_id, course_id=course_id)
     if user_id and not store.user_id:
         store.user_id = user_id
@@ -300,7 +310,7 @@ def run_turn(
     }]
     messages.extend(history)
     whitelist = flow.get("tools") or persona.get("tools") or []
-    tools = openai_tools(flow_id, whitelist)
+    tools = openai_tools(flow_id, whitelist, role=role)
     settings = get_settings()
     max_steps = int(flow.get("max_steps") or persona.get("max_steps") or settings.max_steps)
     final_text = ""

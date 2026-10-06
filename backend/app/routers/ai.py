@@ -137,6 +137,8 @@ def _agent_events(req: ChatReq, user, course_id=None):
         context["courseId"] = resolved
     if req.kpId:
         context["kpId"] = req.kpId
+    # 服务端注入调用者角色：任务流级校验 + 工具清单过滤都靠它（模型无法指定）。
+    context["role"] = (getattr(user, "role", "") or "").strip()
     return run_turn(
         message=req.question,
         flow_id="explain",

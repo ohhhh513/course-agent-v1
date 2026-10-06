@@ -34,6 +34,8 @@ def parse_args():
     ap.add_argument("--flow", default="explain", help="explain / generate_items")
     ap.add_argument("--question", default="我现在有哪些预警？分别是什么知识点？")
     ap.add_argument("--db", default="", help="指定数据库；留空则在副本上跑")
+    ap.add_argument("--role", default="", help="调用者角色 student/teacher/admin；留空取该用户真实角色")
+    ap.add_argument("--max-events", type=int, default=0, help="只取前 N 个事件就停（0=跑完）")
     return ap.parse_args()
 
 
@@ -76,14 +78,20 @@ def main():
           f"（sdk 可用={sdk_runner.available()}，未装 openai-agents 或没配 key 时自动回退 legacy）")
     print(f"数据库      : {db_path}")
     print(f"用户/课程   : {user.name}({user.user_id}) / {course_id}")
+    role = args.role or (user.role or "")
+    print(f"调用者角色  : {role}（flow={args.flow} 的角色声明会据此校验）")
     print(f"问题        : {args.question}")
     print("-" * 72)
 
-    text_parts, tools, citations, done, actions = [], [], [], None, []
+    text_parts, tools, citations, done, actions, errors = [], [], [], None, [], []
+    seen = 0
     for ev in runtime.run_turn(
-        message=args.question, flow_id=args.flow, context={}, store=None,
+        message=args.question, flow_id=args.flow, context={"role": role}, store=None,
         user_id=user.user_id, course_id=course_id,
     ):
+        if args.max_events and seen >= args.max_events:
+            break
+        seen += 1
         kind = ev.get("type")
         if kind == "text":
             text_parts.append(ev.get("delta") or "")
@@ -98,6 +106,7 @@ def main():
         elif kind == "action":
             actions = ev.get("actions") or []
         elif kind == "error":
+            errors.append(ev.get("message"))
             print(f"[error] {ev.get('message')}")
         print(f"  event: {kind}" + (f"  {ev.get('name') or ''}" if kind.startswith("tool") else ""))
 
@@ -108,6 +117,20 @@ def main():
     print(f"done        : {done}")
     answer = ''.join(text_parts)
     print(f"回答文本    : （{len(answer)} 字）\n{answer[:2000]}")
+
+    # 角色校验自检：flow 声明的 roles 不含当前角色时，必须被拦下（且不应产出回答）
+    from app.agent_st.agent.loader import load_flow
+    try:
+        allowed = load_flow(args.flow).get("roles") or []
+    except FileNotFoundError:
+        allowed = []
+    expect_reject = bool(role and allowed and role not in allowed)
+    rejected = bool(errors)
+    if expect_reject == rejected:
+        verdict = "按预期拦截" if rejected else "按预期放行"
+    else:
+        verdict = "⚠ 与预期不符"
+    print(f"角色校验    : {verdict}（flow roles={allowed}，expect_reject={expect_reject}）")
     db.close()
 
 

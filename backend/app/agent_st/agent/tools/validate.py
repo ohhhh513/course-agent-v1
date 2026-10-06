@@ -40,6 +40,7 @@ def _parse_question(question) -> dict | list | None:
         "required": ["question"],
     },
     flows=("generate_items",),
+    roles=("teacher", "admin"),
 )
 def validate_question(ctx: ToolContext, question):
     parsed = _parse_question(question)

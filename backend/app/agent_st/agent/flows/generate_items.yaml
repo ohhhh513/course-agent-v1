@@ -1,5 +1,6 @@
 id: generate_items
 name: 智能出题
+roles: [teacher, admin]              # 出题流只允许教师/管理员：会写入草稿，学生不可用
 persona: course_tutor
 skills:
   - generate_items.md

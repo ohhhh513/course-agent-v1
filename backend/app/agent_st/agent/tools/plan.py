@@ -82,6 +82,7 @@ def _collect_references(ctx: ToolContext) -> list[dict]:
         ],
     },
     flows=("generate_items",),
+    roles=("teacher", "admin"),
 )
 def submit_item_plan(
     ctx: ToolContext,
@@ -127,6 +128,7 @@ def submit_item_plan(
         "required": ["question"],
     },
     flows=("generate_items",),
+    roles=("teacher", "admin"),
 )
 def check_novelty(ctx: ToolContext, question):
     parsed = _parse_question(question)

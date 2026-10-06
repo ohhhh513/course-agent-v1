@@ -81,10 +81,14 @@ def _make_invoker(tool_name: str, ctx: ToolContext, emit: Callable[[Event], None
 
 
 def _build_tools(flow_id: str, whitelist: list[str], ctx: ToolContext,
-                 emit: Callable[[Event], None]):
-    """按 flow 白名单把注册表工具适配成 SDK FunctionTool（schema 原样复用）。"""
+                 emit: Callable[[Event], None], role: str = ""):
+    """按 flow 白名单把注册表工具适配成 SDK FunctionTool（schema 原样复用）。
+
+    role 非空时只把该角色可用的工具交给模型——模型看不到就调不到；
+    执行前 registry.execute 还会再校验一次（双层）。
+    """
     tools = []
-    for spec in openai_tools(flow_id, whitelist):
+    for spec in openai_tools(flow_id, whitelist, role=role):
         fn = spec.get("function") or {}
         name = fn.get("name") or ""
         if not name:
@@ -136,8 +140,9 @@ async def _run_async(message: str, flow_id: str, session_id: str, context: dict 
     catalog = _structure.kp_catalog_text(store.course_id) if store.course_id else ""
     instructions = build_system_prompt(persona, flow, extra, course_catalog=catalog)
 
+    role = str(extra.get("role") or "").strip()
     whitelist = flow.get("tools") or persona.get("tools") or []
-    tools = _build_tools(flow_id, whitelist, ctx, emit)
+    tools = _build_tools(flow_id, whitelist, ctx, emit, role=role)
     max_turns = int(flow.get("max_steps") or persona.get("max_steps") or settings.max_steps)
 
     model = OpenAIChatCompletionsModel(
@@ -185,6 +190,21 @@ def run_turn_sdk(message: str, flow_id: str | None = None, session_id: str | Non
     flow_id = flow_id or persona.get("default_flow", "explain")
     if flow_id in {"qa", "tutoring"}:
         flow_id = "explain"
+
+    # 与 legacy 路径同序的校验：先确认任务流存在、再确认角色可用，之后才建会话。
+    try:
+        flow = load_flow(flow_id)
+    except FileNotFoundError:
+        yield {"type": "error", "message": f"未知任务流 {flow_id}"}
+        yield {"type": "done"}
+        return
+    role = str((context or {}).get("role") or "").strip()
+    allowed_roles = flow.get("roles") or persona.get("roles") or []
+    if role and allowed_roles and role not in allowed_roles:
+        yield {"type": "error",
+               "message": f"当前角色（{role}）不能使用「{flow.get('name') or flow_id}」"}
+        yield {"type": "done"}
+        return
 
     store = store or AgentStore(user_id=user_id, course_id=course_id)
     if user_id and not store.user_id:

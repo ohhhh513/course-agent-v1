@@ -1,5 +1,6 @@
 id: explain
 name: 智能讲解
+roles: [student, teacher, admin]     # 谁可以用这条流（服务端按登录用户角色校验）
 persona: course_tutor
 skills:
   - explain.md

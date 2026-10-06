@@ -24,7 +24,7 @@ from ..models.course import Course, Resource, ResourceProgress, ResourceStudyLog
 from ..models.user_course import UserCourse
 from ..models.graph import GraphNode
 from ..middleware.auth import get_current_user
-from ..dependencies import get_current_course_id
+from ..dependencies import get_current_course_id, require_teacher
 from ..schemas.common import ok, fail, list_response
 from ..utils import (
     loads,
@@ -38,7 +38,8 @@ from ..media_utils import (
 )
 from ..routers.practice import _calc_question_stats
 
-router = APIRouter(prefix="/api/v1/teacher", tags=["教师端"])
+router = APIRouter(prefix="/api/v1/teacher", tags=["教师端"],
+                   dependencies=[Depends(require_teacher)])
 
 
 from ..services.catalog_helpers import (
@@ -1094,7 +1095,8 @@ def send_message(
 
 
 # ========== /analysis/* 错题归因（动态计算） ==========
-analysis_router = APIRouter(prefix="/api/v1/analysis", tags=["归因分析"])
+analysis_router = APIRouter(prefix="/api/v1/analysis", tags=["归因分析"],
+                            dependencies=[Depends(require_teacher)])
 
 
 @analysis_router.get("/errors")
@@ -1342,7 +1344,8 @@ def analysis_causes(
 
 
 # ========== /question/* AI 出题（保留，仅 question/bank 为动态） ==========
-question_router = APIRouter(prefix="/api/v1/question", tags=["AI 出题"])
+question_router = APIRouter(prefix="/api/v1/question", tags=["AI 出题"],
+                            dependencies=[Depends(require_teacher)])
 
 
 class GenQuestionReq(BaseModel):
@@ -1484,6 +1487,7 @@ def ai_generate_questions(
             chapter_id = _chapter_hint(i)
             context = {
                 "courseId": course_id,          # 课程隔离边界：RAG 检索据此过滤
+                "role": (getattr(user, "role", "") or "").strip(),  # 出题流角色校验（教师/管理员）
                 "batch_id": batch_id,
                 "difficulty": req.difficulty,
                 "seq": i + 1,

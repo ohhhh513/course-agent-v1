@@ -46,6 +46,7 @@ def _novelty_ready(ctx: ToolContext, question: dict) -> list[str]:
         "required": ["question"],
     },
     flows=("generate_items",),
+    roles=("teacher", "admin"),
 )
 def save_question_draft(ctx: ToolContext, question):
     if isinstance(question, str):
