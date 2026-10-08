@@ -112,8 +112,8 @@
       this.sideTab = 'overview';
       box.innerHTML = `
         <div class="kp-side__empty">
-          <div style="font-size:30px;margin-bottom:10px">🧭</div>
-          <b style="color:var(--text-2);font-size:13px;display:block;margin-bottom:6px">知识点详情</b>
+          <div style="font-size:31px;margin-bottom:10px">🧭</div>
+          <b style="color:var(--text-2);font-size:14px;display:block;margin-bottom:6px">知识点详情</b>
           点击图上的知识点节点<br>查看解释、学情与前后置关系
         </div>`;
     },

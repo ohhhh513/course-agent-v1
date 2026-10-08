@@ -35,8 +35,9 @@ from ..net import async_client
 
 Event = dict
 
-# 注册工具（与 runtime 保持一致：import 即注册）
-from .tools import bank, draft, plan, rag, topic, validate  # noqa: E402,F401
+# 注册工具（与 runtime 保持一致： import 即注册，逐个显式列出）
+from .tools import (admin_ops, analytics, bank, draft, plan, rag,  # noqa: E402,F401
+                    teacher_analytics, topic, validate)
 
 _SDK_ERROR: str = ""
 try:  # 依赖缺失时不炸 import，交给 available() 判断
@@ -55,6 +56,7 @@ def available() -> bool:
 
 def _make_invoker(tool_name: str, ctx: ToolContext, emit: Callable[[Event], None]):
     """把 registry 里的工具包成 SDK 的 on_invoke_tool(ctx, json_args) -> str。"""
+    from .runtime import _log_tool      # 函数内导入，避免与 runtime 的相互引用
 
     async def _invoke(_run_ctx, args_json: str) -> str:
         try:
@@ -66,10 +68,7 @@ def _make_invoker(tool_name: str, ctx: ToolContext, emit: Callable[[Event], None
         emit({"type": "tool_start", "name": tool_name, "args": args})
         # registry.execute 是同步的（DB / 向量检索），丢线程池执行
         result = await asyncio.to_thread(execute, tool_name, args, ctx)
-        ctx.tool_log.append({
-            "kind": "tool", "name": tool_name, "args": args,
-            "ok": not (isinstance(result, dict) and result.get("error")),
-        })
+        _log_tool(ctx, tool_name, args, result)
         preview = result if not isinstance(result, list) else result[:4]
         emit({"type": "tool_end", "name": tool_name, "ok": True, "preview": preview})
         # 与旧实现一致：每保存一道题就推一个 draft 事件（教师端流式预览用）
@@ -120,7 +119,8 @@ async def _run_async(message: str, flow_id: str, session_id: str, context: dict 
                      store: AgentStore, user_id: str, emit: Callable[[Event], None]) -> None:
     """真正的执行体（异步）：跑一轮 SDK Agent，把事件交给 emit。"""
     from ..rag.ingest import ensure_bank_indexed
-    from .runtime import _citations_from_turn, _explain_out_of_scope, _first_draft_id
+    from .runtime import (_citations_from_turn, _explain_out_of_scope, attachment_ground_text,
+                          action_events, persist_side_effects)
 
     settings = get_settings()
     persona = load_persona()
@@ -138,7 +138,12 @@ async def _run_async(message: str, flow_id: str, session_id: str, context: dict 
     from ..rag import structure as _structure
 
     catalog = _structure.kp_catalog_text(store.course_id) if store.course_id else ""
-    instructions = build_system_prompt(persona, flow, extra, course_catalog=catalog)
+    # 与 legacy 路径一致：附件正文与账号解析结果都不进 system 提示词
+    # （附件正文只拼进本轮用户消息；账号表由 preview_account_import 工具按需读取）
+    _atts = [a for a in (extra.get("attachments") or []) if isinstance(a, dict)]
+    instructions = build_system_prompt(
+        persona, flow, {k: v for k, v in extra.items() if k not in ("attachments", "account_import")},
+        course_catalog=catalog)
 
     role = str(extra.get("role") or "").strip()
     whitelist = flow.get("tools") or persona.get("tools") or []
@@ -152,7 +157,7 @@ async def _run_async(message: str, flow_id: str, session_id: str, context: dict 
     agent = Agent(name=persona.get("name") or "course_tutor", instructions=instructions,
                   model=model, tools=tools)
 
-    run_input = list(history) + [{"role": "user", "content": message}]
+    run_input = list(history) + [{"role": "user", "content": message + attachment_ground_text(_atts)}]
     result = Runner.run_streamed(agent, input=run_input, context=ctx, max_turns=max_turns)
 
     async for ev in result.stream_events():
@@ -168,17 +173,17 @@ async def _run_async(message: str, flow_id: str, session_id: str, context: dict 
         emit({"type": "text", "delta": final_text})
 
     emit({"type": "citations", "items": _citations_from_turn(ctx.turn)})
+    out_of_scope = _explain_out_of_scope(ctx, message) if flow_id == "explain" else False
+    ctx.turn["out_of_scope"] = out_of_scope        # 落库前写入，persist_side_effects 从 ctx.turn 取
     store.add_message(session_id, "assistant", final_text)
-    if ctx.tool_log:
-        store.set_last_tool_log(session_id, ctx.tool_log, draft_id=_first_draft_id(ctx))
-    # 工具建议的界面动作（suggest_action）：与 legacy 路径一致地透出
-    actions = ctx.turn.get("actions") or []
-    if actions:
-        emit({"type": "action", "actions": actions})
+    persist_side_effects(store, session_id, ctx)
+    # 界面动作：只读建议 + 写操作的待批准卡片（P2c），与 legacy 路径一致地透出
+    for ev in action_events(ctx):
+        emit(ev)
     emit({
         "type": "done",
         "drafts": ctx.turn.get("drafts") or [],
-        "out_of_scope": _explain_out_of_scope(ctx, message) if flow_id == "explain" else False,
+        "out_of_scope": out_of_scope,
     })
 
 
@@ -213,7 +218,11 @@ def run_turn_sdk(message: str, flow_id: str | None = None, session_id: str | Non
         store.course_id = course_id
     session_id = store.ensure_session(session_id, flow_id)
     yield {"type": "session", "session_id": session_id, "flow_id": flow_id}
-    store.add_message(session_id, "user", message)
+    # 附件随消息落库的标记（与 legacy 路径一致）：历史会话据此回显附件名
+    from .runtime import attachment_log_entries
+
+    _atts = [a for a in ((context or {}).get("attachments") or []) if isinstance(a, dict)]
+    store.add_message(session_id, "user", message, tool_log=attachment_log_entries(_atts))
 
     out: "queue.Queue[Event | None]" = queue.Queue()
 

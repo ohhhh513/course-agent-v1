@@ -59,18 +59,40 @@ async def not_found_handler(request: Request, exc: Exception):
 
 
 # ========== 开发阶段禁用浏览器缓存 ==========
-from starlette.middleware.base import BaseHTTPMiddleware
+class NoCacheMiddleware:
+    """给静态资源响应加 no-cache 头（**纯 ASGI 实现**）。
 
+    不用 `starlette.middleware.base.BaseHTTPMiddleware`：它用 task group + memory
+    stream 转发请求体与响应体，对 SSE 这类长流式响应有副作用 —— 实测（2026-10-06）
+    会把一次 `chat/stream` 请求的服务端生成器**迭代两遍**（写库翻倍），并让同一
+    keep-alive 连接上的后续 JSON POST 间歇性 422（请求体错位）。纯 ASGI 中间件
+    不触碰请求体、原样转发 receive/send，没有这些问题。
+    """
 
-class NoCacheMiddleware(BaseHTTPMiddleware):
-    async def dispatch(self, request: Request, call_next):
-        response = await call_next(request)
-        path = request.url.path.lower()
-        if path.endswith((".js", ".css", ".html")) or "/assets/" in path:
-            response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
-            response.headers["Pragma"] = "no-cache"
-            response.headers["Expires"] = "0"
-        return response
+    _NOCACHE_HEADERS = [
+        (b"cache-control", b"no-cache, no-store, must-revalidate"),
+        (b"pragma", b"no-cache"),
+        (b"expires", b"0"),
+    ]
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        path = scope.get("path", "").lower()
+        if not (path.endswith((".js", ".css", ".html")) or "/assets/" in path):
+            await self.app(scope, receive, send)
+            return
+
+        async def send_wrapper(message):
+            if message["type"] == "http.response.start":
+                message.setdefault("headers", []).extend(self._NOCACHE_HEADERS)
+            await send(message)
+
+        await self.app(scope, receive, send_wrapper)
 
 
 app.add_middleware(NoCacheMiddleware)
@@ -85,7 +107,8 @@ from .routers.student import router as student_router
 from .routers.teacher import router as teacher_router, analysis_router, question_router
 from .routers.ai import router as ai_router
 from .routers.practice import router as practice_router
-from .routers.intervention import intervention_router, report_router
+from .routers.intervention import (intervention_router, report_router,
+                                   student_report_router)
 from .routers.st_agent import router as st_agent_router
 
 app.include_router(auth_router)
@@ -100,6 +123,7 @@ app.include_router(ai_router)
 app.include_router(practice_router)
 app.include_router(intervention_router)
 app.include_router(report_router)
+app.include_router(student_report_router)
 app.include_router(st_agent_router)
 
 

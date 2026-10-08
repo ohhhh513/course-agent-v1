@@ -46,11 +46,34 @@ GENERATE_GROUNDING = (
 )
 
 
+ADMIN_GROUNDING = (
+    "平台治理约束：主要回答与「平台运行 / 账号 / 课程规模 / 知识库索引 / 数据一致性」有关的问题，"
+    "数据一律来自工具调用（system_overview / account_overview / course_overview / kb_status / data_check），"
+    "数字一律来自工具，禁止凭印象、估算或按经验作答；工具没给到的数字就不要说。"
+    "工具返回的 basis 是给你自己对齐用的，**默认不写进回答**；只有管理员问起统计方式时才用一句话说明。"
+    "本流的写操作**只有两种**：账号录入（import_accounts）与账号删除（delete_accounts）——"
+    "它们会先排成「待批准」动作，管理员在确认卡片上点「确认执行」后才真正生效，"
+    "因此**绝不能说已经录入 / 已经删除 / 已经修改**，必须提示管理员去点确认卡片。"
+    "其余写操作（重建索引、改课程内容、发通知等）本助手确实做不到：如实说明，并指出对应的管理页面入口。"
+    "课程不存在、数据为空等情况如实说明，不要编造。"
+)
+
+
 def _grounding_for_flow(flow: dict) -> str:
     flow_id = str(flow.get("id") or "")
     if flow_id == "generate_items":
         return GENERATE_GROUNDING
+    if flow_id == "admin_ops":
+        return ADMIN_GROUNDING
     return EXPLAIN_GROUNDING
+
+
+def _flow_header(flow: dict) -> str:
+    """「当前任务流」那句的措辞：按流区分，避免把检索约束套到不检索的流上。"""
+    if str(flow.get("id") or "") == "admin_ops":
+        return ("当前任务流（必须按步骤调用工具；本流不做教材检索，"
+                "账号录入 / 账号删除是写操作、必须经确认卡片）：")
+    return "当前任务流（必须按步骤调用工具，不要跳过检索）："
 
 
 def build_system_prompt(
@@ -66,7 +89,7 @@ def build_system_prompt(
     parts = [
         persona.get("system", ""),
         "\n\n".join(s for s in skills if s),
-        "当前任务流（必须按步骤调用工具，不要跳过检索）：\n" + flow_text,
+        _flow_header(flow) + "\n" + flow_text,
     ]
     if course_catalog:
         parts.append(

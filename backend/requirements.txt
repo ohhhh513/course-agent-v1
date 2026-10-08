@@ -16,3 +16,13 @@ httpx>=0.27,<0.29
 PyYAML==6.0.2
 pypdf==5.1.0
 reportlab>=4.0,<5
+# ===== MCP 导出（P4：把 registry 的工具挂成 MCP server 给 Claude Desktop / Cursor）=====
+# ⚠️ 版本必须钉在 1.12.x，不能随手上调：
+#   - mcp 1.13 ~ 1.30 在 python<3.14 上要求 pydantic>=2.11，与本项目的 pydantic==2.9.2 冲突；
+#   - mcp 2.x 会把 starlette 升到 1.x，与 fastapi 0.115（要求 starlette<0.39）冲突。
+#   1.12.4 是本项目依赖组合下**能装上的最高版本**（pydantic>=2.8，starlette 0.38.6 兼容）。
+#   想升级 mcp 就得先一起升 pydantic 与 fastapi/starlette，属于单独的依赖升级决策。
+mcp==1.12.4
+# ===== 管理端批量导入（xlsx / docx）=====
+openpyxl==3.1.5        # 解析 .xlsx 用户导入表（纯 Python，与本仓库钉版无冲突）
+python-docx==0.8.11    # 解析 .docx 用户导入（表格 / 纯文本）；注意：旧版 .doc 二进制不支持

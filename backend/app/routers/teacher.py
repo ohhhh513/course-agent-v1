@@ -1514,6 +1514,9 @@ def ai_generate_questions(
                         yield {"event": "draft", "data": json.dumps(ev, ensure_ascii=False)}
                     elif etype == "done":
                         demo = demo or bool(ev.get("demo"))
+                    elif etype == "action":
+                        # 写操作的待批准卡片（P2c）：与答疑流一致地透出，前端渲染确认卡片
+                        yield {"event": "action", "data": json.dumps(ev, ensure_ascii=False)}
                     elif etype in ("text", "tool_start", "tool_end", "citations"):
                         yield {"event": etype if etype != "text" else "log",
                                "data": json.dumps(ev, ensure_ascii=False)}

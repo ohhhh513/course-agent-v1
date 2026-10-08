@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import time
 import uuid
+from datetime import datetime
 
 from app.agent_st.rag.bank import existing_q_ids
 from app.agent_st.rag.validate import validate_question
@@ -61,7 +62,13 @@ class AgentStore:
         finally:
             db.close()
 
-    def add_message(self, session_id: str, role: str, content: str) -> None:
+    def add_message(self, session_id: str, role: str, content: str, tool_log: list | None = None) -> None:
+        """写入一条消息。
+
+        tool_log 可选：随消息落库的附带标记（JSON 文本列，不建表）。
+        目前用于用户消息上的附件标记（[{kind:'attach', files:[...]}]），
+        历史消息接口把它原样返回，前端据此回显附件名。
+        """
         db = self.persistence.SessionLocal()
         try:
             ChatSession, ChatMessage = self.persistence.ChatSession, self.persistence.ChatMessage
@@ -72,6 +79,7 @@ class AgentStore:
                 role=formal_role,
                 content=content,
                 time_str=time.strftime("%H:%M"),
+                tool_log=json.dumps(tool_log, ensure_ascii=False) if tool_log else "[]",
             ))
             session = db.query(ChatSession).filter(ChatSession.session_id == session_id).first()
             if session:
@@ -206,5 +214,86 @@ class AgentStore:
                 if draft_id:
                     row.draft_id = draft_id
                 db.commit()
+        finally:
+            db.close()
+
+    # ------------------------------------------------------------------
+    # 待批准动作（P2c）：落在 chat_messages.tool_log 里，不建表
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _actions_of(tool_log_text: str) -> list[dict]:
+        """从 tool_log JSON 里挑出动作条目（kind == "action"）。"""
+        try:
+            items = json.loads(tool_log_text or "[]")
+        except json.JSONDecodeError:
+            return []
+        if not isinstance(items, list):
+            return []
+        return [x for x in items if isinstance(x, dict) and x.get("kind") == "action"]
+
+    def find_action(self, user_id: str, course_id: str, action_id: str) -> tuple[int, dict] | None:
+        """在「当前用户 + 当前作用域」的会话里找这个待批准动作。
+
+        作用域口径：`course_id` 非空 = 该课程下的会话；**空串 = 平台级会话**
+        （`course_id IS NULL`，管理员治理会话走这条，见 /admin/agent/actions/*）。
+
+        返回 `(chat_message.id, action)`，找不到返回 None。
+        **归属校验就靠这个查询**：别人的 action_id 在当前用户/作用域内根本查不到，
+        因此既不泄露它是否存在，也不需要额外判断属主。
+        """
+        action_id = (action_id or "").strip()
+        if not action_id or not user_id:
+            return None
+        db = self.persistence.SessionLocal()
+        try:
+            ChatMessage, ChatSession = self.persistence.ChatMessage, self.persistence.ChatSession
+            scope = (ChatSession.course_id == course_id) if course_id else ChatSession.course_id.is_(None)
+            rows = (
+                db.query(ChatMessage)
+                .join(ChatSession, ChatMessage.session_id == ChatSession.session_id)
+                .filter(
+                    ChatSession.user_id == user_id,
+                    scope,
+                    ChatMessage.tool_log.like(f"%{action_id}%"),
+                )
+                .all()
+            )
+            for row in rows:
+                for item in self._actions_of(row.tool_log):
+                    if item.get("action_id") == action_id:
+                        return row.id, item
+            return None
+        finally:
+            db.close()
+
+    def set_action_status(self, message_id: int, action_id: str, status: str,
+                          result: dict | None = None) -> dict | None:
+        """改写某条消息 tool_log 里这个动作的状态（可顺带写入执行结果）。"""
+        db = self.persistence.SessionLocal()
+        try:
+            ChatMessage = self.persistence.ChatMessage
+            row = db.query(ChatMessage).filter(ChatMessage.id == message_id).first()
+            if row is None:
+                return None
+            try:
+                items = json.loads(row.tool_log or "[]")
+            except json.JSONDecodeError:
+                items = []
+            if not isinstance(items, list):
+                items = []
+            hit = None
+            for item in items:
+                if (isinstance(item, dict) and item.get("kind") == "action"
+                        and item.get("action_id") == action_id):
+                    item["status"] = status
+                    if result is not None:
+                        item["result"] = result
+                    item["updated_at"] = fmt_dt(datetime.utcnow(), "%Y-%m-%d %H:%M:%S")
+                    hit = item
+            if hit is None:
+                return None
+            row.tool_log = json.dumps(items, ensure_ascii=False)
+            db.commit()
+            return hit
         finally:
             db.close()

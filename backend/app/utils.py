@@ -26,6 +26,21 @@ def fmt_dt(dt, fmt: str = "%Y-%m-%d %H:%M") -> str:
     return to_local(dt).strftime(fmt)
 
 
+def fmt_dur(seconds) -> str:
+    """秒 → 全站统一的时长展示格式「分'秒"」（分用单引号、秒用双引号）。
+
+    与前端 `U.dur()` 严格同格式：202 → 3'22"；45 → 45"；3725 → 1:02'05"。
+    报告正文等由后端拼装的文本一律走这里，避免各写一套。
+    """
+    total = max(0, int(round(float(seconds or 0))))
+    h, m, s = total // 3600, (total % 3600) // 60, total % 60
+    if h:
+        return f"{h}:{m:02d}'{s:02d}\""
+    if m:
+        return f"{m}'{s:02d}\""
+    return f"{s}\""
+
+
 def dumps(obj) -> str:
     if obj is None:
         return "null"

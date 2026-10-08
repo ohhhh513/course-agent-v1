@@ -121,7 +121,7 @@
         box.innerHTML = r.list.map(s => `
           <div class="list__item list__item--clickable" data-uid="${s.userId}">
             <div class="stu-row" style="flex:1;min-width:0">
-              <span class="avatar" style="width:34px;height:34px;flex:0 0 34px;font-size:13px">${s.avatar}</span>
+              <span class="avatar" style="width:34px;height:34px;flex:0 0 34px;font-size:14px">${s.avatar}</span>
               <div class="stu-row__info"><b>${U.esc(s.name)}</b></div>
             </div>
             <div style="width:140px">
@@ -147,10 +147,10 @@
               <span class="badge badge--outline">课程第 ${p.metrics.rank}/${p.metrics.totalStudents} 名</span>
             </div>
             <div class="grid g-4" style="gap:10px;margin:4px 0 0">
-              <div class="card card--flat card--pad" style="text-align:center"><b class="mono" style="font-size:20px;display:block">${p.metrics.completion}%</b><span class="fz-11 t-dim">完成率</span></div>
-              <div class="card card--flat card--pad" style="text-align:center"><b class="mono" style="font-size:20px;display:block;color:var(--brand-400)">${p.metrics.mastery}%</b><span class="fz-11 t-dim">学习完成率</span></div>
-              <div class="card card--flat card--pad" style="text-align:center"><b class="mono" style="font-size:20px;display:block;color:var(--accent-500)">${p.metrics.goal}%</b><span class="fz-11 t-dim">目标达成</span></div>
-              <div class="card card--flat card--pad" style="text-align:center"><b class="mono" style="font-size:20px;display:block;color:var(--ok)">${p.metrics.accuracy}%</b><span class="fz-11 t-dim">练习正确率</span></div>
+              <div class="card card--flat card--pad" style="text-align:center"><b class="mono" style="font-size:21px;display:block">${p.metrics.completion}%</b><span class="fz-11 t-dim">完成率</span></div>
+              <div class="card card--flat card--pad" style="text-align:center"><b class="mono" style="font-size:21px;display:block;color:var(--brand-400)">${p.metrics.mastery}%</b><span class="fz-11 t-dim">学习完成率</span></div>
+              <div class="card card--flat card--pad" style="text-align:center"><b class="mono" style="font-size:21px;display:block;color:var(--accent-500)">${p.metrics.goal}%</b><span class="fz-11 t-dim">目标达成</span></div>
+              <div class="card card--flat card--pad" style="text-align:center"><b class="mono" style="font-size:21px;display:block;color:var(--ok)">${p.metrics.accuracy}%</b><span class="fz-11 t-dim">练习正确率</span></div>
             </div>
           </div>
           <div style="padding:18px">
@@ -301,7 +301,7 @@
             body: `<p class="fz-12 t-dim" style="margin-bottom:10px">触发规则：<b>${U.esc(a.trigger)}</b></p>
               <div class="row" style="gap:10px;align-items:baseline;flex-wrap:wrap;margin:0 0 4px">
                 <span class="fz-13">「${U.esc(a.kp || a.kpId || '该知识点')}」历史正确率</span>
-                <b class="mono" style="font-size:22px;color:${lastAcc === null ? 'var(--text-3)' : mainColor}">${lastAcc === null ? '—' : lastAcc + '%'}</b>
+                <b class="mono" style="font-size:23px;color:${lastAcc === null ? 'var(--text-3)' : mainColor}">${lastAcc === null ? '—' : lastAcc + '%'}</b>
                 <span class="fz-11 t-dim">今日为止（近 ${a.trendDays || 14} 天累计）</span>
                 ${diffText ? `<span class="badge ${diffAcc > 0 ? 'badge--ok' : diffAcc < 0 ? 'badge--danger' : 'badge--outline'}">${diffText}</span>` : ''}
               </div>

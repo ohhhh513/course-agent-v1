@@ -60,7 +60,8 @@ def get_question(ctx: ToolContext, q_id: str, include_answer: bool | None = None
         },
     },
     flows=("generate_items",),
-    roles=("teacher", "admin"),          # 防抄黑名单只给出题流用，学生不可调用
+    # 防抄黑名单只给出题流用；2026-10-06 收紧后学生与管理员都不可调用
+    roles=("teacher",),
 )
 def search_similar_questions(
     ctx: ToolContext,

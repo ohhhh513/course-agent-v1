@@ -22,8 +22,9 @@
 | 数据库 | SQLite（默认） | — | 零配置、随项目启动；可改 PostgreSQL（见 `config.py`） |
 | 校验 / 序列化 | Pydantic / pydantic-settings | 2.9.2 / 2.5.2 | 请求体校验 + 配置读取 |
 | 鉴权 | python-jose + passlib[bcrypt] | 3.3.0 / 1.7.4 | JWT（HS256）+ 密码哈希 |
-| 流式输出 | sse-starlette | 2.2.1 | AI 答疑 / 出题的 SSE 流式接口 |
+| 流式输出 | sse-starlette | 2.1.3 | AI 答疑 / 出题的 SSE 流式接口（2.2.x 要求 starlette>=0.41.3，与 fastapi 0.115 冲突，故钉在 2.1.3） |
 | LLM / RAG | openai（兼容客户端）+ PyYAML + pypdf | 见 `requirements.txt` | 调用 DeepSeek；本地 RAG 向量库 |
+| MCP 导出 | mcp（官方 Python SDK） | 1.12.4 | 把同一批工具挂成 MCP server 给 Claude Desktop / Cursor；版本被 `pydantic 2.9.2` / `starlette 0.38.6` 卡死，见 `docs/部署与MCP.md` |
 
 > **为什么是 FastAPI + 原生前端？** 项目处于原型 / 对接阶段，目标是让前端用最少成本切换 mock→真实接口，并让后端聚焦在「数据真实可算」。原生 HTML/JS 无构建步骤，任何人打开即可联调；FastAPI 自带文档与异步能力，便于 LLM 流式问答。
 
@@ -257,6 +258,8 @@ git commit -m "更新基准数据库：注明本次变更内容"
 | 文档 | 内容 |
 | --- | --- |
 | **`docs/项目真实交互梳理.md`** | ★ **各模块真实实现 / 空转 / 占位逐项清单 + 现存 bug 与隐患**（接手第一份该读的） |
+| **`docs/Agent化改造-交接与阶段划分.md`** | ★ Agent 化改造（P0~P4）的交付物、验收标准、已知取舍与代码地图 |
+| **`docs/部署与MCP.md`** | ★ 生产部署 checklist（JWT_SECRET / 依赖钉版 / 备份 / 代理）+ MCP 接入与排错 |
 | `docs/README.md` | 文档导航 |
 | `docs/接口文档.md` | 全部 API 契约（Path / 请求 / 响应 / 占位标注） |
 | `docs/数据模型与字段说明.md` | 各接口 `data` 结构与前端强依赖字段路径 |

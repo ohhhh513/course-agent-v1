@@ -226,14 +226,40 @@
               box.scrollTop = box.scrollHeight;
             },
             onError: (d) => { if (isCurrent()) Toast.err('生成出错', (d && d.message) || ''); },
+            onAction: (d) => {
+              // 写操作待批准（P2c）：草稿此刻**还没有**落库，需用户在卡片上点确认
+              if (!isCurrent()) return;
+              const confirms = ((d && d.actions) || []).filter(a => a && a.kind === 'confirm');
+              if (!confirms.length) return;
+              let holder = U.$('#genConfirms', box);
+              if (!holder) {
+                holder = document.createElement('div');
+                holder.id = 'genConfirms';
+                holder.className = 'gen-confirms';
+                box.appendChild(holder);
+              }
+              holder.insertAdjacentHTML('beforeend',
+                confirms.map(a => AgentChatView.confirmCardHtml(a)).join(''));
+              AgentChatView.bindConfirms(holder);
+              box.scrollTop = box.scrollHeight;
+            },
             onDone: (d) => {
               if (!isCurrent()) return;
               this._genBusy = false;
               const progressStatus = U.$('#genProgressStatus', box);
               if (progressStatus) progressStatus.remove();
               const prog = U.$('#genProg', box);
-              if (prog) prog.textContent = (d.count || this._drafts.length) + ' 题 · 完成';
-              Toast.ok('AI 出题完成', `${d.count || 0} 道草稿已存入草稿箱`);
+              const made = d.count || this._drafts.length;
+              const pending = U.$$('#genConfirms .confirm-card.is-pending', box).length;
+              if (prog) prog.textContent = made + ' 题 · 完成';
+              if (made) {
+                Toast.ok('AI 出题完成', `${made} 道草稿已存入草稿箱`);
+              } else if (pending) {
+                // P2c：写操作要用户确认后才落库，这里不能说「已存入草稿箱」
+                Toast.info('已生成待批准动作', '在上方卡片点「确认执行」后才会写入草稿箱');
+              } else {
+                Toast.warn('本次没有产出草稿', '可查看右侧生成过程');
+              }
             },
           }).catch((e) => {
             if (!isCurrent()) return;

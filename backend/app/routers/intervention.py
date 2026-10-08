@@ -443,6 +443,10 @@ def report_list(
         # 报告按详情中的课程 ID 严格隔离；旧报告没有课程标记时不展示。
         if meta.get("courseId") != course_id:
             continue
+        # 学生自助生成的个人报告（meta.scope == "self"）不进教师端的班组归档，
+        # 它们只在 /student/reports/list 里按 userId 过滤后展示。
+        if meta.get("scope") == "self":
+            continue
         sections = detail.get("sections") or []
         start = meta.get("startDate") or fmt_dt(r.created_at, "%Y-%m-%d")
         end = meta.get("endDate") or start
@@ -708,23 +712,17 @@ def report_detail(
 
 
 # ====== 报告导出（直接返回文件流） ======
-@report_router.post("/{report_id}/export")
-def export_report(
-    report_id: str,
-    req: ExportReportReq,
-    db: Session = Depends(get_db),
-    user=Depends(get_current_user),
-):
-    """导出报告为 .pdf、.html 或 .docx，并直接交给浏览器下载"""
+def render_report_file(report, fmt: str):
+    """把一份报告渲染成下载响应（pdf / html / docx）。
+
+    教师端 `/report/{id}/export` 与学生端 `/student/reports/{id}/export` 共用，
+    两边唯一的差别是「谁能取到这份报告」（各自做归属校验），渲染逻辑只有这一份。
+    """
     import io, html as _html
-    fmt = (req.format or "docx").lower()
-
-    r = db.query(Report).filter(Report.report_id == report_id).first()
-    if not r:
-        return ok({"url": "", "format": fmt, "error": "报告不存在"})
-
-    detail = loads(r.detail_json) or {}
-    title = r.title or "学情分析报告"
+    fmt = (fmt or "docx").lower()
+    detail = loads(report.detail_json) or {}
+    title = report.title or "学情分析报告"
+    report_id = report.report_id
     sections = detail.get("sections", [])
 
     def _write_html():
@@ -880,3 +878,126 @@ def export_report(
             "format": fmt,
             "error": str(e)[:100],
         })
+
+
+# =============================================================================
+# 学生自助报告：/student/reports/*
+# 学生端生成 / 查看 / 导出**自己的**学情报告。这里**不加角色闸门**（登录即可），
+# 越权由「归属校验」挡住 —— 报告归属写在 detail_json.meta（reports 表只有
+# class_id，真实数据里恒为 NULL，本阶段不动表结构）。
+# =============================================================================
+student_report_router = APIRouter(prefix="/api/v1/student/reports", tags=["学生端报告"])
+
+
+def _load_own_report(db: Session, user, course_id: str, report_id: str):
+    """取「属于当前学生 + 当前课程」的报告；**别人的报告一律 403**。"""
+    r = db.query(Report).filter(Report.report_id == report_id).first()
+    if not r:
+        return None
+    meta = (loads(r.detail_json) or {}).get("meta") or {}
+    if meta.get("scope") != "self" or meta.get("userId") != user.user_id:
+        raise HTTPException(status_code=403, detail="无权访问该报告")
+    if meta.get("courseId") != course_id:
+        raise HTTPException(status_code=403, detail="该报告不属于当前课程")
+    return r
+
+
+@student_report_router.post("/generate")
+def generate_my_report(
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user),
+    course_id: str = Depends(get_current_course_id),
+):
+    """生成当前登录学生本人的学情报告（全部真实统计，不调模型）。"""
+    from ..services.student_report import build_student_report
+
+    detail = build_student_report(db, user, course_id)
+    report = Report(
+        report_id="RP" + uuid.uuid4().hex[:12].upper(),
+        # 学生个人报告不挂班级；class_id 外键指向 classes，真实数据里本就为 NULL
+        class_id=None,
+        title=detail["title"],
+        status="ready",
+        detail_json=_json.dumps(detail, ensure_ascii=False),
+    )
+    db.add(report)
+    db.commit()
+    return ok({"reportId": report.report_id, "status": "ready", "detail": detail})
+
+
+@student_report_router.get("/list")
+def my_report_list(
+    page: int = Query(1),
+    size: int = Query(20),
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user),
+    course_id: str = Depends(get_current_course_id),
+):
+    """只列出「本人 + 当前课程」的报告；同表里其他人的报告不会出现。"""
+    rows = db.query(Report).order_by(Report.created_at.desc()).all()
+    items = []
+    for r in rows:
+        detail = loads(r.detail_json) or {}
+        meta = detail.get("meta") or {}
+        if meta.get("scope") != "self" or meta.get("userId") != user.user_id:
+            continue
+        if meta.get("courseId") != course_id:
+            continue
+        sections = detail.get("sections") or []
+        items.append({
+            "reportId": r.report_id, "title": r.title, "status": r.status,
+            "createdAt": fmt_dt(r.created_at, "%Y-%m-%d"),
+            "scope": meta.get("chapter") or "全课程",
+            "period": meta.get("period") or "",
+            "creator": meta.get("generator") or "系统",
+            "pages": len(sections) or 5,
+        })
+    total = len(items)
+    start = (page - 1) * size
+    return ok(list_response(items[start:start + size], total))
+
+
+@student_report_router.get("/{report_id}")
+def my_report_detail(
+    report_id: str,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user),
+    course_id: str = Depends(get_current_course_id),
+):
+    r = _load_own_report(db, user, course_id, report_id)
+    if not r:
+        return ok({"reportId": report_id, "detail": {"error": "报告不存在"}})
+    return ok({
+        "reportId": r.report_id, "title": r.title, "status": r.status,
+        "detail": loads(r.detail_json) or {},
+    })
+
+
+@student_report_router.post("/{report_id}/export")
+def my_report_export(
+    report_id: str,
+    req: ExportReportReq,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user),
+    course_id: str = Depends(get_current_course_id),
+):
+    """导出自己的报告（pdf / html / docx）—— 先校验归属，再走共用的渲染实现。"""
+    r = _load_own_report(db, user, course_id, report_id)
+    if not r:
+        return ok({"url": "", "format": (req.format or "docx").lower(), "error": "报告不存在"})
+    return render_report_file(r, req.format)
+
+
+# ====== 教师端报告导出（与学生端共用 render_report_file） ======
+@report_router.post("/{report_id}/export")
+def export_report(
+    report_id: str,
+    req: ExportReportReq,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    """教师端导出：把报告渲染成 .pdf / .html / .docx 直接交给浏览器下载"""
+    r = db.query(Report).filter(Report.report_id == report_id).first()
+    if not r:
+        return ok({"url": "", "format": (req.format or "docx").lower(), "error": "报告不存在"})
+    return render_report_file(r, req.format)

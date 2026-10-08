@@ -104,7 +104,7 @@
                 ${m.recommend ? '<span class="badge badge--brand" style="position:absolute;top:12px;right:12px">推荐</span>' : ''}
                 <div class="card__body">
                   <div class="todo__ico ${m.recommend ? 'todo__ico--brand' : 'todo__ico--ok'}" style="margin-bottom:10px">${icon(m.icon)}</div>
-                  <b style="font-size:14.5px;display:block">${m.name}</b>
+                  <b style="font-size:15.5px;display:block">${m.name}</b>
                   <p class="fz-12 t-dim" style="margin:5px 0 12px;line-height:1.6">${m.desc}</p>
                   <div class="row fz-12"><span class="badge badge--outline">${m.count} 题</span><span class="spacer"></span>
                     <span class="t-brand fw-6 row" style="gap:3px">开始 ${icon('arrowRight')}</span></div>
@@ -290,13 +290,13 @@
           return `
             <div style="padding:14px 0;border-bottom:1px solid var(--border)">
               <div class="row" style="align-items:center;gap:10px;margin-bottom:10px">
-                <b style="font-size:14.5px">${U.esc(ch)}</b>
+                <b style="font-size:15.5px">${U.esc(ch)}</b>
                 <span class="t-dim fz-12">${kps.length} 个可练习知识点</span>
                 <span class="spacer"></span>
                 <button class="btn btn--sm btn--outline" data-kp="__all__" data-ch="${U.esc(ch)}">整章练习</button>
               </div>
               <div class="row" style="flex-wrap:wrap;gap:8px">
-                ${kps.map(k => `<button class="btn btn--sm btn--outline" data-kp="${U.esc(k.id)}">${U.esc(k.name)}${counts ? `<span class="t-dim" style="margin-left:6px;font-size:11px">${counts[k.id] || 0} 题</span>` : ''}</button>`).join('')}
+                ${kps.map(k => `<button class="btn btn--sm btn--outline" data-kp="${U.esc(k.id)}">${U.esc(k.name)}${counts ? `<span class="t-dim" style="margin-left:6px;font-size:12px">${counts[k.id] || 0} 题</span>` : ''}</button>`).join('')}
               </div>
             </div>`;
         }).join('');
@@ -817,7 +817,7 @@
                 ${d.isKey ? '<span class="badge badge--danger">◆ 重难点</span>' : ''}
               </div>
 
-              <div class="callout" style="margin-bottom:14px"><b style="font-size:14.5px;line-height:1.7">${d.stem}</b></div>
+              <div class="callout" style="margin-bottom:14px"><b style="font-size:15.5px;line-height:1.7">${d.stem}</b></div>
               <div class="q-figure" id="wrongFig" style="margin:-6px 0 14px"></div>
 
               <h5 class="fz-12 t-dim" style="margin:0 0 6px">选项</h5>

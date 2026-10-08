@@ -347,7 +347,7 @@ const Charts = (function () {
               return `<b>${REL_REL[p.data.relation] || '关联'}关系</b><br/>${p.data.source} → ${p.data.target}`;
             }
             const d = p.data;
-            let html = `<b style="font-size:13px">${d.name}</b>`;
+            let html = `<b style="font-size:14px">${d.name}</b>`;
             if (d.mastery !== undefined) {
               html += `<br/>学习完成率：<b style="color:${d.itemStyle.color}">${d.mastery}%</b>`;
               html += `<br/>难度：${'★'.repeat(d.difficulty || 0)}`;
@@ -357,7 +357,7 @@ const Charts = (function () {
             if (d.achieve !== undefined) html += `<br/>达成度：<b>${d.achieve}%</b><br/>权重：${d.weight}%`;
             if (d.errorRate !== undefined) html += `<br/>错误率：<b style="color:${t.danger}">${d.errorRate}%</b><br/>关联知识点：${d.relatedKp} 个`;
             if (d.count !== undefined) html += `<br/>累计错题：<b>${d.count}</b> 人次`;
-            return html + `<br/><span style="color:${t.dim};font-size:11px">点击查看详情</span>`;
+            return html + `<br/><span style="color:${t.dim};font-size:12px">点击查看详情</span>`;
           }
         }),
         // 分类「区分」不再用 ECharts 原生图例：其隐藏会**移除节点**、触发 graph 系列非均匀重排
@@ -499,7 +499,7 @@ const Charts = (function () {
           const st = document.createElement('style');
           st.id = styleId;
           st.textContent = '.graph-cat-chips{position:absolute;top:10px;right:12px;z-index:6;display:flex;flex-wrap:wrap;gap:6px;max-width:62%;justify-content:flex-end}' +
-            '.graph-cat-chips .cat-chip{display:inline-flex;align-items:center;gap:5px;padding:3px 9px;border:1px solid var(--border);border-radius:999px;background:var(--surface);color:var(--text-2);font-size:11.5px;line-height:1.6;cursor:pointer;transition:border-color .15s,color .15s,opacity .15s}' +
+            '.graph-cat-chips .cat-chip{display:inline-flex;align-items:center;gap:5px;padding:3px 9px;border:1px solid var(--border);border-radius:999px;background:var(--surface);color:var(--text-2);font-size:12.5px;line-height:1.6;cursor:pointer;transition:border-color .15s,color .15s,opacity .15s}' +
             '.graph-cat-chips .cat-chip:hover{border-color:var(--brand);color:var(--text)}' +
             '.graph-cat-chips .cat-chip.is-off{opacity:.4;text-decoration:line-through}' +
             '.graph-cat-chips .cat-dot{width:9px;height:9px;border-radius:50%;flex:none}';
@@ -691,7 +691,7 @@ const Charts = (function () {
           if (p.value[2] == null) {
             return `<b>${data.studentAxis[p.value[1]] || p.value[1]}</b><br/>${data.kpAxis[p.value[0]] || p.value[0]}<br/><span style="color:var(--text-2)">未开始学习</span>`;
           }
-          return `<b>${(data.studentAxis[p.value[1]] || {}).name || data.studentAxis[p.value[1]] || p.value[1]}</b><br/>${data.kpAxis[p.value[0]] || p.value[0]}<br/>${label}：<b style="font-size:14px">${p.value[2]}%</b>`;
+          return `<b>${(data.studentAxis[p.value[1]] || {}).name || data.studentAxis[p.value[1]] || p.value[1]}</b><br/>${data.kpAxis[p.value[0]] || p.value[0]}<br/>${label}：<b style="font-size:15px">${p.value[2]}%</b>`;
         }
       }),
       grid: { left: gridLeft, right: 24, top: gridTop, bottom: 18, containLabel: false },

@@ -1,6 +1,6 @@
 id: explain
 name: 智能讲解
-roles: [student, teacher, admin]     # 谁可以用这条流（服务端按登录用户角色校验）
+roles: [student, teacher]            # 谁可以用这条流（服务端按登录用户角色校验）；管理员走 admin_ops 流，不进教学流
 persona: course_tutor
 skills:
   - explain.md
@@ -13,6 +13,12 @@ tools:
   - breakdown
   - weak_ranking
   - suggest_action
+  # 教师视角（roles=teacher，学生与管理员都看不到；见 tools/teacher_analytics.py）
+  - class_overview
+  - class_alerts
+  - student_profile
+  - kp_heatmap
+  - hot_wrong_questions
 max_steps: 6
 steps:
   - 用 resolve_topic 定位本课程的章(CH0x)与知识点(KP0xx)；text 传用户原话整句，禁止拆词或自判知识点；上下文若有 q_id 必须传入

@@ -113,6 +113,25 @@ def quiz_accuracy_by_kp(
     return out
 
 
+def overall_accuracy(db: Session, user_id: str) -> dict:
+    """某学生的整体练习正确率 —— 与逐知识点口径同源（按题去重、每题只取最近一次）。
+
+    返回 {answered, correct, accuracy, basis}；没有作答记录时 accuracy 为 None，
+    由调用方决定怎么展示，**不要在这里兜底成 0**（0 与「没做过」是两回事）。
+    """
+    records = _weighted_records(db, user_id)
+    if not records:
+        return {"answered": 0, "correct": 0, "accuracy": None,
+                "basis": "按题去重，每道题只取最近一次作答"}
+    correct = sum(1 for _q, _p, _r, ok, _c in records if ok)
+    return {
+        "answered": len(records),
+        "correct": correct,
+        "accuracy": round(correct / len(records) * 100, 1),
+        "basis": "按题去重，每道题只取最近一次作答",
+    }
+
+
 def kp_accuracy_detail(
     db: Session,
     user_id: str,

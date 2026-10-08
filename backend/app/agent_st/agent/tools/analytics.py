@@ -7,7 +7,7 @@
   模型无法指定别人的数据（越权在参数层面就不成立）。
 - **数值复用业务函数**：正确率逐题拆解走 `services.scoring.kp_accuracy_detail`
   （与页面、预警同一套口径），工具本身不做统计。
-- **只读**：这三个工具都不写库；唯一的"动作"是 `suggest_action`，
+- **只读**：这四个查询工具都不写库；唯一的"动作"是 `suggest_action`，
   它只把建议塞进 `ctx.turn['actions']`，由前端渲染成按钮、用户点击才生效。
 """
 from __future__ import annotations
@@ -17,8 +17,9 @@ from app.agent_st.agent.registry import tool
 from app.agent_st import persistence
 from app.utils import fmt_dt
 
-# 前端允许的界面白名单（与 assets/js/student/views/chat.js 的 AgentBridge 一致）
-_VIEWS = ("dashboard", "graph", "resource", "practice", "mastery", "alerts", "ai")
+# 前端允许的界面白名单（与 assets/js/student/views/chat.js::applyAction 的 VIEWS 一致）
+# report = 学生端「学情报告」页（P3 新增：可生成 / 看历史归档 / 导出 PDF·HTML）
+_VIEWS = ("dashboard", "graph", "resource", "practice", "mastery", "alerts", "ai", "report")
 _MODES = ("weak", "order", "random", "wrong")
 
 # 口径字典：内容取自各接口的真实实现（改口径时这里必须同步改）

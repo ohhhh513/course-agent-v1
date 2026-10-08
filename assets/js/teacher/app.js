@@ -19,6 +19,7 @@ const state = { classId: '' };   // 已改为课程上下文；classId 仅兼容
 const ViewFns = {
   dashboard: () => Dash.render(),
   monitor: () => Monitor.render(),
+  chat: () => TeacherChat.render(),
   analysis: () => Analysis.render(),
   question: () => Question.render(),
   report: () => Report.render(),
@@ -113,7 +114,7 @@ window.__courseReady.then(() => {
               body: `<div class="stack" style="gap:8px;text-align:center;padding:10px 0">
                 <div class="fz-14 fw-6">${U.esc(r.name)}</div>
                 <div class="fz-12 t-dim">把邀请码分享给学生，他们凭码加入：</div>
-                <div style="font-size:26px;font-weight:700;letter-spacing:4px;color:var(--brand)">${U.esc(r.inviteCode)}</div>
+                <div style="font-size:27px;font-weight:700;letter-spacing:4px;color:var(--brand)">${U.esc(r.inviteCode)}</div>
                 <div class="fz-11 t-dim">课程 ID：${U.esc(r.courseId)}</div>
               </div>`,
               footer: `<button class="btn btn--primary" data-close>我知道了</button>`,
@@ -158,7 +159,7 @@ courseSel.addEventListener('change', () => {
         body: `<div class="stack" style="gap:8px;text-align:center;padding:12px 0">
           <div class="fz-14 fw-6">${U.esc(c.name)}</div>
           <div class="fz-12 t-dim">把邀请码分享给学生，他们凭码加入：</div>
-          <div style="font-size:28px;font-weight:700;letter-spacing:6px;color:var(--brand)">${U.esc(c.inviteCode)}</div>
+          <div style="font-size:29px;font-weight:700;letter-spacing:6px;color:var(--brand)">${U.esc(c.inviteCode)}</div>
           <div class="fz-11 t-dim">课程 ID：${U.esc(c.courseId)}</div>
           <p class="fz-11 t-dim" style="margin-top:8px">创建课程成功弹窗里也会展示一次；之后随时点顶栏「邀请码」查看。</p>
         </div>`,

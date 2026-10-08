@@ -61,10 +61,10 @@
           </div>
           <div class="card">
             <div class="card__body">
-              <div class="row" style="gap:7px;align-items:center;font-size:12.5px;font-weight:650;color:var(--text-2)">
+              <div class="row" style="gap:7px;align-items:center;font-size:13.5px;font-weight:650;color:var(--text-2)">
                 ${icon('info')} 预警是怎么算的
               </div>
-              <ul style="margin:9px 0 0;padding-left:18px;font-size:12px;color:var(--text-3);line-height:1.85">
+              <ul style="margin:9px 0 0;padding-left:18px;font-size:13px;color:var(--text-3);line-height:1.85">
                 <li>按<b>知识点</b>统计正确率：每道题只取<b>最近一次</b>作答，避免重复练习拉偏。</li>
                 <li>题目挂多个知识点时：<b>主知识点权重 1.0、其它标签权重 0.3</b> —— 做错会同时影响这些知识点，但主知识点责任更重。</li>
                 <li><b>红</b> = 正确率 &lt; 50%；<b>黄</b> = 50%~60%；<b>≥60% 即达标</b>，预警会自动解除。</li>

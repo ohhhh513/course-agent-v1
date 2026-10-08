@@ -169,13 +169,19 @@ window.API = (function () {
    *                           各回调接收解析后的 data 对象
    * @returns {Promise<void>} 流结束后 resolve；HTTP 非 200 时 reject
    */
-  function streamRequest(method, path, payload, handlers) {
+  function streamRequest(method, path, payload, handlers, opts) {
     const h = handlers || {};
     let url = config.baseURL + path;
+    // FormData（带附件上传）：Content-Type 必须交给浏览器自动生成（含 multipart boundary）
+    const isForm = (typeof FormData !== 'undefined') && (payload instanceof FormData);
+    const headers = { Authorization: config.token, 'X-Course-Id': config.activeCourseId };
+    if (!isForm) headers['Content-Type'] = 'application/json';
     return fetch(url, {
       method: method || 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: config.token, 'X-Course-Id': config.activeCourseId },
-      body: JSON.stringify(payload || {})
+      headers: headers,
+      body: isForm ? payload : JSON.stringify(payload || {}),
+      // 「停止生成」：调用方传入 AbortSignal，中止时本 Promise 以 AbortError 拒绝
+      signal: (opts && opts.signal) || undefined
     }).then(res => {
       if (!res.ok || !res.body) return res.json().then(r => { throw new Error(r.message || ('HTTP ' + res.status)); });
       const reader = res.body.getReader();
@@ -255,6 +261,52 @@ window.API = (function () {
     updateUser: (userId, p) => request('PUT', `/admin/users/${userId}`, p),
     /** DELETE /admin/users/{userId}  删除账号（级联清理个人数据） */
     deleteUser: (userId, p) => request('DELETE', `/admin/users/${userId}`, p || {}),
+    /** POST /admin/users/batch-delete  批量删除账号 {userIds:[]}；逐行结果（成功/被拒/失败） */
+    batchDeleteUsers: (p) => request('POST', '/admin/users/batch-delete', p || {}),
+    /** GET /admin/users/import/template  下载导入模板（role=student/teacher, format=xlsx/docx） */
+    importTemplate: (p) => download('GET', '/admin/users/import/template', p),
+    /** POST /admin/users/import/preview  解析校验预览（FormData: file, role, defaultPassword） */
+    importPreview: (fd) => request('POST', '/admin/users/import/preview', fd),
+    /** POST /admin/users/import/commit  真正落库（FormData: file, role, defaultPassword, rowIndexes?） */
+    importCommit: (fd) => request('POST', '/admin/users/import/commit', fd),
+  };
+
+  // ---- 管理员智能体（平台治理流）：/admin/agent/* ----
+  // 与 /ai 的答疑同一套 SSE 事件协议，差异：仅管理员可用、不依赖课程上下文、flow=admin_ops。
+  const adminAgent = {
+    /**
+     * POST /admin/agent/chat/stream  平台治理流式答疑（事件与 ai.chatStream 一致）
+     * 带附件时改发 multipart/form-data（question / sessionId / files[]）；
+     * 无附件仍是 JSON —— 后端两种形态都收。
+     */
+    chatStream: (p, handlers, opts) => {
+      const files = (p && p.files) || [];
+      if (files.length) {
+        const fd = new FormData();
+        fd.append('question', p.question || '');
+        fd.append('sessionId', p.sessionId || 'new');
+        files.forEach(f => fd.append('files', f, f.name));
+        return streamRequest('POST', '/admin/agent/chat/stream', fd, handlers, opts);
+      }
+      return streamRequest('POST', '/admin/agent/chat/stream', p, handlers, opts);
+    },
+    /** POST /admin/agent/chat/stop  停止平台治理会话正在进行的生成（协作式「停止思考」） */
+    stopChat: (p) => request('POST', '/admin/agent/chat/stop', p || {}, () => ({ stopped: true })),
+    /** GET /admin/agent/sessions  当前管理员的治理会话列表（不含课程会话） */
+    sessions: () => request('GET', '/admin/agent/sessions'),
+    /** GET /admin/agent/sessions/{sessionId}/messages  治理会话消息（含 toolLog） */
+    messages: (p) => request('GET', `/admin/agent/sessions/${p.sessionId || 'new'}/messages`),
+    /** DELETE /admin/agent/sessions/{sessionId}  删除自己的治理会话 */
+    deleteSession: (p) => request('DELETE', `/admin/agent/sessions/${p.sessionId}`),
+    /**
+     * POST /admin/agent/actions/{actionId}/approve  确认执行治理写操作（如账号批量录入；P2c）
+     * 参数以服务端落库的那份为准，前端只传 actionId。
+     */
+    approveAction: (p) => request('POST', `/admin/agent/actions/${p.actionId}/approve`, {},
+      () => ({ actionId: p.actionId, status: 'executed', idempotent: false, result: { created: 0 } })),
+    /** POST /admin/agent/actions/{actionId}/reject  拒绝治理写操作：只改状态，无副作用 */
+    rejectAction: (p) => request('POST', `/admin/agent/actions/${p.actionId}/reject`, {},
+      () => ({ actionId: p.actionId, status: 'rejected', idempotent: false })),
   };
 
   const auth = {
@@ -383,7 +435,26 @@ window.API = (function () {
     messages: (p) => request('GET', '/student/messages', p, () => ({ total: M().messages.length, list: M().messages })),
 
     /** PUT /student/messages/{msgId}/read  标记消息已读 */
-    readMessage: (p) => request('PUT', `/student/messages/${p.msgId}/read`, p, () => ({ msgId: p.msgId, read: true }))
+    readMessage: (p) => request('PUT', `/student/messages/${p.msgId}/read`, p, () => ({ msgId: p.msgId, read: true })),
+
+    /**
+     * 学生自助报告（/student/reports/*）
+     * 生成 / 列表 / 详情 / 导出都只作用于**当前登录学生自己**的报告；
+     * 与教师端的 report.* 不是同一组接口（教师前缀学生一律 403）。
+     */
+    report: {
+      /** POST /student/reports/generate  按真实学情统计生成自己的报告 */
+      generate: () => request('POST', '/student/reports/generate', {}),
+
+      /** GET /student/reports/list  本人 + 当前课程的报告归档 */
+      list: (p) => request('GET', '/student/reports/list', p, () => ({ total: 0, list: [] })),
+
+      /** GET /student/reports/{reportId}  报告详情（不是自己的报告返回 403） */
+      detail: (p) => request('GET', '/student/reports/' + p.reportId, p),
+
+      /** POST /student/reports/{reportId}/export  导出 pdf | html */
+      exportReport: (p) => download('POST', `/student/reports/${p.reportId}/export`, p)
+    }
   };
 
   /* ======================================================================
@@ -414,10 +485,39 @@ window.API = (function () {
      * handlers: onMeta({sessionId,messageId}) / onToolStart / onToolEnd /
      *           onContent({delta}) / onCitations({items}) / onDone({outOfScope,demo})
      */
-    chatStream: (p, handlers) => streamRequest('POST', '/ai/chat/stream', p, handlers),
+    /**
+     * POST /ai/chat/stream  答疑流式（学生 / 教师）
+     * 带附件时改发 multipart/form-data（question / sessionId / files[]）；
+     * 无附件仍是 JSON —— 后端两种形态都收。
+     */
+    chatStream: (p, handlers, opts) => {
+      const files = (p && p.files) || [];
+      if (files.length) {
+        const fd = new FormData();
+        fd.append('question', p.question || '');
+        fd.append('sessionId', p.sessionId || 'new');
+        files.forEach(f => fd.append('files', f, f.name));
+        return streamRequest('POST', '/ai/chat/stream', fd, handlers, opts);
+      }
+      return streamRequest('POST', '/ai/chat/stream', p, handlers, opts);
+    },
+
+    /** POST /ai/chat/stop  停止当前会话正在进行的生成（协作式「停止思考」） */
+    stopChat: (p) => request('POST', '/ai/chat/stop', p || {}, () => ({ stopped: true })),
 
     /** GET /agent/status  智能体运行状态（live/demo 与模型信息） */
     agentStatus: (p) => request('GET', '/agent/status', p, () => ({ mode: 'demo' })),
+
+    /**
+     * POST /agent/actions/{actionId}/approve  确认执行 Agent 提出的写操作（P2c）
+     * 参数以服务端落库的那份为准，前端只传 actionId。
+     */
+    approveAction: (p) => request('POST', `/agent/actions/${p.actionId}/approve`, {},
+      () => ({ actionId: p.actionId, status: 'executed', idempotent: false, result: { draft_id: 'QD-MOCK' } })),
+
+    /** POST /agent/actions/{actionId}/reject  拒绝待批准动作（P2c）：只改状态，无副作用 */
+    rejectAction: (p) => request('POST', `/agent/actions/${p.actionId}/reject`, {},
+      () => ({ actionId: p.actionId, status: 'rejected', idempotent: false })),
 
     /** POST /ai/feedback  对回答点赞/点踩，用于知识库迭代 */
     feedback: (p) => request('POST', '/ai/feedback', p, () => ({ accepted: true }))
@@ -497,7 +597,6 @@ window.API = (function () {
         <p>你可以：</p>
         <ol>
           <li>换一个更贴近课程知识点的问法（例如指定章节或知识点名称）；</li>
-          <li>点击下方「转人工」，我会把这个问题连同你的学情一起提交给李文博老师；</li>
           <li>或者从这些和你薄弱点相关的问题开始：<strong>Dijkstra 为什么不能处理负权边</strong>、<strong>循环队列为什么少用一个单元</strong>。</li>
         </ol>`,
       citations: [], outOfScope: true, sourceCount: 0
@@ -820,5 +919,5 @@ window.API = (function () {
     join: (p) => request('POST', '/course/join', p),
   };
 
-  return { config, request, download, setActiveCourse, course, auth, admin, graph, student: stu, ai, practice, teacher: tea, analysis, question, intervention, report };
+  return { config, request, download, setActiveCourse, course, auth, admin, adminAgent, graph, student: stu, ai, practice, teacher: tea, analysis, question, intervention, report };
 })();

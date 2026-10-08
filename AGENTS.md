@@ -69,12 +69,19 @@ backend\.venv\Scripts\python.exe -m py_compile <改过的.py>
 REM 2. 工具与角色权限自检
 backend\.venv\Scripts\python.exe dev_tools\check_agent_roles.py
 
-REM 3. 教师端路由闸门自检
+REM 3. 路由角色闸门自检（教师端前缀 + /agent/ingest/*）
 backend\.venv\Scripts\python.exe dev_tools\check_route_roles.py
 
 REM 4. 智能答疑冒烟（真调模型，默认在库副本上跑）
 backend\.venv\Scripts\python.exe dev_tools\smoke_agent_sdk.py --runtime sdk --user stu07 --question "我现在有哪些预警？"
+
+REM 5. MCP 导出端到端（真实 MCP 客户端拉起 server 子进程；需要装了 mcp 的解释器）
+backend\.venv\Scripts\python.exe dev_tools\check_mcp_tools.py
 ```
+
+- 没有 `backend\.venv` 时，用系统 Python 3.11 装 `backend/requirements.txt` 也能跑通 1–3。
+- 新克隆的仓库**没有** `backend/app/data/course_agent.db`（被 `.gitignore` 排除），
+  跑 2/3/4 之前先放一份演示库进去（详见 `docs/Agent化改造-交接与阶段划分.md` 的 7.2）。
 
 - 动了教师端接口：再用教师账号（`wangjg/123456`）跑一次。
 - 动了前端：在浏览器里实测，并说明点了哪里、看到什么（含硬刷新，避免旧缓存误导）。
@@ -98,10 +105,10 @@ backend\.venv\Scripts\python.exe dev_tools\smoke_agent_sdk.py --runtime sdk --us
 | P0 | 运行层接入 OpenAI Agents SDK（`AGENT_RUNTIME` 可切换，事件契约不变） | 已完成 |
 | P1 | 学情只读工具 + 界面动作建议（学生端一键跳靶向练习） | 已完成 |
 | P2a | 角色权限基建 + 教师端路由闸门 | 已完成 |
-| P2b | 教师视角工具（看全班） | 待做（建议下一个做） |
-| P2c | 写操作审批闸门（pending → approved → executed） | 待做 |
-| P3 | 前端体验：确认卡片、学生自助报告 | 待做 |
-| P4 | MCP 导出 + 服务器部署 | 待做 |
+| P2b | 教师视角工具（看全班）+ 教师端答疑页 | 已完成 |
+| P2c | 写操作审批闸门（pending → approved → executed） | 已完成 |
+| P3 | 前端体验：确认卡片区分、学生自助报告 | 已完成 |
+| P4 | MCP 导出 + 服务器部署 | 已完成 |
 
 每一步的目标、交付物、验收标准、风险都写在 `docs/Agent化改造-交接与阶段划分.md` 第 5 节。
 **不确定就先问，不要猜着改后端。**

@@ -498,20 +498,20 @@
         let emptyHtml;
         if (!items.length && this.currentMode === 'kp') {
           emptyHtml = `<div style="text-align:center;padding:30px">
-            <div style="font-size:36px;margin-bottom:8px">📭</div>
+            <div style="font-size:37px;margin-bottom:8px">📭</div>
             <p class="fz-14 fw-6">「${U.esc(this.currentKpName)}」暂未挂载学习资源</p>
             <p class="fz-12 t-dim" style="margin-top:4px">该知识点可能暂无上传资源，尝试切换其他知识点</p>
             <button class="btn btn--sm btn--outline" id="clearKpFilter" style="margin-top:10px">查看全部资源</button>
           </div>`;
         } else if (!items.length && this.currentMode === 'chapter') {
           emptyHtml = `<div style="text-align:center;padding:30px">
-            <div style="font-size:36px;margin-bottom:8px">📭</div>
+            <div style="font-size:37px;margin-bottom:8px">📭</div>
             <p class="fz-14 fw-6">「${U.esc(this.currentChapter)}」暂未匹配到资源</p>
             <button class="btn btn--sm btn--outline" id="clearKpFilter" style="margin-top:10px">查看全部资源</button>
           </div>`;
         } else if (!items.length && this.currentMode === 'other') {
           emptyHtml = `<div style="text-align:center;padding:30px">
-            <div style="font-size:36px;margin-bottom:8px">📚</div>
+            <div style="font-size:37px;margin-bottom:8px">📚</div>
             <p class="fz-14 fw-6">暂未收集到课外教材类资源</p>
             <button class="btn btn--sm btn--outline" id="clearKpFilter" style="margin-top:10px">查看全部资源</button>
           </div>`;

@@ -82,7 +82,7 @@ def _collect_references(ctx: ToolContext) -> list[dict]:
         ],
     },
     flows=("generate_items",),
-    roles=("teacher", "admin"),
+    roles=("teacher",),  # 2026-10-06 收紧：管理员改用平台治理工具，不再共享出题流,
 )
 def submit_item_plan(
     ctx: ToolContext,
@@ -128,7 +128,7 @@ def submit_item_plan(
         "required": ["question"],
     },
     flows=("generate_items",),
-    roles=("teacher", "admin"),
+    roles=("teacher",),  # 2026-10-06 收紧：管理员改用平台治理工具，不再共享出题流,
 )
 def check_novelty(ctx: ToolContext, question):
     parsed = _parse_question(question)

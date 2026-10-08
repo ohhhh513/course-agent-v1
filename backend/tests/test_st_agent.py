@@ -528,7 +528,10 @@ def test_runtime_demo_explain(st_env):
     assert done.get("out_of_scope") is False
 
 
-def test_runtime_demo_generate_writes_draft(st_env):
+def test_runtime_demo_generate_enqueues_pending_action(st_env):
+    """演示模式的出题流同样要过写操作闸门（P2c）：
+    不再直接写草稿、不再推 draft 事件，而是透出一条 kind=confirm 的待批准动作。
+    """
     from app.agent_st.agent import runtime
     from app.agent_st import persistence
     from app.models.agent_st import STQuestionDraft
@@ -538,16 +541,84 @@ def test_runtime_demo_generate_writes_draft(st_env):
         user_id="U_TEST2", course_id=COURSE_A,
         context={"courseId": COURSE_A, "kp_ids": [KP_A1], "example_question_ids": ["QTEST_A1"]},
     ))
-    draft_events = [e for e in events if e["type"] == "draft"]
-    assert draft_events, "demo 出题流应产出 draft 事件"
-    d = draft_events[0]
-    assert d["draft_id"].startswith("QD")
-    assert str(d["payload"]["q_id"]).startswith("AI")
+    assert not [e for e in events if e["type"] == "draft"], "未确认前不应产生草稿事件"
+
+    action_events = [e for e in events if e["type"] == "action"]
+    assert action_events, "demo 出题流应透出待批准动作事件"
+    confirms = [a for a in action_events[0]["actions"] if a.get("kind") == "confirm"]
+    assert confirms, "应有 kind=confirm 的待批准动作"
+    assert confirms[0]["tool"] == "save_question_draft"
+    assert confirms[0]["status"] == "pending"
+    assert str(confirms[0]["actionId"]).startswith("AC")
 
     db = persistence.SessionLocal()
-    row = db.query(STQuestionDraft).filter(STQuestionDraft.draft_id == d["draft_id"]).first()
-    assert row is not None and row.user_id == "U_TEST2" and row.course_id == COURSE_A
-    db.close()
+    try:
+        assert db.query(STQuestionDraft).count() == 0, "未确认前不得写入草稿"
+    finally:
+        db.close()
+
+
+def test_write_tool_enqueues_pending_instead_of_writing(st_env):
+    """P2c 写操作闸门：registry.execute 对写工具只排队、不落库；
+    带 approval_replay 标记（approve 接口走的路）时才真正写入。
+    """
+    from app.agent_st import persistence
+    from app.agent_st.agent import registry
+    from app.agent_st.agent.context import ToolContext
+    from app.agent_st.agent.store import AgentStore
+    from app.agent_st.agent.tools import (analytics, bank, draft, plan, rag,  # noqa: F401
+                                          teacher_analytics, topic, validate)
+    from app.agent_st.rag.novelty import question_fingerprint
+    from app.models.agent_st import STQuestionDraft
+
+    def count() -> int:
+        db = persistence.SessionLocal()
+        try:
+            return db.query(STQuestionDraft).count()
+        finally:
+            db.close()
+
+    payload = _valid_payload()
+    store = AgentStore(user_id="U_APPR", course_id=COURSE_A)
+    ctx = ToolContext(store=store, flow_id="generate_items",
+                      extra={"courseId": COURSE_A, "role": "teacher"}, user_id="U_APPR")
+
+    # 前置未过：既不排队也不落库
+    r0 = registry.execute("save_question_draft", {"question": payload}, ctx)
+    assert r0.get("pending") is not True and r0.get("ok") is False
+    assert not ctx.turn.get("pending_actions")
+
+    # 补齐构思与查重后：排成待批准动作，但**没有**落库
+    plan_result = registry.execute("submit_item_plan", {
+        "asked_target": "考查知识点 KP001 的基本概念",
+        "instance_sketch": "构造一个小规模实例来说明该知识点",
+        "solution_trace": "逐步解题过程占位：第一步确定边界条件；第二步按定义逐步推导；"
+                          "第三步代入具体数值验证并得出最终结论。",
+        "correct_answer_content": "B",
+        "distractor_rationale": "A 混淆定义，C 忽略边界，D 计算口径错误",
+        "change_note": "相对对照题更换了实例与选项设计",
+    }, ctx)
+    assert plan_result.get("ok") is True, plan_result
+    ctx.turn["last_novelty"] = {"ok": True, "errors": [],
+                                "fingerprint": question_fingerprint(payload)}
+
+    before = count()
+    r1 = registry.execute("save_question_draft", {"question": payload}, ctx)
+    assert r1.get("pending") is True, r1
+    assert str(r1.get("actionId") or "").startswith("AC")
+    assert count() == before, "排队阶段不能写库"
+    action = ctx.turn["pending_actions"][0]
+    assert action["status"] == "pending" and action["tool"] == "save_question_draft"
+
+    # 回放（approve 接口走的路）：才真正写入
+    replay = ToolContext(store=store, flow_id="generate_items",
+                         extra={"courseId": COURSE_A, "role": "teacher"}, user_id="U_APPR")
+    replay.turn["approval_replay"] = True
+    r2 = registry.execute("save_question_draft",
+                          {"question": action["args"]["question"]}, replay)
+    assert r2.get("ok") is True, r2
+    assert str(r2.get("draft_id") or "").startswith("QD")
+    assert count() == before + 1
 
 
 def test_session_isolation_between_users(st_env):
