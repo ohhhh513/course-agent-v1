@@ -4,7 +4,7 @@
 删除时按外键与业务表级联清理个人数据，并保护课程 owner。
 """
 from fastapi import APIRouter, Depends, Body, UploadFile, File, Form, Request, HTTPException
-from fastapi.responses import StreamingResponse, JSONResponse
+from fastapi.responses import FileResponse, StreamingResponse, JSONResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from typing import Optional, List
@@ -35,12 +35,12 @@ from ..services.account_import import (MAX_ASSIST_ROWS,
                                        validate_records as _validate_records)
 
 
-# ===================== 批量导入（xlsx / docx）=====================
+# ===================== 批量导入（xlsx / docx / csv / txt）=====================
 async def _read_import_file_async(file: UploadFile):
     filename = file.filename or "upload"
     ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
-    if ext not in ("xlsx", "docx"):
-        return None, f"不支持的文件类型：{ext}。仅支持 .xlsx / .docx（旧版 .doc 请另存为 .docx 或 .xlsx）"
+    if ext not in ("xlsx", "docx", "csv", "txt"):
+        return None, f"不支持的文件类型：{ext}。支持 .xlsx / .docx / .csv / .txt（旧版 .doc 请另存为 .docx 或 .xlsx）"
     content = await file.read()
     if len(content) > 10 * 1024 * 1024:
         return None, "文件过大（上限 10MB）"
@@ -232,8 +232,12 @@ def delete_user(
 
     username, role = user.username, user.role
     try:
+        from ..services.chat_attachments import delete_chat_attachments, user_session_attachment_ids
+
+        attachment_ids = user_session_attachment_ids(db, user_id)
         deleted = delete_user_cascade(db, user)
         db.commit()
+        delete_chat_attachments(attachment_ids)
     except Exception as e:
         db.rollback()
         return fail(f"删除失败：{e}", 500)
@@ -276,8 +280,12 @@ def batch_delete_users(
                           "status": "refused", "reason": reason})
             continue
         try:
+            from ..services.chat_attachments import delete_chat_attachments, user_session_attachment_ids
+
+            attachment_ids = user_session_attachment_ids(db, uid)
             stats = delete_user_cascade(db, user)
             db.commit()
+            delete_chat_attachments(attachment_ids)
             deleted += 1
             items.append({"userId": uid, "username": user.username, "role": user.role,
                           "status": "deleted", "deleted": stats})
@@ -449,7 +457,7 @@ async def admin_agent_chat_stream(request: Request, admin: User = Depends(requir
       - multipart/form-data：question / sessionId / files[]（可选多个附件）。
 
     附件语义 = 「附到当前问题」：服务端抽取纯文本注入**本轮**模型输入，
-    不落库正文、不进知识库；消息上只留 {kind:'attach'} 标记（tool_log）用于历史回显。
+    不落库正文、不进知识库；消息的 tool_log 只留附件引用及名称、MIME、大小元数据用于历史预览和恢复。
     """
     from sse_starlette.sse import EventSourceResponse
     from starlette.concurrency import run_in_threadpool
@@ -481,6 +489,12 @@ async def admin_agent_chat_stream(request: Request, admin: User = Depends(requir
         # 不像账号表 / 解析失败就静默跳过，普通附件问答不受影响；
         # 解析结果只放在服务端 extra（**不进提示词、不落库、不写正文**），
         # 由账号导入工具在模型调用时读取，最终随「待批准动作」参数落 tool_log。
+        from ..services.chat_attachments import ChatAttachmentStorageError, persist_chat_uploads
+        try:
+            persist_chat_uploads(raw_uploads, attachments)
+        except ChatAttachmentStorageError:
+            return JSONResponse(status_code=500, content=fail("附件保存失败，请重新上传"))
+
         for name, data in raw_uploads:
             try:
                 rows = await run_in_threadpool(rows_from_upload, name, data)
@@ -573,6 +587,27 @@ def admin_agent_sessions(db: Session = Depends(get_db), admin: User = Depends(re
     return ok({"total": len(items), "list": items})
 
 
+@router.get("/agent/recommendation-context")
+def admin_agent_recommendation_context(
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin),
+):
+    """Return aggregate platform signals for this admin's personalized suggestions."""
+    from ..agent_st import persistence
+    from ..agent_st.agent.llm import chat_available
+
+    return ok({
+        "studentAccounts": db.query(User).filter(User.role == "student").count(),
+        "teacherAccounts": db.query(User).filter(User.role == "teacher").count(),
+        "courses": db.query(persistence.Course).count(),
+        "questions": db.query(persistence.Question).count(),
+        "resources": db.query(persistence.Resource).count(),
+        "knowledgePoints": db.query(persistence.KpDetail).count(),
+        "alerts": db.query(persistence.Alert).count(),
+        "assistantMode": "live" if chat_available() else "demo",
+    })
+
+
 @router.get("/agent/sessions/{session_id}/messages")
 def admin_agent_messages(
     session_id: str,
@@ -596,6 +631,30 @@ def admin_agent_messages(
     return ok(items)
 
 
+@router.get("/agent/sessions/{session_id}/attachments/{attachment_id}")
+def admin_agent_attachment(
+    session_id: str,
+    attachment_id: str,
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin),
+):
+    """Return an attachment referenced by this administrator's platform session."""
+    from ..services.chat_attachments import find_session_attachment, resolve_chat_attachment
+
+    if not _own_admin_session(db, admin, session_id):
+        return JSONResponse(status_code=404, content=fail("会话不存在", 404))
+    attachment = find_session_attachment(db, session_id, attachment_id)
+    path = resolve_chat_attachment(attachment_id) if attachment else None
+    if not attachment or not path:
+        return JSONResponse(status_code=404, content=fail("附件不存在或已清理", 404))
+    return FileResponse(
+        path,
+        media_type=attachment.get("mimeType") or "application/octet-stream",
+        filename=attachment.get("name") or "attachment",
+        headers={"Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"},
+    )
+
+
 @router.delete("/agent/sessions/{session_id}")
 def admin_agent_delete_session(
     session_id: str,
@@ -606,9 +665,13 @@ def admin_agent_delete_session(
     s = _own_admin_session(db, admin, session_id)
     if not s:
         return fail("会话不存在", 404)
+    from ..services.chat_attachments import delete_chat_attachments, session_attachment_ids
+
+    attachment_ids = session_attachment_ids(db, session_id)
     db.query(ChatMessage).filter(ChatMessage.session_id == session_id).delete()
     db.delete(s)
     db.commit()
+    delete_chat_attachments(attachment_ids)
     return ok({"sessionId": session_id, "deleted": True})
 
 

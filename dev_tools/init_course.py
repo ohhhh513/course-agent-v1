@@ -149,6 +149,22 @@ def upload_resource(api: Api, item: dict, kp_name_to_id: dict, ch_name_to_id: di
     fpath = resolve_path(item["file"])
     if not fpath.is_file():
         raise FileNotFoundError(f"资源文件不存在: {fpath}")
+    ext = fpath.suffix.lower()
+    supported_by_type = {
+        "doc": {".pdf", ".doc", ".docx", ".txt"},
+        "ppt": {".pdf", ".ppt", ".pptx"},
+        "video": {".mp4", ".mov", ".webm", ".mkv"},
+    }
+    resource_type = str(item.get("resourceType") or "").strip().lower()
+    if not resource_type:
+        resource_type = (
+            "video" if ext in supported_by_type["video"]
+            else "ppt" if ext in {".ppt", ".pptx"}
+            else "doc" if ext in supported_by_type["doc"]
+            else ""
+        )
+    if resource_type not in supported_by_type or ext not in supported_by_type[resource_type]:
+        raise ValueError(f"资源类型与文件格式不匹配: {fpath.name} ({resource_type or '未选择'})")
     chapter = item.get("chapter") or ""
     ch_id = ch_name_to_id.get(chapter, "")
     kp_names = item.get("kps") or []
@@ -156,6 +172,7 @@ def upload_resource(api: Api, item: dict, kp_name_to_id: dict, ch_name_to_id: di
     primary = kp_ids[0] if kp_ids else ""
     primary_name = kp_names[0] if kp_names else ""
     fields = {
+        "resourceType": resource_type,
         "title": item.get("title") or fpath.stem,
         "chapterId": ch_id,
         "chapter": chapter,

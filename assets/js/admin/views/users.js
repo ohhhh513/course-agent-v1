@@ -297,8 +297,8 @@ const AdminUsers = {
         body: `
           <div class="stack" style="gap:14px">
             <div class="callout callout--info">当前角色：<b>${S.role === 'student' ? '学生' : '教师'}</b>。将解析文件并预览，不会立即写入。</div>
-            <label class="stack" style="gap:4px"><span class="fz-12 t-dim">选择文件（.xlsx / .docx）</span>
-              <input class="input" id="impFile" type="file" accept=".xlsx,.docx"></label>
+            <label class="stack" style="gap:4px"><span class="fz-12 t-dim">选择文件（.xlsx / .docx / .csv / .txt）</span>
+              <input class="input" id="impFile" type="file" accept=".xlsx,.docx,.csv,.txt"></label>
             <label class="stack" style="gap:4px"><span class="fz-12 t-dim">统一初始密码（可选；填写后覆盖文件中的密码列，至少 6 位）</span>
               <input class="input" id="impPwd" type="text" placeholder="留空则使用文件密码列" autocomplete="new-password"></label>
           </div>`,

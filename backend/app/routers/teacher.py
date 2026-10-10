@@ -6,9 +6,11 @@ import json
 import random
 import re
 import uuid
+import shutil
 from datetime import datetime, timedelta, timezone
 from collections import defaultdict
 from fastapi import APIRouter, Depends, Query, Body, Form, UploadFile, File, HTTPException, BackgroundTasks
+from starlette.concurrency import run_in_threadpool
 from sqlalchemy.orm import Session
 from sqlalchemy import func, desc
 from pydantic import BaseModel
@@ -31,11 +33,13 @@ from ..utils import (
     fmt_dt,
 )
 from ..media_utils import (
-    BASE_DIR, COVERS_DIR, mp4_duration, pdf_pages, pptx_pages,
+    BASE_DIR, COVERS_DIR, mp4_duration, pdf_pages,
     guess_type, chapter_id_of, parse_title, save_upload_file, generate_cover,
     resource_url, res_url, url_to_path, safe_filename, cleanup_empty_dirs,
-    DEFAULT_COURSE_ID,
+    DEFAULT_COURSE_ID, validate_resource_upload, ResourceValidationUnavailable,
+    presentation_preview_url,
 )
+from ..services.presentation_preview import convert_presentation_upload, PresentationConversionError
 from ..routers.practice import _calc_question_stats
 
 router = APIRouter(prefix="/api/v1/teacher", tags=["教师端"],
@@ -1990,6 +1994,38 @@ class ImportQuestionReq(BaseModel):
     questions: List[dict]
 
 
+@question_router.post("/import/preview")
+async def preview_question_import(
+    text: str = Form(""), questions: str = Form(""), file: UploadFile | None = File(None),
+    chapterId: str = Form(""), kpIds: str = Form("[]"),
+    db: Session = Depends(get_db), user: User = Depends(get_current_user),
+    course_id: str = Depends(get_current_course_id),
+):
+    """只读解析、校验并返回可编辑预览，绝不把题目写入数据库。"""
+    from ..services.question_preview import file_questions, preview_questions, parse_question_text
+    from starlette.concurrency import run_in_threadpool
+    try:
+        data = json.loads(questions) if questions else None
+        if file:
+            content = await file.read(10 * 1024 * 1024 + 1)
+            data = await run_in_threadpool(file_questions, file.filename or "", content)
+        if data is None:
+            data = parse_question_text(text)
+        tags = json.loads(kpIds)
+        if not isinstance(tags, list) or len(tags) > 100 or not all(isinstance(k, str) for k in tags):
+            raise ValueError("知识点标签格式不正确")
+        if not isinstance(data, list):
+            raise ValueError("题目内容必须是数组")
+        data = [{**q, **({"chapterId": chapterId} if chapterId else {}), **({"kpIds": tags} if tags else {})}
+                if isinstance(q, dict) else q for q in data]
+        result = await run_in_threadpool(preview_questions, db, course_id, text, data)
+        return ok(result)
+    except (ValueError, TypeError, UnicodeError) as exc:
+        return fail(str(exc), 400)
+    except Exception:
+        return fail("无法解析题目文件，请检查文件格式和内容后重试", 400)
+
+
 @question_router.post("/import")
 def import_questions(
     req: ImportQuestionReq,
@@ -2527,6 +2563,7 @@ def teacher_resources(
 @router.post("/resources/upload")
 async def upload_resource(
     background: BackgroundTasks,
+    resourceType: str = Form(""),
     title: str = Form(""),
     chapterId: str = Form(""),
     chapter: str = Form(""),
@@ -2546,19 +2583,15 @@ async def upload_resource(
     filename = safe_filename(file.filename or "upload.bin")
     rtype, ext = guess_type(filename)
     if not rtype:
-        return fail("仅支持 MP4/PDF/PPT/DOC 文件", 400)
-
-    res_id = _next_res_id(db)
-    dest = save_upload_file(file.file, filename, res_id, course_id)
-
-    duration = ""
-    pages = 0
-    if rtype == "video":
-        duration = mp4_duration(dest)
-    elif rtype == "ppt":
-        pages = pptx_pages(dest)
-    elif rtype == "doc":
-        pages = pdf_pages(dest) if ext == ".pdf" else 0
+        return fail("仅支持教材文献、课件或教学视频文件。", 400)
+    try:
+        validation_error = validate_resource_upload(file.file, filename, resourceType)
+    except ResourceValidationUnavailable as exc:
+        return fail(str(exc), 503)
+    if validation_error:
+        return fail(validation_error, 400)
+    # PDF 既可归入教材文献，也可由教师选择归入课件；以校验后的所选类别保存。
+    rtype = resourceType
 
     title = title.strip() or parse_title(filename)
     name_map = _kp_name_map(db, course_id)
@@ -2587,6 +2620,35 @@ async def upload_resource(
         if ch:
             chapter_id, chapter = ch.id, ch.name
 
+    # 完成分类/章节校验与 PDF 转换后才发布文件；转换耗时工作不阻塞事件循环。
+    converted = None
+    pages = 0
+    if rtype == "ppt" and ext in {".ppt", ".pptx"}:
+        try:
+            converted, pages = await run_in_threadpool(convert_presentation_upload, file.file, filename)
+        except PresentationConversionError as exc:
+            return fail(str(exc), exc.code)
+    res_id = _next_res_id(db)
+    preview_path = None
+    dest = url_to_path(res_url(course_id, res_id, filename))
+    try:
+        dest = save_upload_file(file.file, filename, res_id, course_id)
+        if converted is not None:
+            preview_path = dest.with_name(filename + ".preview.pdf")
+            with preview_path.open("wb") as target:
+                shutil.copyfileobj(converted, target)
+    except Exception:
+        if dest is not None:
+            dest.unlink(missing_ok=True)
+            dest.with_name(filename + ".preview.pdf").unlink(missing_ok=True)
+            cleanup_empty_dirs(dest)
+        raise
+    finally:
+        if converted is not None:
+            converted.close()
+    duration = mp4_duration(dest) if rtype == "video" else ""
+    if ext == ".pdf":
+        pages = pdf_pages(dest)
     url = res_url(course_id, res_id, filename)
     r = Resource(
         res_id=res_id,
@@ -2606,8 +2668,16 @@ async def upload_resource(
         views=0,
         url=url,
     )
-    db.add(r)
-    db.commit()
+    try:
+        db.add(r)
+        db.commit()
+    except Exception:
+        db.rollback()
+        if preview_path:
+            preview_path.unlink(missing_ok=True)
+        dest.unlink(missing_ok=True)
+        cleanup_empty_dirs(dest)
+        raise
 
     try:
         from ..services.learning_path import sync_res_count
@@ -2619,7 +2689,7 @@ async def upload_resource(
     cover_url = generate_cover(res_id, title, rtype)
 
     if ext in _RAG_SUPPORTED_EXT:
-        background.add_task(_run_rag_ingest, res_id, dest, course_id, chapter_id, kp_list)
+        background.add_task(_run_rag_ingest, res_id, preview_path or dest, course_id, chapter_id, kp_list)
         rag = {"supported": True, "status": "pending", "message": "已加入切片队列"}
     else:
         rag = {"supported": False, "status": "skipped",
@@ -2628,6 +2698,7 @@ async def upload_resource(
     return ok({
         "resId": res_id, "title": title, "type": rtype,
         "duration": duration, "pages": pages, "url": url,
+        "previewUrl": presentation_preview_url(url) if preview_path else (url if ext == ".pdf" else ""),
         "cover": cover_url, "chapterId": chapter_id, "chapter": chapter,
         "kpId": primary_kp_id, "kp": primary_kp, "kpIds": kp_list,
         "category": r.category,
@@ -2748,6 +2819,9 @@ def delete_resource(
     # 磁盘却在 resources/，反推必然失败且被 except 吞掉 → 文件删不掉、堆积成孤儿文件。
     src_path = url_to_path(r.url)
     try:
+        preview_path = url_to_path(presentation_preview_url(r.url))
+        if preview_path:
+            preview_path.unlink(missing_ok=True)
         if src_path and src_path.exists():
             src_path.unlink()
             # 自下而上清理空目录（resources/{course_id}/{res_id}/ 不留空壳）

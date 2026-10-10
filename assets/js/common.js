@@ -261,12 +261,22 @@ const Modal = {
     ov.className = 'overlay';
     ov.innerHTML = `<div class="modal ${opts.size ? 'modal--' + opts.size : ''}">
       <div class="modal__head"><h3>${opts.title}</h3>
+        ${opts.headerActions || ''}
         <button class="btn btn--ghost btn--icon btn--sm" data-close>${icon('x')}</button></div>
       <div class="modal__body">${opts.body}</div>
       ${opts.footer === null ? '' : `<div class="modal__foot">${opts.footer || `<button class="btn" data-close>关闭</button>`}</div>`}
     </div>`;
     document.body.appendChild(ov);
-    const close = () => ov.remove();
+    let closed = false;
+    const close = () => {
+      if (closed) return;
+      closed = true;
+      try {
+        if (opts.onClose) opts.onClose(ov);
+      } finally {
+        ov.remove();
+      }
+    };
     ov.addEventListener('click', e => {
       if (e.target === ov || e.target.closest('[data-close]')) close();
     });
@@ -403,11 +413,10 @@ const R = {
   /** 资源卡 */
   res(r) {
     const map = { video: 'video', ppt: 'ppt', doc: 'file', quiz: 'quiz' };
-    const label = { video: '教学视频', ppt: '课堂PPT', doc: '教材文献', quiz: '题库' };
+    const label = { video: '教学视频', ppt: '课件', doc: '教材文献', quiz: '题库' };
     return `<div class="res" data-res="${r.resId}" data-kp="${U.esc(r.kp)}" ${r.url ? `data-url="${U.esc(r.url)}"` : ''}>
       <div class="res__thumb res__thumb--${r.type}">
         <img class="res__cover" src="/resources/covers/${r.resId}.jpg" alt="" loading="lazy" onerror="this.remove()">
-        <span class="res__type-label">${label[r.type]}</span>
         ${r.duration ? `<span class="res__dur">${r.duration}</span>` : ''}
         ${r.pages ? `<span class="res__dur">${r.pages} 页</span>` : ''}
         ${r.count ? `<span class="res__dur">${r.count} 题</span>` : ''}</div>

@@ -890,6 +890,7 @@ const TeacherGraphEdit = {
       };
       API.teacher.updateKp(id, payload).then(() => {
         Toast.ok('知识点已更新', name);
+        body.querySelectorAll('[data-agent-dirty]').forEach(input => { delete input.dataset.agentDirty; });
         // 同步本地节点（名称/重点）→ 图谱标签与边框即时刷新
         const n = (this.data.nodes || []).find(x => x.id === id);
         if (n) { n.name = name; n.isKey = payload.isKey; n.hours = payload.hours; }

@@ -159,6 +159,42 @@ window.API = (function () {
 
   const M = () => window.MOCK;
 
+  function fetchBinary(path) {
+    if (config.mode !== 'http') {
+      return Promise.reject(new Error('Mock 模式下无法读取已保存的附件'));
+    }
+    const headers = { Authorization: config.token };
+    if (config.activeCourseId) headers['X-Course-Id'] = config.activeCourseId;
+    return fetch(config.baseURL + path, { method: 'GET', headers }).then(async res => {
+      if (!res.ok) {
+        let message = '附件读取失败';
+        try {
+          const data = await res.json();
+          message = data.message || data.detail || message;
+        } catch (e) {}
+        const error = new Error(message);
+        error.status = res.status;
+        throw error;
+      }
+      const disposition = res.headers.get('content-disposition') || '';
+      if (!disposition) {
+        let message = '附件读取失败';
+        try {
+          const data = await res.clone().json();
+          message = data.message || data.detail || message;
+        } catch (e) {}
+        throw new Error(message);
+      }
+      const encoded = disposition.match(/filename\*=UTF-8''([^;]+)/i);
+      const plain = disposition.match(/filename="?([^";]+)"?/i);
+      let filename = encoded ? encoded[1] : (plain ? plain[1] : '');
+      if (encoded) {
+        try { filename = decodeURIComponent(filename); } catch (e) {}
+      }
+      return { blob: await res.blob(), filename };
+    });
+  }
+
   /**
    * SSE 流式请求（fetch + getReader 手动解析，可携带 JWT 头）
    * @param {string} method   一般为 'POST'
@@ -292,10 +328,13 @@ window.API = (function () {
     },
     /** POST /admin/agent/chat/stop  停止平台治理会话正在进行的生成（协作式「停止思考」） */
     stopChat: (p) => request('POST', '/admin/agent/chat/stop', p || {}, () => ({ stopped: true })),
+    /** GET /admin/agent/recommendation-context  只返回管理员个性化推荐所需的平台汇总数据 */
+    recommendationContext: () => request('GET', '/admin/agent/recommendation-context'),
     /** GET /admin/agent/sessions  当前管理员的治理会话列表（不含课程会话） */
     sessions: () => request('GET', '/admin/agent/sessions'),
     /** GET /admin/agent/sessions/{sessionId}/messages  治理会话消息（含 toolLog） */
     messages: (p) => request('GET', `/admin/agent/sessions/${p.sessionId || 'new'}/messages`),
+    fetchAttachment: (p) => fetchBinary(`/admin/agent/sessions/${encodeURIComponent(p.sessionId)}/attachments/${encodeURIComponent(p.attachmentId)}`),
     /** DELETE /admin/agent/sessions/{sessionId}  删除自己的治理会话 */
     deleteSession: (p) => request('DELETE', `/admin/agent/sessions/${p.sessionId}`),
     /**
@@ -466,6 +505,7 @@ window.API = (function () {
 
     /** GET /ai/sessions/{sessionId}/messages  会话消息（含溯源引用） */
     messages: (p) => request('GET', `/ai/sessions/${p.sessionId || 'new'}/messages`, p, () => M().chatMessages),
+    fetchAttachment: (p) => fetchBinary(`/ai/sessions/${encodeURIComponent(p.sessionId)}/attachments/${encodeURIComponent(p.attachmentId)}`),
 
     /** DELETE /ai/sessions/{sessionId}  删除会话（仅本人会话，含全部消息） */
     deleteSession: (p) => request('DELETE', `/ai/sessions/${p.sessionId}`, p, () => ({ deleted: true })),
@@ -769,6 +809,7 @@ window.API = (function () {
     saveKpRelations: (id, p) => request('PUT', `/teacher/structure/kps/${id}/relations`, p),
 
     /** POST /question/import  批量导入题目（含单题；支持 figure_json 图结构） */
+    importQuestionPreview: (fd) => request('POST', '/question/import/preview', fd),
     importQuestions: (p) => request('POST', '/question/import', p)
   };
 

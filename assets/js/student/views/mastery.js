@@ -65,7 +65,7 @@
 
         // 资源学习进度
         API.student.resourceStats().then(rs => {
-          const typeName = { video: '视频', ppt: 'PPT', doc: '文档', quiz: '题库' };
+          const typeName = { video: '教学视频', ppt: '课件', doc: '教材文献', quiz: '题库' };
           U.$('#rsAvgBadge').textContent = `平均 ${rs.avgProgress}%`;
           U.$('#rsBody').innerHTML = `
             <div class="grid g-4" style="margin-bottom:14px">

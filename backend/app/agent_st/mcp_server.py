@@ -42,7 +42,7 @@ def _registry():
     """惰性导入注册表并确保工具已注册（import 即注册，逐个显式列出，不靠 tools/__init__ 副作用）。"""
     from app.agent_st.agent import registry
     from app.agent_st.agent.tools import (analytics, bank, draft, plan, rag,  # noqa: F401
-                                          teacher_analytics, topic, validate)
+                                          teacher_analytics, topic, validate, ui_actions)
     return registry
 
 

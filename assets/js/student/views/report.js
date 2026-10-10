@@ -71,24 +71,36 @@ const MyReport = {
   },
 
   generate() {
+    if (this._generating) return this._generating;
     const btn = U.$('#genMyReport');
-    if (!API.config.activeCourseId) return Toast.warn('请先选择课程');
+    if (!API.config.activeCourseId) { Toast.warn('请先选择课程'); return Promise.resolve(false); }
+    const courseId = API.config.activeCourseId;
+    const login = JSON.stringify(Auth.getSession());
+    const isCurrent = () => courseId === API.config.activeCourseId && login === JSON.stringify(Auth.getSession()) && Router.current === 'report';
     if (btn) { btn.disabled = true; btn.textContent = '生成中…'; }
-    API.student.report.generate()
-      .then(r => {
+    this._generating = API.student.report.generate()
+      .then(async r => {
         const reportId = r && r.reportId;
-        if (!reportId) return Toast.warn('报告生成失败，请稍后重试');
-        Toast.ok('报告已生成', reportId);
-        return this.loadArchive().then(() => this.openDetail(reportId));
+        if (!reportId) { if (isCurrent()) Toast.warn('报告生成失败，请稍后重试'); return false; }
+        if (isCurrent()) {
+          Toast.ok('报告已生成');
+          await this.loadArchive();
+          if (isCurrent()) await this.openDetail(reportId);
+        }
+        return true;
       })
-      .catch(err => Toast.warn('报告生成失败：' + (err && err.message || err)))
+      .catch(err => { if (isCurrent()) Toast.warn('报告生成失败：' + (err && err.message || err)); return false; })
       .finally(() => {
+        this._generating = null;
         if (btn) { btn.disabled = false; btn.innerHTML = `${icon('sparkle')} 生成报告`; }
       });
+    return this._generating;
   },
 
   openDetail(reportId) {
-    API.student.report.detail({ reportId }).then(raw => {
+    const courseId = API.config.activeCourseId, login = JSON.stringify(Auth.getSession());
+    return API.student.report.detail({ reportId }).then(raw => {
+      if (courseId !== API.config.activeCourseId || login !== JSON.stringify(Auth.getSession()) || Router.current !== 'report') return;
       const detail = raw && raw.detail && typeof raw.detail === 'object' ? raw.detail : (raw || {});
       if (detail.error) return Toast.warn(detail.error);
       const meta = detail.meta || {};

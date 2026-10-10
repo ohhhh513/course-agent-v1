@@ -7,19 +7,20 @@
   模型无法指定别人的数据（越权在参数层面就不成立）。
 - **数值复用业务函数**：正确率逐题拆解走 `services.scoring.kp_accuracy_detail`
   （与页面、预警同一套口径），工具本身不做统计。
-- **只读**：这四个查询工具都不写库；唯一的"动作"是 `suggest_action`，
+- **只读**：学情和系统操作目录查询都不写库；唯一的"动作"是 `suggest_action`，
   它只把建议塞进 `ctx.turn['actions']`，由前端渲染成按钮、用户点击才生效。
 """
 from __future__ import annotations
 
 from app.agent_st.agent.context import ToolContext
-from app.agent_st.agent.registry import tool
+from app.agent_st.agent.registry import role_of, tool
+from app.agent_st.agent.system_guide import allowed_views, lookup_guide
 from app.agent_st import persistence
 from app.utils import fmt_dt
 
 # 前端允许的界面白名单（与 assets/js/student/views/chat.js::applyAction 的 VIEWS 一致）
 # report = 学生端「学情报告」页（P3 新增：可生成 / 看历史归档 / 导出 PDF·HTML）
-_VIEWS = ("dashboard", "graph", "resource", "practice", "mastery", "alerts", "ai", "report")
+_VIEWS = allowed_views("student")
 _MODES = ("weak", "order", "random", "wrong")
 
 # 口径字典：内容取自各接口的真实实现（改口径时这里必须同步改）
@@ -296,9 +297,34 @@ def weak_ranking(ctx: ToolContext, limit: int = 3):
 
 
 @tool(
+    name="get_system_guide",
+    description=("检索当前角色实际加载的界面源码：页面、面板、页签、小按钮、事件绑定、弹窗和保存位置。"
+                 "凡在问功能、资料或操作入口都先查本工具，包括口语及承接上文的追问，不要求固定关键词。query保留完整问题，并补上最近对话中已明确的指代对象，可限定view；"
+                 "sources 返回实时源码，features 是旧手册补充。可再次用按钮id/函数名 query 追踪调用。"
+                 "本工具不会生成跳转按钮；有可执行入口必须在最终回答前另调prepare_ui_action，询问auto=false，明确打开auto=true。新按钮不用预先登记。源码存在不证明入口可用，需确认渲染和绑定；不读业务数据、不执行操作。"),
+    parameters={"type": "object", "properties": {
+        "query": {"type": "string", "description": "完整操作问题；有代词或省略时保留原意，并补上最近对话已明确的对象和目标功能，不编造对象"},
+        "feature_id": {"type": "string", "description": "可选，兼容原手册内部功能 id；新功能用 query 检索"},
+        "view": {"type": "string", "description": "可选，限定当前角色的页面 key"},
+        "limit": {"type": "integer", "minimum": 1, "maximum": 12, "description": "查询条数，默认4"},
+    }},
+    flows=("explain", "admin_ops"),
+)
+def get_system_guide(ctx: ToolContext, query: str = "", feature_id: str = "", view: str = "", limit: int = 4):
+    result = lookup_guide(role_of(ctx), query, feature_id, view, limit)
+    if "error" not in result:
+        from ..ui_actions import role_actions
+        result["ui_actions"] = [action for action in role_actions(role_of(ctx)) if not view or action["view"] in (view, "")]
+    if result.get("found"):
+        ctx.turn["system_guide"] = result
+    return result
+
+
+@tool(
     name="suggest_action",
     description=(
-        "在回答末尾给用户一个**可点击的界面动作按钮**（不直接执行任何操作）。"
+        "在最终正文之前调用，给用户一个**显示在回答下方的可点击界面动作按钮**（不直接执行任何操作）。"
+        "先完成工具调用再写最终回答，避免在调用导航前后重复回答。"
         "当你的结论指向某个页面或某组练习时调用，例如「建议去练某知识点的靶向练习」"
         "「去我的学情看矩阵」。kind=navigate 只是跳页面；kind=practice 会在学生端"
         "预置该知识点的靶向练习并跳到练习页（仍由用户自己点击开始）。"
@@ -307,16 +333,16 @@ def weak_ranking(ctx: ToolContext, limit: int = 3):
         "type": "object",
         "properties": {
             "kind": {"type": "string", "enum": ["navigate", "practice"]},
-            "label": {"type": "string", "description": "按钮文案，例如「去练 KP018 靶向练习」"},
-            "view": {"type": "string", "enum": list(_VIEWS),
-                     "description": "kind=navigate 时的目标页面"},
+            "label": {"type": "string", "description": "按钮文案，使用可读名称，例如「打开课程目录与资源」"},
+            "view": {"type": "string", "enum": sorted(set().union(*(allowed_views(r) for r in ("student", "teacher", "admin")))),
+                     "description": "kind=navigate 时的目标页面，必须属于当前角色的操作目录"},
             "kp_id": {"type": "string", "description": "kind=practice 时的知识点 id"},
             "mode": {"type": "string", "enum": list(_MODES),
                      "description": "练习模式，默认 weak（靶向练习）"},
         },
         "required": ["kind", "label"],
     },
-    flows=("explain",),
+    flows=("explain", "admin_ops"),
 )
 def suggest_action(ctx: ToolContext, kind: str = "", label: str = "", view: str = "",
                    kp_id: str = "", mode: str = "weak"):
@@ -328,10 +354,13 @@ def suggest_action(ctx: ToolContext, kind: str = "", label: str = "", view: str 
         return {"error": "label 不能为空"}
     action = {"kind": kind, "label": label}
     if kind == "navigate":
-        if view not in _VIEWS:
-            return {"error": f"view 不在允许范围内：{list(_VIEWS)}"}
+        views = allowed_views(role_of(ctx))
+        if view not in views:
+            return {"error": f"当前角色不能打开该页面；允许范围：{list(views)}"}
         action["view"] = view
     else:
+        if role_of(ctx) != "student":
+            return {"error": "只有学生端支持练习入口"}
         if not kp_id:
             return {"error": "kind=practice 时必须给出 kp_id"}
         action["kpId"] = kp_id

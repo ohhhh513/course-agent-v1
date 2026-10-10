@@ -784,23 +784,34 @@
     },
 
     /* --- 文档/课件：定位上次页码 + 记录进度 --- */
-    _openDoc(res, pr) {
+    async _openDoc(res, pr) {
       const self = this;
-      const savedPage = (pr && pr.position) ? pr.position : 0;
-      const isPdf = (res.url || '').toLowerCase().endsWith('.pdf');
+      const savedPage = Math.max(0, parseInt(pr && pr.position, 10) || 0);
+      const knownPageCount = parseInt(res.pages, 10) || 0;
+      const maxPage = knownPageCount > 0 ? knownPageCount : 999;
+      const startPage = Math.min(maxPage, Math.max(1, savedPage || 1));
+      let previewUrl = (res.url || '').toLowerCase().endsWith('.pdf') ? res.url : '';
+      if (/\.pptx?$/i.test(res.url || '')) {
+        const candidate = res.url + '.preview.pdf';
+        try {
+          const response = await fetch(candidate, { method: 'HEAD' });
+          if (response.ok && /application\/pdf/i.test(response.headers.get('content-type') || '')) previewUrl = candidate;
+        } catch (_) { /* 旧课件或缺失预览仍提供原文件下载。 */ }
+      }
 
-      if (isPdf) {
-        const url = res.url + (savedPage > 1 ? '#page=' + savedPage : '');
+      if (previewUrl) {
+        const url = previewUrl + (startPage > 1 ? '#page=' + startPage : '');
         const body = `
-          <iframe id="rd" src="${U.esc(url)}" style="width:100%;height:62vh;border:0;border-radius:var(--r-md);background:#fff"></iframe>
+          <iframe id="rd" title="${U.esc(res.title)}" src="${U.esc(url)}" class="resource-reader__frame"></iframe>
           <div class="row" style="margin-top:12px;gap:8px;align-items:center">
             <span class="fz-12 t-dim">跳转页码</span>
-            <input id="rdPage" class="input" type="number" min="1" max="${res.pages || 999}" value="${savedPage || 1}" style="width:90px">
+            <input id="rdPage" class="input" type="number" min="1" max="${maxPage}" value="1" style="width:90px">
             <button class="btn btn--sm btn--primary" id="rdJump">跳转</button>
             <span class="spacer"></span>
-            <span class="fz-12 t-dim">共 ${res.pages || '?'} 页 · 续看已定位</span>
+            <span id="rdPageStatus" class="fz-12 t-dim" aria-live="polite">共 ${knownPageCount || '?'} 页 · 当前第 ${startPage} 页</span>
           </div>`;
-        const footer = `<a class="btn btn--primary" href="${U.esc(res.url)}" target="_blank" rel="noopener noreferrer">在新窗口打开</a><button class="btn" data-close>关闭</button>`;
+        const headerActions = `<button class="btn btn--sm btn--primary resource-reader__fullscreen" type="button" id="rdFullscreen" aria-pressed="false" aria-controls="rd" title="全屏阅读">全屏阅读</button>`;
+        const footer = `<a class="btn btn--primary" href="${U.esc(previewUrl)}" target="_blank" rel="noopener noreferrer">在新窗口打开</a><a class="btn" href="${U.esc(res.url)}" download>下载原文件</a><button class="btn" data-close>关闭</button>`;
         const save = (page) => {
           page = parseInt(page, 10) || 0;
           API.student.saveResourceProgress(res.resId, {
@@ -808,25 +819,100 @@
             position: page
           }).catch(() => {});
         };
+        let cleanupReader = () => {};
         Modal.open({
-          title: res.title, body, footer,
+          title: res.title, body, footer, headerActions, size: 'full',
+          onClose() { cleanupReader(); },
           onMount(ov) {
-            const jb = U.$('#rdJump');
-            const inp = U.$('#rdPage');
-            if (jb) jb.addEventListener('click', () => {
-              const p = parseInt(inp.value, 10) || 1;
-              const f = U.$('#rd');
-              if (f) f.src = res.url + '#page=' + p;
-              save(p);
+            ov.classList.add('resource-reader');
+            const fullButton = ov.querySelector('#rdFullscreen');
+            const syncFullscreen = () => {
+              const active = document.fullscreenElement === ov || ov.classList.contains('resource-reader--expanded');
+              fullButton.textContent = active ? '退出全屏' : '全屏阅读';
+              fullButton.title = fullButton.textContent;
+              fullButton.setAttribute('aria-pressed', String(active));
+            };
+            fullButton.addEventListener('click', async () => {
+              if (document.fullscreenElement === ov) {
+                await document.exitFullscreen().catch(() => {});
+              } else if (ov.classList.contains('resource-reader--expanded')) {
+                ov.classList.remove('resource-reader--expanded');
+              } else {
+                try {
+                  if (!ov.requestFullscreen) throw new Error('Fullscreen unavailable');
+                  await ov.requestFullscreen();
+                } catch (_) {
+                  ov.classList.add('resource-reader--expanded');
+                }
+              }
+              syncFullscreen();
             });
-            ov.addEventListener('click', e => {
-              if (e.target === ov || e.target.closest('[data-close]')) { if (inp) save(inp.value); self.load(); }
-            }, true);
+            const onKeydown = e => {
+              if (e.key === 'Escape') {
+                ov.classList.remove('resource-reader--expanded');
+                syncFullscreen();
+              }
+            };
+            document.addEventListener('fullscreenchange', syncFullscreen);
+            document.addEventListener('keydown', onKeydown);
+            const jb = U.$('#rdJump', ov);
+            const inp = U.$('#rdPage', ov);
+            const pageStatus = U.$('#rdPageStatus', ov);
+            let currentPage = startPage;
+            const normalizePageInput = (restoreEmpty) => {
+              if (!inp) return 1;
+              const value = inp.valueAsNumber;
+              if (!Number.isFinite(value)) {
+                if (restoreEmpty) inp.value = '1';
+                return 1;
+              }
+              const page = Math.min(maxPage, Math.max(1, Math.trunc(value)));
+              if (String(page) !== inp.value) inp.value = String(page);
+              return page;
+            };
+            const jumpToPage = () => {
+              const page = normalizePageInput(true);
+              const frame = U.$('#rd', ov);
+              if (!frame) return;
+
+              // Changing only an iframe fragment can be ignored by some built-in PDF viewers.
+              // Vary the query as well so the browser loads the PDF document with the new page fragment.
+              const target = new URL(previewUrl, window.location.href);
+              target.searchParams.set('_reader_jump', `${page}-${Date.now()}`);
+              target.hash = `page=${page}`;
+              if (pageStatus) pageStatus.textContent = `正在打开第 ${page} 页…`;
+              frame.addEventListener('load', () => {
+                if (pageStatus && currentPage === page) {
+                  pageStatus.textContent = `共 ${knownPageCount || '?'} 页 · 当前第 ${page} 页`;
+                }
+              }, { once: true });
+              frame.src = target.toString();
+              currentPage = page;
+              save(page);
+            };
+            if (inp) {
+              inp.addEventListener('input', () => {
+                if (inp.value !== '') normalizePageInput(false);
+              });
+              inp.addEventListener('change', () => normalizePageInput(true));
+              inp.addEventListener('blur', () => normalizePageInput(true));
+              inp.addEventListener('keydown', e => {
+                if (e.key === 'Enter') { e.preventDefault(); jumpToPage(); }
+              });
+            }
+            if (jb) jb.addEventListener('click', jumpToPage);
+            cleanupReader = () => {
+              document.removeEventListener('fullscreenchange', syncFullscreen);
+              document.removeEventListener('keydown', onKeydown);
+              if (document.fullscreenElement === ov) document.exitFullscreen().catch(() => {});
+              save(currentPage);
+              self.load();
+            };
           }
         });
       } else {
-        // ppt/doc 等非 PDF 文档：先弹窗提供「在线查看」/「下载」选项，不再自动 window.open 触发下载
-        const typeLabel = res.type === 'doc' ? '教材文献' : '课堂PPT';
+        // 非 PDF 文档格式没有可靠的浏览器内置预览，提示学生下载后阅读。
+        const typeLabel = res.type === 'doc' ? '教材文献' : '课件';
         const body = `
           <div class="kv">
             <div class="kv__row"><span>资源类型</span><span>${typeLabel}</span></div>
@@ -835,8 +921,8 @@
           </div>
           <div class="empty empty--compact" style="margin:18px 0 10px;padding:22px 16px;background:var(--bg-2);border-radius:var(--r-md)">
             <span class="fz-28">${icon('file')}</span>
-            <b>${typeLabel} 在线预览</b>
-            <p class="t-dim fz-12" style="max-width:360px;text-align:center;line-height:1.8">浏览器将使用内置阅读器或 Office 打开课件。若浏览器未安装对应插件，可选择下载后查看。</p>
+            <b>${typeLabel}需要下载后查看</b>
+            <p class="t-dim fz-12" style="max-width:360px;text-align:center;line-height:1.8">${res.type === 'ppt' ? '此课件尚无可用的 PDF 预览，请下载原文件查看，或联系教师重新上传生成预览。' : 'PDF 可在页面内直接阅读；Word 等文件请下载后使用相应软件打开。'}</p>
           </div>
           <div class="row" style="margin-top:12px;gap:8px;align-items:center;justify-content:center">
             <span class="fz-12 t-dim">已读到第</span>
@@ -845,8 +931,7 @@
             <button class="btn btn--sm btn--primary" id="rdSave">保存进度</button>
           </div>`;
         const footer = `
-          <a class="btn btn--primary" href="${U.esc(res.url)}" target="_blank" rel="noopener noreferrer" id="rdView">在线查看</a>
-          <a class="btn" href="${U.esc(res.url)}" download>下载课件</a>
+          <a class="btn btn--primary" href="${U.esc(res.url)}" download>下载文件</a>
           <button class="btn" data-close>关闭</button>`;
         Modal.open({
           title: res.title, body, footer,

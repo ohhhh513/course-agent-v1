@@ -55,6 +55,7 @@ desktop.ini
 *.tmp
 backend/app/data/vector/
 backend/app/data/st/uploads/
+backend/app/data/st/system_code_index.json
 backend/.tmp_cid
 
 # 资源清单快照：一次性迁移产物，无任何运行时代码引用（可随时重建）

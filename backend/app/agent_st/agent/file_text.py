@@ -18,12 +18,37 @@ from typing import List
 MAX_CHARS = 60_000  # 单文件抽取上限
 
 ALLOWED = {".txt", ".md", ".csv", ".json", ".xlsx", ".docx", ".pdf"}
+IMAGE_MIME_BY_EXTENSION = {
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".png": "image/png",
+    ".gif": "image/gif",
+    ".webp": "image/webp",
+}
 
 
 def _ext(filename: str) -> str:
     """返回带点的小写后缀（如 '.xlsx'）；无后缀返回 ''。"""
     name = filename or ""
     return ("." + name.rsplit(".", 1)[-1].lower()) if "." in name else ""
+
+
+def image_mime_for_extension(filename: str) -> str | None:
+    """返回支持的图片扩展名对应 MIME；非图片扩展名返回 None。"""
+    return IMAGE_MIME_BY_EXTENSION.get(_ext(filename))
+
+
+def detect_image_mime(data: bytes) -> str | None:
+    """按文件签名识别支持的图片格式，避免仅凭文件名接受伪装文件。"""
+    if data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if data.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    if data.startswith((b"GIF87a", b"GIF89a")):
+        return "image/gif"
+    if len(data) >= 12 and data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "image/webp"
+    return None
 
 
 def extract_file_text(filename: str, data: bytes) -> str:

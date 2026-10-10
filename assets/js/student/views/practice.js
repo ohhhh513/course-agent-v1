@@ -10,6 +10,8 @@
     _wChapter: '', _wKpId: '', _wSumOpen: true,
 
     resetCourseContext() {
+      this._selectRevision = (this._selectRevision || 0) + 1;
+      this._modeRevision = (this._modeRevision || 0) + 1;
       clearInterval(this._timer);
       this.tab = 'quiz';
       this.state = 'select';
@@ -47,6 +49,8 @@
       </div>
       <div id="pBody"></div>`;
       U.$$('#pTabs button', el).forEach(b => b.addEventListener('click', () => {
+        if (this.tab === b.dataset.t) return;
+        this._modeRevision = (this._modeRevision || 0) + 1;
         U.$$('#pTabs button', el).forEach(x => x.classList.remove('is-active'));
         b.classList.add('is-active');
         this.tab = b.dataset.t;
@@ -57,13 +61,15 @@
 
     /* --- 模式选择 --- */
     renderSelect() {
+      const revision = this._selectRevision = (this._selectRevision || 0) + 1;
+      this._modeRevision = (this._modeRevision || 0) + 1;
       this.state = 'select';
       this.activeMode = null;
       const box = U.$('#pBody');
       // 竞态防护：本视图要等两个接口才渲染。若期间用户已经切到「错题本」，
       // 后到的回调不能再把 #pBody 覆盖回练习页（否则切页会被"弹回去"）。
       const courseId = API.config.activeCourseId;
-      const stale = () => this.tab !== 'quiz' || U.$('#pBody') !== box || API.config.activeCourseId !== courseId;
+      const stale = () => revision !== this._selectRevision || this.tab !== 'quiz' || U.$('#pBody') !== box || API.config.activeCourseId !== courseId;
       API.practice.modes().then(ms => {
         if (stale()) return;
         // 随机练习的题量口径 = 「学过且做错过」的知识点题量（后端按此统计）。
@@ -163,6 +169,7 @@
       this.start(mode, ms, opts);
     },
     collapsePanel() {
+      this._modeRevision = (this._modeRevision || 0) + 1;
       clearInterval(this._timer);
       this.activeMode = null;
       this.state = 'select';
@@ -193,18 +200,25 @@
 
     /* --- 练习入口（任意模式）：检查存档 → 继续挑战 / 开始新练习 --- */
     enterMode(mode, ms, cardEl) {
+      const revision = this._modeRevision = (this._modeRevision || 0) + 1;
       const courseId = API.config.activeCourseId;
       this.activeMode = mode;
       U.$$('#modeGrid .card[data-mode]').forEach(c => c.classList.toggle('is-active', c === cardEl));
       const panel = U.$('#modePanel');
+      const stale = () => revision !== this._modeRevision || this.tab !== 'quiz' || U.$('#modePanel') !== panel || API.config.activeCourseId !== courseId;
       if (panel) panel.hidden = false;
       panel.innerHTML = `<div class="card"><div class="card__body t-dim fz-13">检查存档…</div></div>`;
       API.practice.current({ mode }).then(sv => {
-        if (API.config.activeCourseId !== courseId) return;
+        if (stale()) return;
         // 有实际作答进度、且未做完，才算「存档」；空会话（0 题）不提示
         if (sv && sv.sessionId && sv.answered > 0 && sv.answered < sv.total) this._renderResumePanel(mode, ms, sv);
         else this._startMode(mode, ms);
-      }).catch(() => this._startMode(mode, ms));
+      }).catch(() => {
+        if (!stale()) {
+          panel.innerHTML = `<div class="callout callout--warn">存档检查失败，请重新打开练习模式。</div>`;
+          Toast.warn('存档检查失败', '请重试，避免覆盖未完成的练习');
+        }
+      });
     },
 
     /* --- 正常开始某模式（顺序练习先选章节，其余直接组卷）--- */
@@ -214,12 +228,14 @@
       if (mode === 'weak' && !(this._weakKpIds || []).length) {
         // 没有达标的薄弱点（未作答，或每个知识点都不到 2 道题）：不要退化成"整门课随机抽"
         Toast.warn('暂无可定位的薄弱知识点', '每个知识点至少作答 2 道不同题后才会计入（与预警同一门槛），可先用顺序/随机练习');
+        U.$('#modePanel').innerHTML = '<div class="callout callout--warn">暂无可定位的薄弱知识点，可先使用顺序练习。</div>';
         return;
       }
       if (mode === 'random' && !this._randomCount) {
         // 随机练习范围 = 「学过且做错过」的知识点。已学的全对、或还没做过题时无可抽范围，
         // 说明原因并给替代路径，不静默抽整门课（后端同样返回 emptyReason: random_scope_empty）。
         Toast.warn('随机练习暂无可抽题范围', '随机练习只抽「学过且做错过」的知识点；你学过的都答对了、或还没做过题，可先用顺序练习');
+        U.$('#modePanel').innerHTML = '<div class="callout callout--warn">随机练习暂无可抽题范围，可先使用顺序练习。</div>';
         return;
       }
       const opts = mode === 'weak' ? { kpIds: this._weakKpIds } : undefined;
@@ -255,7 +271,9 @@
     /* --- 顺序练习：选择章节 / 知识点 --- */
     _renderChapterPick(ms) {
       const courseId = API.config.activeCourseId;
+      const revision = this._modeRevision;
       const panel = U.$('#modePanel');
+      const stale = () => revision !== this._modeRevision || this.activeMode !== 'order' || this.tab !== 'quiz' || U.$('#modePanel') !== panel || API.config.activeCourseId !== courseId;
       if (panel) panel.hidden = false;
       const mCount = ((ms || []).find(x => x.key === 'order') || {}).count || 20;
       panel.innerHTML = `<div class="card"><div class="card__body t-dim fz-13">加载章节…</div></div>`;
@@ -264,7 +282,7 @@
         API.graph.get({ type: 'knowledge' }),
         API.practice.kpPool().catch(() => null),
       ]).then(([g, pool]) => {
-        if (API.config.activeCourseId !== courseId) return;
+        if (stale()) return;
         // 题量接口失败时（pool=null）退回旧行为：全部列出，不做隐藏 ——
         // 宁可多显示几个按钮，也不能因为一次请求失败就让学生以为"这门课没题"。
         const counts = (pool && pool.counts) ? pool.counts : null;
@@ -318,7 +336,8 @@
           this.start('order', ms, { kpIds, count: mCount });
         }));
       }).catch(() => {
-        panel.innerHTML = `<div class="card"><div class="card__body t-dim">章节加载失败，请重试</div></div>`;
+        if (stale()) return;
+        panel.innerHTML = `<div class="callout callout--warn">章节加载失败，请重新打开顺序练习。</div>`;
       });
     },
 
@@ -339,6 +358,9 @@
     /* --- 开始练习 --- */
     start(mode, ms, opts) {
       const courseId = API.config.activeCourseId;
+      const revision = this._modeRevision = (this._modeRevision || 0) + 1;
+      const tab = this.tab, box = U.$('#pBody');
+      const stale = () => revision !== this._modeRevision || this.tab !== tab || U.$('#pBody') !== box || API.config.activeCourseId !== courseId;
       const m = (ms || []).find(x => x.key === mode);
       // 记录进入练习时的 tab，退出时按此恢复到对应列表
       this._startTab = this.tab;
@@ -347,8 +369,8 @@
       const body = { mode, count: (opts && opts.count) || (m ? m.count : 10) };
       if (this._lastKpIds) body.kpIds = this._lastKpIds;
       if (this._lastQIds) body.qIds = this._lastQIds;
-      API.practice.create(body).then(s => {
-        if (API.config.activeCourseId !== courseId) return;
+      return API.practice.create(body).then(s => {
+        if (stale()) return;
         if (!s.questions || !s.questions.length) {
           this.qs = [];
           this.state = 'select';
@@ -375,6 +397,11 @@
         this.state = 'quiz';
         Toast.ok('已组卷 ' + this.qs.length + ' 题', m ? m.name : '');
         this.renderQuiz();
+      }).catch(error => {
+        if (stale()) return;
+        const target = U.$('#modePanel') || U.$('#pBody');
+        if (target) target.innerHTML = `<div class="callout callout--warn">练习加载失败，请重新打开模式。</div>`;
+        Toast.warn('练习加载失败', error.message || '请重试');
       });
     },
 

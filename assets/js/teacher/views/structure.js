@@ -4,6 +4,8 @@
    ========================================================================== */
 'use strict';
 
+const RESOURCE_TYPE_LABEL = Object.freeze({ video: '教学视频', ppt: '课件', doc: '教材文献', quiz: '题库' });
+
 const TeacherStructure = {
   data: null,
   selectedChapterId: null,
@@ -126,7 +128,7 @@ const TeacherStructure = {
         <div class="list__main">
           <b class="clamp-2">${U.esc(r.title)}</b>
           <div class="row fz-11 t-dim" style="gap:6px;flex-wrap:wrap;margin-top:2px">
-            <span class="badge badge--outline">${U.esc(r.type)}</span>
+            <span class="badge badge--outline">${U.esc(RESOURCE_TYPE_LABEL[r.type] || '其他资源')}</span>
             ${rtags}
           </div>
         </div>
@@ -177,9 +179,11 @@ const TeacherStructure = {
     const body = `
       <form id="trUploadForm" class="stack" style="gap:12px">
         <label class="stack" style="gap:4px"><span class="fz-12 t-dim">目录（章）</span>
-          <select class="select" id="trChapter" required>${chOpts}</select></label>
+          <select class="select select--visible-arrow" id="trChapter" required>${chOpts}</select></label>
+        <label class="stack" style="gap:4px"><span class="fz-12 t-dim">资源类型</span>
+          <select class="select select--visible-arrow" id="trResourceType" required><option value="" selected disabled>请选择资源类型</option><option value="doc">教材文献</option><option value="ppt">课件</option><option value="video">教学视频</option></select></label>
         <label class="stack" style="gap:4px"><span class="fz-12 t-dim">选择文件</span>
-          <input class="input" type="file" id="trFile" accept=".mp4,.pdf,.ppt,.pptx,.doc,.docx" required></label>
+          <input class="input" type="file" id="trFile" required disabled></label>
         <label class="stack" style="gap:4px"><span class="fz-12 t-dim">资源标题</span>
           <input class="input" type="text" id="trTitle" placeholder="默认使用文件名"></label>
         <div class="stack" style="gap:6px">
@@ -188,7 +192,7 @@ const TeacherStructure = {
             <span class="fz-11 t-dim">加载中…</span>
           </div>
         </div>
-        <p class="fz-12 t-dim">PDF / PPT / TXT / JSON 上传后自动 RAG 切片。</p>
+        <p class="fz-12 t-dim">教材文献支持 PDF / DOC / DOCX / TXT；课件支持 PDF / PPT / PPTX；教学视频支持 MP4 / MOV / WEBM / MKV。PPT/PPTX 上传时自动转为 PDF 供在线阅读，并保留原文件；转换需要一些时间。上传前会核对文件内容。</p>
       </form>`;
 
     Modal.open({
@@ -197,6 +201,9 @@ const TeacherStructure = {
       footer: `<button class="btn btn--primary" id="trSubmit" type="button">${icon('upload')} 开始上传</button><button class="btn" data-close>取消</button>`,
       onMount(ov, close) {
         const selected = new Set();
+        const typeIn = U.$('#trResourceType', ov);
+        const fileIn = U.$('#trFile', ov);
+        TeacherResourceUpload.attach(typeIn, fileIn);
         const tagBox = U.$('#trKpTags', ov);
 
         const paint = () => {
@@ -258,8 +265,9 @@ const TeacherStructure = {
         });
 
         U.$('#trSubmit', ov).addEventListener('click', () => {
-          const f = U.$('#trFile', ov).files[0];
-          if (!f) { Toast.error('请先选择文件'); return; }
+          const f = fileIn.files[0];
+          const typeError = TeacherResourceUpload.validate(typeIn.value, f);
+          if (typeError) { Toast.error('无法上传', typeError); return; }
           const chId = U.$('#trChapter', ov).value;
           if (!chId) { Toast.error('请选择章节目录'); return; }
           const ch = chapters.find(c => c.id === chId);
@@ -272,6 +280,7 @@ const TeacherStructure = {
           const kpIds = [...primaryIds, ...relatedIds];
           const fd = new FormData();
           fd.append('file', f);
+          fd.append('resourceType', typeIn.value);
           fd.append('title', U.$('#trTitle', ov).value.trim());
           fd.append('chapterId', chId);
           fd.append('chapter', ch ? ch.name : '');
@@ -281,7 +290,7 @@ const TeacherStructure = {
           fd.append('kp', kpObj ? kpObj.name : '');
           fd.append('category', kpIds.length ? 'knowledge' : 'other');
           const btn = U.$('#trSubmit', ov);
-          btn.disabled = true; btn.textContent = '上传中…';
+          btn.disabled = true; btn.textContent = /\.pptx?$/i.test(f.name) ? '上传并转换中…' : '上传中…';
           API.teacher.uploadResource(fd).then(r => {
             Toast.ok('已上传到目录', ch ? ch.name : '');
             close();

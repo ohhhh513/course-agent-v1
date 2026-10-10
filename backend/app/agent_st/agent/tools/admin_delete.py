@@ -213,8 +213,12 @@ def delete_accounts(ctx: ToolContext, accounts=None):
                     refused_rows.append({"username": row.get("username") or "",
                                          "userId": row.get("userId") or "", "reason": "账号不存在"})
                     continue
+                from app.services.chat_attachments import delete_chat_attachments, user_session_attachment_ids
+
+                attachment_ids = user_session_attachment_ids(db, user.user_id)
                 delete_user_cascade(db, user)
                 db.commit()
+                delete_chat_attachments(attachment_ids)
                 deleted += 1
                 deleted_users.append(row.get("username") or row.get("userId") or "")
             except Exception as e:  # noqa: BLE001 —— 单行失败不阻塞其余行

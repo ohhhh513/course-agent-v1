@@ -34,7 +34,7 @@ from app.agent_st.agent.context import ToolContext           # noqa: E402
 from app.agent_st.agent.loader import load_flow              # noqa: E402
 from app.agent_st.agent.tools import (admin_import, admin_ops, analytics,  # noqa: E402,F401
                                       bank, draft, plan, rag, teacher_analytics,
-                                      topic, validate)
+                                      topic, validate, ui_actions)
 
 FAILS: list[str] = []
 
@@ -110,11 +110,18 @@ def main() -> int:
     check("admin" not in (load_flow("generate_items").get("roles") or []),
           "出题流不再对管理员开放")
     admin_tools = set(load_flow("admin_ops").get("tools") or [])
-    check(len(admin_tools) == 9 and admin_tools <= set(registry.TOOLS),
-          f"admin_ops 流白名单 = 9 个已注册工具（5 只读 + 4 账号治理）：{sorted(admin_tools)}")
-    check(all(registry.TOOLS[n].roles == ("admin",) for n in admin_tools),
+    # 业务治理权限保持原有九个工具；系统使用手册与导航是新增的共享只读能力。
+    shared_guidance = {"get_system_guide", "suggest_action", "prepare_ui_action"}
+    business_admin_tools = admin_tools - shared_guidance
+    expected_admin_tools = {"system_overview", "account_overview", "course_overview", "kb_status", "data_check",
+                            "preview_account_import", "import_accounts", "preview_account_delete", "delete_accounts"}
+    check(business_admin_tools == expected_admin_tools and admin_tools <= set(registry.TOOLS),
+          f"admin_ops 原有九个业务治理工具保持完整：{sorted(business_admin_tools)}")
+    check(shared_guidance <= admin_tools and all(registry.TOOLS[n].approval is None for n in shared_guidance),
+          "新增系统手册与页面导航均无业务写权限")
+    check(all(registry.TOOLS[n].roles == ("admin",) for n in business_admin_tools),
           "系统级工具全部 admin-only（教师/学生都拿不到）")
-    check(not any("explain" in registry.TOOLS[n].flows for n in admin_tools),
+    check(not any("explain" in registry.TOOLS[n].flows for n in business_admin_tools),
           "系统级工具不出现在任何教学流里")
     # 账号治理（2026-10-08）：preview 只读、import / delete 是写操作必须挂审批闸门（与 P2c 同一约定）
     check(registry.TOOLS["preview_account_import"].approval is None,

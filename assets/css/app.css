@@ -621,7 +621,7 @@
 .composer__acts .btn.is-stopping { background: var(--surface-3); color: var(--text-2); }
 .composer__acts .btn.is-stopping:hover { background: var(--border-soft); color: var(--text); }
 
-/* 待发送附件区（智能助手 · 上传文件；仅管理员端启用） */
+/* 待发送附件区（三端智能体共用） */
 .att-tray { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 2px 9px; }
 .att-tray[hidden] { display: none; }
 .att-chip {
@@ -630,15 +630,34 @@
   background: var(--surface-2); border: 1px solid var(--border-soft);
   font-size: 12.5px; color: var(--text-2); line-height: 1.5;
 }
+.att-chip--image { position: relative; width: 64px; height: 64px; justify-content: center; padding: 3px; overflow: hidden; }
+.att-chip__thumb {
+  width: 56px; height: 56px; flex: 0 0 56px; object-fit: cover;
+  border-radius: 5px; background: var(--surface-3); cursor: zoom-in;
+}
+.att-chip__image-fallback { font-size: 11px; color: var(--text-3); }
 .att-chip svg { width: 13px; height: 13px; flex: 0 0 13px; color: var(--brand-400); }
-.att-chip__name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.att-chip__name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .att-chip__del {
   display: inline-grid; place-items: center; width: 14px; height: 14px;
   border-radius: 50%; cursor: pointer; color: var(--text-3); flex: 0 0 auto;
 }
+.att-chip--image .att-chip__del { position: absolute; top: 4px; right: 4px; background: rgba(0,0,0,.72); color: #fff; }
+.att-chip--image .att-chip__del svg { color: #fff; }
 .att-chip__del:hover { background: var(--surface-3); color: var(--text); }
 .att-chip__del svg { width: 10px; height: 10px; color: var(--text-3); }
 .att-chip__del:hover svg { color: var(--text); }
+.bubble__atts { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.bubble__att-image { display: flex; align-items: flex-start; max-width: 100%; }
+.bubble__att-thumb {
+  display: block; max-width: min(100%, 320px); max-height: 240px; object-fit: contain;
+  border-radius: 7px; background: var(--surface-3); cursor: zoom-in;
+}
+.att-image-preview { display: grid; place-items: center; min-height: 220px; width: 100%; }
+.att-image-preview img {
+  display: block; width: min(100%, 1120px); height: min(78vh, 760px);
+  object-fit: contain; border-radius: 7px; background: #111;
+}
 .chat__tipbar { display: flex; align-items: center; gap: 8px; margin-top: 7px; font-size: 12px; color: var(--text-3); flex-wrap: wrap; }
 
 /* 打字指示 */
@@ -1428,4 +1447,18 @@
   overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-gutter: stable;
+}
+/* 在线文档阅读：扩大默认窗口，并保留全屏时的页码与退出操作。 */
+.resource-reader .modal { width: min(1280px, 100%); max-width: 1280px; height: 90vh; max-height: 90vh; }
+.resource-reader .modal__body { display: flex; flex-direction: column; min-height: 0; padding: 12px 20px; }
+.resource-reader .modal__head, .resource-reader .modal__foot { flex-shrink: 0; }
+.resource-reader .modal__head h3 { min-width: 0; display: block; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.resource-reader__fullscreen { flex: 0 0 auto; white-space: nowrap; }
+.resource-reader .modal__body > .row { flex-shrink: 0; flex-wrap: wrap; }
+.resource-reader__frame { display: block; width: 100%; flex: 1; min-height: 0; border: 0; border-radius: var(--r-md); background: #fff; }
+.resource-reader:fullscreen, .resource-reader.resource-reader--expanded { padding: 0; background: var(--surface); }
+.resource-reader:fullscreen .modal, .resource-reader--expanded .modal { width: 100%; max-width: none; height: 100vh; height: 100dvh; max-height: none; border: 0; border-radius: 0; animation: none; }
+@media (max-width: 600px) {
+  .resource-reader { padding: 8px; }
+  .resource-reader .modal__foot { flex-wrap: wrap; }
 }

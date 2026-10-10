@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import json
 import queue
 import re
@@ -19,7 +20,7 @@ from app.agent_st.rag.topic import looks_like_course_question
 # 注册工具（import 即注册；逐个显式列出，避免依赖 tools/__init__ 的副作用）
 from app.agent_st.agent.tools import (admin_delete, admin_import, admin_ops,  # noqa: F401
                                       analytics, bank, draft, plan, rag,
-                                      teacher_analytics, topic, validate)
+                                      teacher_analytics, topic, validate, ui_actions)
 
 Event = dict  # run_turn 产出的事件统一为 dict：{"type": ...}
 
@@ -106,25 +107,19 @@ def _demo_explain(message: str, ctx: ToolContext) -> str:
     retrieval = ctx.turn.get("retrieval") or {}
     hits = retrieval.get("hits") or []
     topic = ctx.turn.get("topic") or {}
-    where = " ".join(filter(None, [topic.get("chapter_name") or "", topic.get("kp_name") or ""]))
-    lines = [
-        "【演示模式，未配置 LLM_API_KEY】",
-        "",
-        f"结论：该问题对应 {topic.get('course_title') or '本课'} {where}。",
-        "",
-    ]
+    topic_name = topic.get("kp_name") or topic.get("chapter_name") or ""
     if retrieval.get("empty") or not hits:
-        lines.append("未检索到课程原文。")
-        lines.append("【补充】以下内容基于课程常识，并非教材或题库原文，请以课堂材料为准。")
-        lines.append("请补充章节、知识点或题号，或换一种问法，以便引用原文。")
+        lines = ["【演示模式】当前只提供检索结果，未生成完整讲解。",
+                 "未检索到匹配的课程资料；请补充具体知识点或题目内容后再试。"]
         return "\n".join(lines)
-    lines.insert(1, "以下讲解根据检索片段整理。")
-    for hit in hits[:3]:
-        qid = hit.get("q_id")
-        cite = f"[题号 {qid}]" if qid else f"[知识点 {hit.get('kp_id') or '未标注'}]"
-        lines.append(f"依据：{hit.get('text', '')[:220]} {cite}")
-        lines.append("")
-    lines.append("易错点：请以引用片段为准；若需课外说明请看【补充】并自行核对教材。")
+    lines = ["【演示模式】当前只提供检索结果，未生成完整讲解。"]
+    if topic_name:
+        lines.append(f"相关知识点：{topic_name}")
+    lines.append("相关课程资料：")
+    for hit in hits[:2]:
+        excerpt = " ".join(str(hit.get("text") or "").split())[:220]
+        if excerpt:
+            lines.append(f"- {excerpt}")
     return "\n".join(lines)
 
 
@@ -602,6 +597,10 @@ def _explain_out_of_scope(ctx: ToolContext, message: str) -> bool:
     本来就不依赖教材检索，数据来自库；本轮调用过这类工具就不能判成"超出课程材料范围"。
     集合见 `analytics_tool_names()`。
     """
+    # 界面帮助以当前角色操作目录为依据，不需要课程教材检索。
+    # 只认工具本轮成功查到的目录，失败调用不能豁免越界判断。
+    if (ctx.turn.get("system_guide") or {}).get("found"):
+        return False
     used = {e.get("name") for e in (ctx.tool_log or []) if isinstance(e, dict)}
     if used & analytics_tool_names():
         return False
@@ -617,9 +616,9 @@ def _explain_out_of_scope(ctx: ToolContext, message: str) -> bool:
 
 
 def attachment_ground_text(attachments: list) -> str:
-    """把附件抽取出的文本拼成「追加到本轮用户消息」的补充材料。
+    """把文档附件抽取出的文本拼成「追加到本轮用户消息」的补充材料。
 
-    只在内存里拼，不写库；历史会话仅保留文件名（见 attachment_log_entries）。
+    只在内存里拼，不写库；历史会话仅保留附件引用与展示元数据（见 attachment_log_entries）。
     """
     parts = []
     for a in attachments or []:
@@ -628,15 +627,46 @@ def attachment_ground_text(attachments: list) -> str:
     return ("\n\n" + "\n\n".join(parts)) if parts else ""
 
 
-def attachment_log_entries(attachments: list) -> list | None:
-    """附件随消息落库的标记（chat_messages.tool_log，不建表）。
+def attachment_image_parts(attachments: list, *, sdk_input: bool = False) -> list[dict]:
+    """将本轮图片转换为当前模型适配器所需的多模态内容块。"""
+    parts = []
+    for attachment in attachments or []:
+        if not isinstance(attachment, dict):
+            continue
+        image_bytes = attachment.get("image_bytes")
+        image_mime = attachment.get("image_mime")
+        if not isinstance(image_bytes, bytes) or not image_bytes or not image_mime:
+            continue
+        data_url = f"data:{image_mime};base64,{base64.b64encode(image_bytes).decode('ascii')}"
+        name = str(attachment.get("name") or "图片")
+        if sdk_input:
+            parts.extend((
+                {"type": "input_text", "text": f"【用户上传图片：{name}】"},
+                {"type": "input_image", "image_url": data_url, "detail": "auto"},
+            ))
+        else:
+            parts.extend((
+                {"type": "text", "text": f"【用户上传图片：{name}】"},
+                {"type": "image_url", "image_url": {"url": data_url, "detail": "auto"}},
+            ))
+    return parts
 
-    历史消息接口会把 tool_log 原样返回，前端据此在用户气泡上回显附件名。
-    """
-    files = [
-        {"name": str(a.get("name") or "文件"), "chars": int(a.get("chars") or 0)}
-        for a in (attachments or []) if isinstance(a, dict) and a.get("name")
-    ]
+
+def attachment_log_entries(attachments: list) -> list | None:
+    """构造写入 chat_messages.tool_log 的附件引用与展示元数据，不包含文件字节。"""
+    files = []
+    for attachment in attachments or []:
+        if not isinstance(attachment, dict) or not attachment.get("name"):
+            continue
+        item = {
+            "name": str(attachment.get("name") or "文件"),
+            "chars": int(attachment.get("chars") or 0),
+        }
+        if attachment.get("attachment_id"):
+            item["attachmentId"] = str(attachment["attachment_id"])
+            item["mimeType"] = str(attachment.get("mime_type") or "application/octet-stream")
+            item["size"] = int(attachment.get("size") or 0)
+        files.append(item)
     return [{"kind": "attach", "files": files}] if files else None
 
 
@@ -712,13 +742,19 @@ def run_turn(
     # 检索工具统一从 extra['courseId'] 取课程，这里保证它一定被填上
     if store.course_id:
         extra.setdefault("courseId", store.course_id)
-    # 上传附件（附到当前问题）：正文只注入本轮 prompt（见下方 messages 处理），
-    # 消息本身仅落一条 {kind:'attach'} 标记 —— 历史会话据此回显文件名，不落正文。
+    # 上传附件（附到当前问题）：文档文本和图片只进入本轮模型输入，
+    # 消息本身只落附件引用与展示元数据，不落正文或图片字节。
     attachments = [a for a in (extra.get("attachments") or []) if isinstance(a, dict)]
     store.add_message(session_id, "user", message, tool_log=attachment_log_entries(attachments))
     ctx = ToolContext(store=store, flow_id=flow_id, extra=extra, user_id=user_id or store.user_id)
 
-    if not llm.chat_available():
+    live_model_available = llm.chat_available()
+    if any(a.get("image_bytes") for a in attachments) and not live_model_available:
+        yield {"type": "error", "message": "当前处于演示模式，图片识别需要配置支持视觉输入的模型和 API Key"}
+        yield {"type": "done"}
+        return
+
+    if not live_model_available:
         final = ""
         stopped = False
         for event in _demo_turn(flow_id, message, ctx):
@@ -765,10 +801,19 @@ def run_turn(
     messages.extend(history)
     # 附件正文注入「本轮用户消息」：只改内存里的 LLM 消息，不写库、不影响历史其它轮
     _ground = attachment_ground_text(attachments)
-    if _ground:
+    _image_parts = attachment_image_parts(attachments)
+    if _ground or _image_parts:
         for _m in reversed(messages):
             if _m.get("role") == "user":
-                _m["content"] = (_m.get("content") or "") + _ground
+                current_content = _m.get("content") or ""
+                if not isinstance(current_content, str):
+                    current_content = str(current_content)
+                if _image_parts:
+                    text_content = current_content + _ground
+                    _m["content"] = ([{"type": "text", "text": text_content}]
+                                     if text_content else []) + _image_parts
+                else:
+                    _m["content"] = current_content + _ground
                 break
     whitelist = flow.get("tools") or persona.get("tools") or []
     tools = openai_tools(flow_id, whitelist, role=role)

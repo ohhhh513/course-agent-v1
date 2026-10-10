@@ -37,7 +37,7 @@ Event = dict
 
 # 注册工具（与 runtime 保持一致： import 即注册，逐个显式列出）
 from .tools import (admin_ops, analytics, bank, draft, plan, rag,  # noqa: E402,F401
-                    teacher_analytics, topic, validate)
+                    teacher_analytics, topic, validate, ui_actions)
 
 _SDK_ERROR: str = ""
 try:  # 依赖缺失时不炸 import，交给 available() 判断
@@ -120,6 +120,7 @@ async def _run_async(message: str, flow_id: str, session_id: str, context: dict 
     """真正的执行体（异步）：跑一轮 SDK Agent，把事件交给 emit。"""
     from ..rag.ingest import ensure_bank_indexed
     from .runtime import (_citations_from_turn, _explain_out_of_scope, attachment_ground_text,
+                          attachment_image_parts,
                           action_events, persist_side_effects)
 
     settings = get_settings()
@@ -157,7 +158,11 @@ async def _run_async(message: str, flow_id: str, session_id: str, context: dict 
     agent = Agent(name=persona.get("name") or "course_tutor", instructions=instructions,
                   model=model, tools=tools)
 
-    run_input = list(history) + [{"role": "user", "content": message + attachment_ground_text(_atts)}]
+    user_content = message + attachment_ground_text(_atts)
+    image_parts = attachment_image_parts(_atts, sdk_input=True)
+    if image_parts:
+        user_content = [{"type": "input_text", "text": user_content}, *image_parts]
+    run_input = list(history) + [{"role": "user", "content": user_content}]
     result = Runner.run_streamed(agent, input=run_input, context=ctx, max_turns=max_turns)
 
     async for ev in result.stream_events():

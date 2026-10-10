@@ -8,7 +8,7 @@ AI 智能答疑接口：/ai/*
 """
 import json, uuid
 from fastapi import APIRouter, Depends, Body, Query, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from typing import Optional
@@ -80,9 +80,13 @@ def ai_delete_session(
     ).first()
     if not s:
         return fail("会话不存在", 404)
+    from ..services.chat_attachments import delete_chat_attachments, session_attachment_ids
+
+    attachment_ids = session_attachment_ids(db, session_id)
     db.query(ChatMessage).filter(ChatMessage.session_id == session_id).delete()
     db.delete(s)
     db.commit()
+    delete_chat_attachments(attachment_ids)
     return ok({"sessionId": session_id, "deleted": True})
 
 
@@ -113,6 +117,36 @@ def ai_session_messages(
         for m in rows
     ]
     return ok(items)
+
+
+@router.get("/sessions/{session_id}/attachments/{attachment_id}")
+def ai_session_attachment(
+    session_id: str,
+    attachment_id: str,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user),
+    course_id: str = Depends(get_current_course_id),
+):
+    """Return a file only when its reference belongs to the current user's course session."""
+    from ..services.chat_attachments import find_session_attachment, resolve_chat_attachment
+
+    session = db.query(ChatSession).filter(
+        ChatSession.session_id == session_id,
+        ChatSession.user_id == user.user_id,
+        ChatSession.course_id == course_id,
+    ).first()
+    if not session:
+        return JSONResponse(status_code=404, content=fail("会话不存在", 404))
+    attachment = find_session_attachment(db, session_id, attachment_id)
+    path = resolve_chat_attachment(attachment_id) if attachment else None
+    if not attachment or not path:
+        return JSONResponse(status_code=404, content=fail("附件不存在或已清理", 404))
+    return FileResponse(
+        path,
+        media_type=attachment.get("mimeType") or "application/octet-stream",
+        filename=attachment.get("name") or "attachment",
+        headers={"Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"},
+    )
 
 
 @router.get("/suggest-questions")
@@ -276,9 +310,14 @@ async def ai_chat_stream(
             return JSONResponse(status_code=400, content=fail("请输入问题内容后再发送"))
         raw_files = [f for f in form.getlist("files") if getattr(f, "filename", None)]
         try:
-            attachments, _ = await collect_attachments(raw_files)
+            attachments, raw_uploads = await collect_attachments(raw_files)
         except AttachmentError as exc:
             return JSONResponse(status_code=400, content=fail(str(exc)))
+        from ..services.chat_attachments import ChatAttachmentStorageError, persist_chat_uploads
+        try:
+            persist_chat_uploads(raw_uploads, attachments)
+        except ChatAttachmentStorageError:
+            return JSONResponse(status_code=500, content=fail("附件保存失败，请重新上传"))
         req = ChatReq(sessionId=session_id, question=question)
         if attachments:
             extra = {"attachments": attachments}

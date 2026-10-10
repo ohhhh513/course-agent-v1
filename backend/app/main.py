@@ -14,7 +14,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 import os
+import sys
 import traceback
+from pathlib import Path
 
 from .config import settings
 from .database import init_db
@@ -281,8 +283,31 @@ def _ensure_data_dirs() -> None:
 
 
 # ========== 启动事件 ==========
+def _runtime_environment_name() -> str:
+    """返回当前解释器实际运行的 Conda/venv 环境名，未处于虚拟环境时标记 system。"""
+    prefix = Path(sys.prefix).resolve()
+    conda_prefix = os.environ.get("CONDA_PREFIX", "").strip()
+    if conda_prefix and Path(conda_prefix).resolve() == prefix:
+        return os.environ.get("CONDA_DEFAULT_ENV", "").strip() or prefix.name
+
+    if (prefix / "conda-meta").is_dir():
+        if (prefix / "envs").is_dir():
+            return "base"
+        return prefix.name
+
+    if Path(sys.base_prefix).resolve() != prefix:
+        return prefix.name
+    return "system"
+
+
 @app.on_event("startup")
 def on_startup():
+    python_version = ".".join(str(part) for part in sys.version_info[:3])
+    print(
+        f"[runtime] environment={_runtime_environment_name()} Python={python_version}",
+        flush=True,
+    )
+
     if settings.JWT_SECRET_AUTO:
         print(
             "[SECURITY WARNING] JWT_SECRET 未通过环境变量设置，已使用本次启动随机密钥；"

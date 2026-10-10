@@ -8,6 +8,7 @@ import re
 import struct
 import zipfile
 import shutil
+import codecs
 from pathlib import Path
 from datetime import datetime
 from typing import Tuple
@@ -61,6 +62,11 @@ def res_url(course_id: str, res_id: str, filename: str) -> str:
     return resource_url(f"{course_id or DEFAULT_COURSE_ID}/{res_id}/{filename}")
 
 
+def presentation_preview_url(url: str) -> str:
+    """PPT 原件旁的派生 PDF；不占用数据库列，也不会覆盖同名 PDF 原件。"""
+    return url + ".preview.pdf" if str(url or "").lower().endswith((".ppt", ".pptx")) else ""
+
+
 def url_to_path(url: str):
     """把资源 URL 反解为磁盘路径。
 
@@ -109,13 +115,165 @@ def cleanup_empty_dirs(path, retries: int = 2, delay: float = 0.3):
             break
         d = d.parent
 
-LABEL = {"video": "教学视频", "doc": "教材文献", "ppt": "课堂PPT", "quiz": "题库"}
 TYPE_BG = {
     "video": ("#0f172a", "#1e3a8a"),
     "doc":   ("#0f172a", "#166534"),
     "ppt":   ("#0f172a", "#9a3412"),
     "quiz":  ("#0f172a", "#7c3aed"),
 }
+
+RESOURCE_TYPE_EXTENSIONS = {
+    "doc": {".pdf", ".doc", ".docx", ".txt"},
+    "ppt": {".pdf", ".ppt", ".pptx"},
+    "video": {".mp4", ".mov", ".webm", ".mkv"},
+}
+
+
+class ResourceValidationUnavailable(RuntimeError):
+    """Raised when a required format validator is missing from the runtime."""
+
+
+def _validate_ole_office(file_obj, resource_type: str) -> bool:
+    try:
+        import olefile
+    except ImportError as exc:
+        raise ResourceValidationUnavailable(
+            "服务器缺少 olefile，暂时无法验证旧版 DOC/PPT 文件；请安装项目依赖后重试。"
+        ) from exc
+
+    with olefile.OleFileIO(file_obj) as ole:
+        streams = {entry[-1].casefold() for entry in ole.listdir() if entry}
+        if resource_type == "doc":
+            return "worddocument" in streams and bool({"0table", "1table"} & streams)
+        return "powerpoint document" in streams
+
+
+def _validate_text_file(file_obj) -> bool:
+    for encoding in ("utf-8-sig", "gb18030"):
+        file_obj.seek(0)
+        decoder = codecs.getincrementaldecoder(encoding)()
+        has_content = False
+        try:
+            while True:
+                chunk = file_obj.read(64 * 1024)
+                if not chunk:
+                    break
+                decoded = decoder.decode(chunk)
+                if any(ord(char) == 0 or (ord(char) < 32 and char not in "\r\n\t\f") for char in decoded):
+                    raise UnicodeError("binary control character")
+                has_content = has_content or bool(decoded.strip())
+            tail = decoder.decode(b"", final=True)
+            if any(ord(char) == 0 or (ord(char) < 32 and char not in "\r\n\t\f") for char in tail):
+                raise UnicodeError("binary control character")
+            return has_content or bool(tail.strip())
+        except UnicodeError:
+            continue
+    return False
+
+
+def _validate_iso_video(file_obj, ext: str) -> bool:
+    file_obj.seek(0, 2)
+    file_size = file_obj.tell()
+    file_obj.seek(0)
+    position = 0
+    has_file_type = False
+    has_quicktime_movie = False
+    has_video_data = False
+    box_count = 0
+    while position + 8 <= file_size and box_count < 10000:
+        file_obj.seek(position)
+        header = file_obj.read(16)
+        if len(header) < 8:
+            return False
+        box_size = int.from_bytes(header[:4], "big")
+        box_type = header[4:8]
+        header_size = 8
+        if box_size == 1:
+            if len(header) < 16:
+                return False
+            box_size = int.from_bytes(header[8:16], "big")
+            header_size = 16
+        elif box_size == 0:
+            box_size = file_size - position
+        if box_size < header_size or position + box_size > file_size:
+            return False
+        has_file_type = has_file_type or box_type == b"ftyp"
+        has_quicktime_movie = has_quicktime_movie or box_type == b"moov"
+        has_video_data = has_video_data or box_type in (b"moov", b"mdat", b"moof")
+        position += box_size
+        box_count += 1
+    has_container = has_file_type or (ext == ".mov" and has_quicktime_movie)
+    return has_container and has_video_data and position == file_size
+
+
+def _validate_ebml_video(file_obj, header: bytes) -> bool:
+    file_obj.seek(0, 2)
+    file_size = file_obj.tell()
+    file_obj.seek(0)
+    container_header = file_obj.read(min(file_size, 64 * 1024))
+    return (
+        len(header) >= 4
+        and header.startswith(b"\x1a\x45\xdf\xa3")
+        and file_size > 32
+        and (b"matroska" in container_header[:4096] or b"webm" in container_header[:4096])
+        and b"\x18\x53\x80\x67" in container_header
+    )
+
+
+def validate_resource_upload(file_obj, filename: str, selected_type: str) -> str:
+    """Validate a teacher-selected resource category against its suffix and file content.
+
+    Returns an error message when the upload must be rejected, otherwise an empty string.
+    The stream is rewound so the caller can safely save it after validation.
+    """
+    ext = Path(filename).suffix.lower()
+    if selected_type not in RESOURCE_TYPE_EXTENSIONS:
+        return "请选择教材文献、课件或教学视频。"
+    if ext not in RESOURCE_TYPE_EXTENSIONS[selected_type]:
+        return "所选资源类型与文件扩展名不匹配，请检查分类和文件后缀。"
+
+    try:
+        file_obj.seek(0)
+        head = file_obj.read(4096)
+        file_obj.seek(0)
+        if ext == ".pdf":
+            if b"%PDF-" not in head[:1024]:
+                valid = False
+            else:
+                from pypdf import PdfReader
+
+                pdf = PdfReader(file_obj, strict=False)
+                valid = pdf.is_encrypted or len(pdf.pages) > 0
+        elif ext == ".txt":
+            valid = _validate_text_file(file_obj)
+        elif ext in (".docx", ".pptx"):
+            required_file = "word/document.xml" if ext == ".docx" else "ppt/presentation.xml"
+            expected_type = (b"wordprocessingml.document.main+xml" if ext == ".docx"
+                             else b"presentationml.presentation.main+xml")
+            with zipfile.ZipFile(file_obj) as package:
+                names = set(package.namelist())
+                if "[Content_Types].xml" not in names or required_file not in names:
+                    valid = False
+                else:
+                    with package.open("[Content_Types].xml") as content_types:
+                        type_xml = content_types.read(1024 * 1024 + 1)
+                    valid = len(type_xml) <= 1024 * 1024 and expected_type in type_xml
+        elif ext in (".doc", ".ppt"):
+            valid = _validate_ole_office(file_obj, selected_type)
+        elif ext in (".mp4", ".mov"):
+            valid = _validate_iso_video(file_obj, ext)
+        else:
+            valid = _validate_ebml_video(file_obj, head)
+    except ResourceValidationUnavailable:
+        raise
+    except Exception:
+        valid = False
+    finally:
+        file_obj.seek(0)
+
+    if not valid:
+        return "文件内容与所选资源类型不符，或文件已损坏；请重新选择正确的 PDF、DOC/DOCX、PPT/PPTX 或视频文件。"
+    return ""
 
 
 def _find_font(size: int):
@@ -234,12 +392,9 @@ def pptx_pages(path: Path) -> int:
 def guess_type(filename: str) -> Tuple[str, str]:
     """(资源类型, 扩展名)"""
     ext = Path(filename).suffix.lower()
-    if ext in (".mp4", ".mov", ".webm", ".mkv"):
-        return "video", ext
-    if ext in (".ppt", ".pptx"):
-        return "ppt", ext
-    if ext in (".pdf", ".doc", ".docx", ".txt"):
-        return "doc", ext
+    for resource_type, extensions in RESOURCE_TYPE_EXTENSIONS.items():
+        if ext in extensions:
+            return resource_type, ext
     return "", ext
 
 
@@ -301,13 +456,7 @@ def generate_cover(res_id: str, title: str, rtype: str) -> str:
             b = int(int(c1[5:7], 16) * (1 - ratio) + int(c2[5:7], 16) * ratio)
             draw.line([(0, y), (W, y)], fill=(r, g, b))
 
-        font_label = _find_font(18) or ImageFont.load_default()
         font_title = _find_font(26) or ImageFont.load_default()
-
-        # 类型标签
-        label = LABEL.get(rtype, rtype)
-        draw.rectangle([16, 16, 16 + len(label) * 20, 42], fill="rgba(255,255,255,0.92)" if False else "#ffffff")
-        draw.text((20, 18), label, fill="#1f2937", font=font_label)
 
         # 标题（居中，自动截断）
         max_w = W - 40

@@ -4,7 +4,10 @@ roles: [student, teacher]            # 谁可以用这条流（服务端按登�
 persona: course_tutor
 skills:
   - explain.md
+  - system_guide.md
 tools:
+  - get_system_guide
+  - prepare_ui_action
   - resolve_topic
   - retrieve_chunks
   - get_question
@@ -21,9 +24,11 @@ tools:
   - hot_wrong_questions
 max_steps: 6
 steps:
-  - 用 resolve_topic 定位本课程的章(CH0x)与知识点(KP0xx)；text 传用户原话整句，禁止拆词或自判知识点；上下文若有 q_id 必须传入
-  - 即使 uncertain=true，仍用用户原话调用 retrieve_chunks，不要拒绝检索
-  - 若有 q_id，调用 get_question（默认不要 include_answer）
-  - 必须调用 retrieve_chunks，source_types 默认 question_analysis、textbook、ppt
-  - 有命中则关键断言标注 [题号 q_id] 或 [知识点 KP0xx]；命中不足时用【补充】声明非课程原文，禁止伪造引用
-  - 按 explain.md 结构讲解（结论 → 依据 → 可选补充 → 易错点）
+  - 先区分系统操作帮助、当前角色的学情数据查询和课程知识讲解，混合问题分别查询必要依据
+  - 按本轮语义和最近对话识别操作及资料入口追问，承接唯一指代对象；先 get_system_guide 核实，目标明确且有入口必须 prepare_ui_action，询问 auto=false 给真实按钮，明确操作 auto=true 打开；多个对象先澄清，纯知识解释不强制导航；不自动保存、发送、加入或正式导入
+  - 学情数据问题按 explain.md 使用当前角色的只读查询工具，不要求教材检索
+  - 只有课程知识讲解才用 resolve_topic 定位本课程的章和知识点；text 传用户原话整句，禁止拆词或自判知识点；上下文若有 q_id 必须传入
+  - 课程讲解即使 uncertain=true，仍用用户原话调用 retrieve_chunks；若有 q_id 调用 get_question（默认不要 include_answer）；retrieve_chunks 的 source_types 默认 question_analysis、textbook、ppt
+  - 依据检索结果作答；正文使用题目和知识点名称，不主动输出 q_id / KP 编号，用户询问编号或需要区分对象时才提供；命中不足时用【补充】声明非课程原文，禁止伪造引用
+  - 引用来源由系统通过 citations 事件单独展示；按 explain.md 简洁回答，保留解释结论所需的关键依据，不凑固定结构
+  - 回答范围以用户问题为准；排名默认最多三项，列完后直接结束，不追加总结、建议或邀请

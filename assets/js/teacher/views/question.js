@@ -529,6 +529,7 @@
             </button>
           </div>
           <button class="btn btn--sm" id="bankNew">${icon('pencil')} 新建题目</button>
+          <button class="btn btn--sm" id="bankImport">导入题目</button>
         </div>
         <div class="card__body card__body--flush">
           <div class="tbl-wrap bank-table-scroll"><table class="tbl" id="bankTbl"></table></div>
@@ -558,6 +559,7 @@
       this._renderBankDirBtn(box);
       U.$('#bankSearch', box).addEventListener('input', e => { this.bankKeyword = e.target.value.trim(); this.bankPage = 1; this.loadBank(); });
       U.$('#bankNew', box).addEventListener('click', () => openNewQuestionModal(() => this.loadBank()));
+      U.$('#bankImport', box).addEventListener('click', () => AgentUI.openImport());
       this.loadBank();
     },
 

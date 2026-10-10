@@ -32,6 +32,10 @@ class Settings(BaseSettings):
     PORT: int = 8000
     DEBUG: bool = False  # 生产环境关闭调试（关闭 SQL 日志与报错栈外泄）
 
+    # 课件在线预览：只需在后端机器安装 LibreOffice；空路径时自动查找。
+    LIBREOFFICE_PATH: str = ""
+    PRESENTATION_CONVERT_TIMEOUT: int = 120
+
     # CORS（生产环境通过环境变量 CORS_ORIGINS 设置，默认仅允许同源 127.0.0.1:8000）
     CORS_ORIGINS: str = os.getenv("CORS_ORIGINS", "http://127.0.0.1:8000,http://localhost:8000")
 

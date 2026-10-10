@@ -160,7 +160,7 @@
     },
 
     _card(r) {
-      const label = { video: '教学视频', ppt: '课堂PPT', doc: '教材文献', quiz: '题库' };
+      const label = { video: '教学视频', ppt: '课件', doc: '教材文献', quiz: '题库' };
       const tags = (r.tags || []).map(t => `<span class="badge badge--outline">${U.esc(t.name)}</span>`).join('');
       return `
       <div class="res tr-res" data-res="${r.resId}">
@@ -168,7 +168,6 @@
         <button class="btn btn--ghost btn--icon btn--sm tr-del" data-res="${r.resId}" data-title="${U.esc(r.title)}" title="删除">${icon('x')}</button>
         <div class="res__thumb res__thumb--${r.type}">
           <img class="res__cover" src="${r.cover}" alt="" loading="lazy" onerror="this.remove()">
-          <span class="res__type-label">${label[r.type]}</span>
           ${r.duration ? `<span class="res__dur">${r.duration}</span>` : ''}
           ${r.pages ? `<span class="res__dur">${r.pages} 页</span>` : ''}
         </div>
@@ -184,13 +183,14 @@
     openUploadModal() {
       const body = `
       <form id="trUploadForm" class="stack" style="gap:14px">
-        <label class="stack" style="gap:4px"><span class="fz-12 t-dim">选择文件</span><input class="input" type="file" id="trFile" accept=".mp4,.pdf,.ppt,.pptx,.doc,.docx" required></label>
+        <label class="stack" style="gap:4px"><span class="fz-12 t-dim">资源类型</span><select class="select" id="trResourceType" required><option value="" selected disabled>请先选择资源类型</option><option value="doc">教材文献</option><option value="ppt">课件</option><option value="video">教学视频</option></select></label>
+        <label class="stack" style="gap:4px"><span class="fz-12 t-dim">选择文件</span><input class="input" type="file" id="trFile" required disabled></label>
         <label class="stack" style="gap:4px"><span class="fz-12 t-dim">资源标题</span><input class="input" type="text" id="trTitle" placeholder="默认使用文件名"></label>
         <label class="stack" style="gap:4px"><span class="fz-12 t-dim">所属章节</span><select class="select" id="trChapter"><option value="">自动识别章节</option></select></label>
         <label class="stack" style="gap:4px"><span class="fz-12 t-dim">挂载知识点</span><select class="select" id="trKp"><option value="">（不挂具体知识点）</option></select></label>
         <label class="stack" style="gap:4px"><span class="fz-12 t-dim">资源分类</span><select class="select" id="trCat"><option value="other">课外/教材</option><option value="knowledge">知识点挂载</option></select></label>
         <div class="stack" style="gap:4px"><span class="fz-12 t-dim">多标签（可选）</span><div id="trTags"></div></div>
-        <p class="fz-12 t-dim">支持 MP4 / PDF / PPT / DOC；上传后自动解析时长或页数。<br>其中 <b>PDF / PPT / TXT / JSON</b> 会自动做 RAG 切片，上传完成后即可被 AI 答疑检索。</p>
+        <p class="fz-12 t-dim">教材文献支持 PDF / DOC / DOCX / TXT；课件支持 PDF / PPT / PPTX；教学视频支持 MP4 / MOV / WEBM / MKV。PPT/PPTX 上传时自动转为 PDF 供在线阅读，并保留原文件；转换需要一些时间。上传前会核对文件内容与所选类型。</p>
       </form>`;
 
       const footer = `<button class="btn btn--primary" id="trSubmit" type="button">${icon('upload')} 开始上传</button><button class="btn" data-close>取消</button>`;
@@ -202,10 +202,12 @@
         onMount(ov, close) {
           const self = TeacherResource;
           const fileIn = U.$('#trFile', ov);
+          const typeIn = U.$('#trResourceType', ov);
           const titleIn = U.$('#trTitle', ov);
           const chSel = U.$('#trChapter', ov);
           const kpSel = U.$('#trKp', ov);
           const tagPicker = window.TagPicker.mount(U.$('#trTags', ov), []);
+          TeacherResourceUpload.attach(typeIn, fileIn);
 
           // 二级联动：选章节 → 只列出该章节下的知识点
           const fillKp = (chapterName) => {
@@ -280,11 +282,13 @@
 
           U.$('#trSubmit', ov).addEventListener('click', () => {
             const f = fileIn.files[0];
-            if (!f) { Toast.error('请先选择文件'); return; }
+            const typeError = TeacherResourceUpload.validate(typeIn.value, f);
+            if (typeError) { Toast.error('无法上传', typeError); return; }
             const selected = kpSel.options[kpSel.selectedIndex];
             const kpId = selected ? (selected.dataset.kpId || '') : '';
             const fd = new FormData();
             fd.append('file', f);
+            fd.append('resourceType', typeIn.value);
             fd.append('title', titleIn.value.trim());
             // 选了具体知识点用知识点名；否则退化为章节名（后端还会按文件名兜底识别）
             fd.append('kp', kpId ? kpSel.value : (chSel.value || ''));
@@ -292,7 +296,7 @@
             fd.append('category', U.$('#trCat', ov).value);
             fd.append('tagIds', JSON.stringify(tagPicker.getTagIds()));
             const btn = U.$('#trSubmit', ov);
-            btn.disabled = true; btn.textContent = '上传中…';
+            btn.disabled = true; btn.textContent = /\.pptx?$/i.test(f.name) ? '上传并转换中…' : '上传中…';
             API.teacher.uploadResource(fd).then(r => {
               const rag = (r && r.rag) || {};
               Toast.ok('上传成功');

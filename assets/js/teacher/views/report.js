@@ -75,10 +75,13 @@
 
     async openGen() {
       const reportView = this;
+      const courseAtOpen = API.config.activeCourseId, login = JSON.stringify(Auth.getSession());
+      const isCurrent = () => login === JSON.stringify(Auth.getSession()) && Router.current === 'report';
       const [courses, kps] = await Promise.all([
         API.course.my().then(r => Array.isArray(r) ? r : []).catch(() => []),
         API.teacher.resourceKps().then(d => (d && d.chapters) || []).catch(() => [])
       ]);
+      if (!isCurrent() || courseAtOpen !== API.config.activeCourseId) return;
       const currentCourseId = API.config.activeCourseId || (courses[0] && courses[0].courseId) || '';
       const courseOptions = courses.length ? courses : (currentCourseId ? [{ courseId: currentCourseId, name: currentCourseId }] : []);
       // 统计范围（章节）以真实图谱章节为准，按「第N章」归一去重，避免短名与全名同显造成重复。
@@ -130,12 +133,13 @@
           const scopeInputs = U.$$('#rgScope input[name="rgCourse"]', ov);
           const startInput = U.$('#rgStart', ov);
           const endInput = U.$('#rgEnd', ov);
+          let generating = false;
           const updateScopeCount = () => {
             const count = scopeInputs.filter(input => input.checked).length;
             const countEl = U.$('#rgScopeCount', ov);
             const generateButton = U.$('#rgGo', ov);
             if (countEl) countEl.textContent = `已选 ${count} 个章节`;
-            if (generateButton) generateButton.disabled = count === 0;
+            if (generateButton) generateButton.disabled = generating || count === 0;
           };
           const syncDateRange = () => {
             if (!startInput || !endInput) return;
@@ -151,38 +155,50 @@
           updateScopeCount();
           syncDateRange();
           U.$('#rgGo', ov).addEventListener('click', () => {
+            if (generating || reportView._generating || !isCurrent() || courseAtOpen !== API.config.activeCourseId) return;
             const selectedCourses = scopeInputs.filter(input => input.checked).map(input => input.value);
             const startDate = startInput && startInput.value;
             const endDate = endInput && endInput.value;
             if (!selectedCourses.length) return Toast.warn('请至少选择一个统计章节');
             if (!startDate || !endDate) return Toast.warn('请选择完整的日期范围');
             if (startDate > endDate) return Toast.warn('开始日期不能晚于结束日期');
+            if (startDate < minDate || endDate > maxDate) return Toast.warn('请选择最近一年内的日期');
             const sections = U.$$('#rgSec .chip.is-active', ov).map(c => c.textContent);
             if (!sections.length) return Toast.warn('请至少选择一个报告部分');
             const courseId = U.$('#rgCourse', ov).value || currentCourseId;
             if (!courseId) return Toast.warn('请先选择或创建课程');
             if (API.setActiveCourse) API.setActiveCourse(courseId);
-            API.report.generate({
+            generating = true;
+            const button = U.$('#rgGo', ov), original = button.innerHTML;
+            button.disabled = true; button.textContent = '生成中…';
+            reportView._generating = API.report.generate({
               classIds: [courseId], chapter: selectedCourses.join('、'),
               startDate, endDate, sections
             }).then(async r => {
               const error = r && r.detail && r.detail.error;
               if (!r || r.status === 'error' || error || !r.reportId) {
-                return Toast.warn(error || '报告生成失败，请稍后重试');
+                if (isCurrent() && courseId === API.config.activeCourseId) Toast.warn(error || '报告生成失败，请稍后重试');
+                return false;
               }
-              Toast.ok('报告已生成', r.reportId);
-              close();
-              await reportView.loadArchive();
-              reportView.openDetail(r.reportId);
-            }).catch(err => Toast.warn('报告生成失败：' + (err.message || err)));
+              if (isCurrent() && courseId === API.config.activeCourseId) {
+                Toast.ok('报告已生成');
+                close();
+                await reportView.loadArchive();
+                if (isCurrent() && courseId === API.config.activeCourseId) await reportView.openDetail(r.reportId);
+              }
+              return true;
+            }).catch(err => { if (isCurrent() && courseId === API.config.activeCourseId) Toast.warn('报告生成失败：' + (err.message || err)); return false; })
+              .finally(() => { generating = false; reportView._generating = null; button.innerHTML = original; updateScopeCount(); });
           });
         }
       });
     },
 
     openDetail(reportId) {
+      const courseId = API.config.activeCourseId, login = JSON.stringify(Auth.getSession());
       const load = (id) => API.report.detail({ reportId: id });
-      load(reportId).then(raw => {
+      return load(reportId).then(raw => {
+        if (courseId !== API.config.activeCourseId || login !== JSON.stringify(Auth.getSession()) || Router.current !== 'report') return;
         // 后端返回 { reportId, title, status, detail: { meta, sections } }，mock 则可能直接返回详情
         const detail = raw && raw.detail && typeof raw.detail === 'object' ? raw.detail : (raw || {});
         if (detail.error) return Toast.warn(detail.error);

@@ -63,12 +63,7 @@ class AgentStore:
             db.close()
 
     def add_message(self, session_id: str, role: str, content: str, tool_log: list | None = None) -> None:
-        """写入一条消息。
-
-        tool_log 可选：随消息落库的附带标记（JSON 文本列，不建表）。
-        目前用于用户消息上的附件标记（[{kind:'attach', files:[...]}]），
-        历史消息接口把它原样返回，前端据此回显附件名。
-        """
+        """随消息落库的 JSON 元数据，不存文件字节。附件项保存随机 ID、名称、MIME 和大小，供历史预览与重新编辑恢复。"""
         db = self.persistence.SessionLocal()
         try:
             ChatSession, ChatMessage = self.persistence.ChatSession, self.persistence.ChatMessage

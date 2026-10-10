@@ -58,7 +58,7 @@ Router.register('ai', {
   mount: () => Chat.render(),
   reset: () => {
     Chat.busy = false;
-    Chat.sessionId = 'new';
+    Chat.startNewSession();
     Chat.pendingDraft = null;
     Chat.pendingFiles = [];   // 切换课程时清掉待发附件，别把上个课程的文件带过来
   },

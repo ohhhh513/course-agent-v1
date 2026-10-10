@@ -20,6 +20,7 @@ from ..media_utils import (
     COVERS_DIR,
     resource_url,
     url_to_path,
+    presentation_preview_url,
 )
 
 
@@ -67,6 +68,9 @@ def verify_resources(
     known_urls = {
         r[0] for r in cur.execute("SELECT url FROM resources WHERE url IS NOT NULL AND url<>''")
     }
+    # PPT 的 PDF 是原件的派生预览，属于同一资源，不能按孤儿文件清理。
+    known_urls.update(presentation_preview_url(url) for url in list(known_urls)
+                      if presentation_preview_url(url))
     orphans = []
     if RESOURCES_DIR.is_dir():
         for course_path in sorted(RESOURCES_DIR.iterdir()):
