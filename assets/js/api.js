@@ -810,7 +810,9 @@ window.API = (function () {
 
     /** POST /question/import  批量导入题目（含单题；支持 figure_json 图结构） */
     importQuestionPreview: (fd) => request('POST', '/question/import/preview', fd),
-    importQuestions: (p) => request('POST', '/question/import', p)
+    importQuestions: (p) => request('POST', '/question/import', p),
+    /** POST /question/figure  上传题目配图，返回本系统可访问的地址 */
+    uploadQuestionFigure: (fd) => request('POST', '/question/figure', fd)
   };
 
   /* ======================================================================

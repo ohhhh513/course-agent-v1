@@ -600,7 +600,7 @@
         const totalPages = Math.max(1, Math.ceil((r.total || 0) / this.bankPageSize));
         if (this.bankPage > totalPages) { this.bankPage = totalPages; return this.loadBank(); }
         const stMap = { pending: ['待审核', 'badge--warn'], approved: ['已审', 'badge--ok'], published: ['已发布', 'badge--brand'], archived: ['归档', 'badge--outline'] };
-        const TYPE_LABEL = { single: '单选题', multiple: '多选题', blank: '填空题', judge: '判断题', essay: '简答题' };
+        const TYPE_LABEL = { single: '单选题', multi: '多选题', multiple: '多选题', blank: '填空题', judge: '判断题', essay: '简答题' };
         t.innerHTML = `
           <thead><tr>
             <th>题号</th><th>题干</th><th>题型</th><th>知识点</th><th>难度</th>
@@ -708,6 +708,41 @@
     }
   };
 
+  const BLANK_MARK_SRC = '_{2,}|＿{2,}|（\\s*）|\\(\\s*\\)';
+
+  function blankCountOf(stem) {
+    return (String(stem || '').match(new RegExp(BLANK_MARK_SRC, 'g')) || []).length;
+  }
+
+  function blankSeeds(q) {
+    const options = Array.isArray(q && q.options) ? q.options : [];
+    if (options.some(item => Array.isArray(item && item.accept))) {
+      return options.map(item => (item.accept || []).join('|'));
+    }
+    const answer = String((q && q.answer) || '').trim();
+    return answer ? answer.split(/[;；]/) : [''];
+  }
+
+  function blankEditorHtml(values, count) {
+    const n = count > 0 ? count : 1;
+    return Array.from({ length: n }, (_, index) => `
+      <label class="stack" style="gap:4px">
+        <span class="fz-12 t-dim">第 ${index + 1} 空（多种正确写法用 | 分隔）</span>
+        <input class="input eq-blank-accept" value="${U.esc(values[index] || '')}" placeholder="例如：先进先出|FIFO">
+      </label>`).join('');
+  }
+
+  function collectBlankOptions(root, selector = '.eq-blank-accept') {
+    const rows = [...root.querySelectorAll(selector)].map(input => input.value.trim());
+    if (!rows.length || rows.some(text => !text)) return null;
+    const options = rows.map((text, index) => ({
+      blank: index + 1,
+      accept: text.split(/[|｜]/).map(item => item.trim()).filter(Boolean),
+    }));
+    if (options.some(item => !item.accept.length)) return null;
+    return options;
+  }
+
   function _openEditModal(qId, q) {
     Modal.open({
       title: icon('file') + ' 编辑习题 · ' + U.esc(qId), size: 'wide',
@@ -744,7 +779,7 @@
             <div class="edit-field">
               <label>题型</label>
               <select id="eqType" class="select">
-                ${[['single','单选题'],['multiple','多选题'],['blank','填空题'],['judge','判断题'],['essay','简答题']].map(([v,l]) => `<option value="${v}" ${v === (q.type || 'single') ? 'selected' : ''}>${l}</option>`).join('')}
+                ${[['single','单选题'],['multi','多选题'],['blank','填空题'],['judge','判断题'],['essay','简答题']].map(([v,l]) => `<option value="${v}" ${v === ((q.type === 'multiple' ? 'multi' : q.type) || 'single') ? 'selected' : ''}>${l}</option>`).join('')}
               </select>
             </div>
             <div class="edit-field">
@@ -775,6 +810,23 @@
             <label class="question-edit__check"><input type="checkbox" id="eqHasFig" ${q.hasImage || q.figureJson ? 'checked' : ''}> 含图像</label>
           </div>
           <div id="eqFigBox" style="display:${q.hasImage || q.figureJson ? '' : 'none'}" class="stack" style="gap:10px">
+            <label class="stack" style="gap:4px"><span class="fz-12 t-dim">配图方式</span>
+              <select class="select" id="eqFigSource">
+                <option value="file">上传图片</option>
+                <option value="link">图片链接</option>
+                <option value="structure">绘制结构图</option>
+              </select></label>
+            <div id="eqFigFile" class="stack" style="gap:6px">
+              <label class="stack" style="gap:4px"><span class="fz-12 t-dim">选择图片</span>
+                <input class="input" id="eqFigFileInput" type="file" accept="image/png,image/jpeg,image/gif,image/webp,.png,.jpg,.jpeg,.gif,.webp"></label>
+              <p class="fz-12 t-dim">从本机选择 PNG、JPG、GIF 或 WEBP，不超过 8MB。不需要公网地址。不重新选择则保留已有配图。</p>
+            </div>
+            <div id="eqFigLink" class="stack" style="gap:6px;display:none">
+              <label class="stack" style="gap:4px"><span class="fz-12 t-dim">图片链接</span>
+                <input class="input" id="eqFigUrl" placeholder="粘贴 https:// 开头的图片地址"></label>
+              <p class="fz-12 t-dim">直接使用该链接显示图片，请填写可公开访问的地址。</p>
+            </div>
+            <div id="eqFigStructure" class="stack" style="gap:10px">
             <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
               <label class="stack" style="gap:4px"><span class="fz-12 t-dim">图型</span>
                 <select class="select" id="eqFigType">
@@ -791,6 +843,8 @@
               <textarea class="input" id="eqFigEdgesTreeInput" style="min-height:56px;font-family:monospace"></textarea></label>
             <label class="stack" style="gap:4px" id="eqFigEdgesGraph"><span class="fz-12 t-dim">边（每行：起点,终点,权重）</span>
               <textarea class="input" id="eqFigEdgesGraphInput" style="min-height:56px;font-family:monospace"></textarea></label>
+            <div id="eqFigMatrix" style="overflow:auto;display:none"></div>
+            </div>
             <div class="stack" style="gap:6px">
               <span class="fz-12 t-dim">预览</span>
               <div style="border:1px solid var(--border);border-radius:8px;padding:8px;background:var(--bg-1)"><div id="eqFigPrev" style="min-height:120px"></div></div>
@@ -803,17 +857,25 @@
             <div><b>题干</b><span>清晰描述题目要求，支持多行内容</span></div>
           </div>
           <div class="question-edit__section-body">
-            <textarea class="textarea question-edit__stem" id="eqStem" placeholder="请输入题干内容">${U.esc(q.stem || '')}</textarea>
+            <textarea class="textarea question-edit__stem" id="eqStem" placeholder="${(q.type || '') === 'blank' ? '用 ____ 标出每个空' : '输入题干…'}">${U.esc(q.stem || '')}</textarea>
+            <p class="fz-12 t-dim" id="eqBlankHint" style="display:${(q.type || '') === 'blank' ? '' : 'none'};margin:8px 0 0">每个空写四个下划线 ____，或写一对空括号（）。空的数量要和下面的答案一致。</p>
           </div>
         </section>
 
-        <section class="question-edit__section">
+        <section class="question-edit__section" id="eqBlankSection" style="display:${(q.type || '') === 'blank' ? '' : 'none'}">
+          <div class="question-edit__section-head">
+            <div><b>填空答案</b><span>按空位顺序填写，同一空的多种写法用 | 分隔</span></div>
+          </div>
+          <div class="stack" style="gap:8px" id="eqBlanks">${blankEditorHtml(blankSeeds(q), blankCountOf(q.stem))}</div>
+        </section>
+
+        <section class="question-edit__section" id="eqChoiceSection" style="display:${(q.type || '') === 'blank' ? 'none' : ''}">
           <div class="question-edit__section-head">
             <div><b>选项设置</b><span>勾选正确答案，可按需添加或删除选项</span></div>
             <button class="btn btn--xs btn--outline" id="eqAddOpt" type="button">+ 添加选项</button>
           </div>
           <div class="question-edit__options" id="eqOpts">
-            ${(q.options || [{key:'A',text:'',right:false},{key:'B',text:'',right:false},{key:'C',text:'',right:false},{key:'D',text:'',right:false}]).map((o,i) => `
+            ${((q.type === 'blank' ? null : q.options) || [{key:'A',text:'',right:false},{key:'B',text:'',right:false},{key:'C',text:'',right:false},{key:'D',text:'',right:false}]).map((o,i) => `
               <div class="eq-opt" data-i="${i}">
                 <select class="select eq-opt-key" aria-label="选项字母">${'ABCDEFG'.slice(0,8).split('').map(k => `<option ${k === (o.key || 'ABCD'[i]) ? 'selected' : ''}>${k}</option>`).join('')}</select>
                 <input class="input eq-opt-text" value="${U.esc(o.text || '')}" placeholder="选项 ${o.key || 'ABCD'[i]} 内容">
@@ -827,9 +889,9 @@
 
         <section class="question-edit__section">
           <div class="edit-grid edit-grid--2">
-            <div class="edit-field">
+            <div class="edit-field" id="eqAnsField" style="display:${(q.type || '') === 'blank' ? 'none' : ''}">
               <label>答案</label>
-              <input class="input" id="eqAns" value="${U.esc(q.answer || '')}" placeholder="如 B 或 AB">
+              <input class="input" id="eqAns" value="${U.esc(q.type === 'blank' ? '' : (q.answer || ''))}" placeholder="如 B 或 AB">
             </div>
             <div class="edit-field">
               <label>状态</label>
@@ -894,8 +956,17 @@
 
         // 图结构编辑（从已有 figure_json 预填）
         const fig = q.figureJson || q.figure_json || null;
-        const graph = (fig && (fig.graph || fig)) || null;
-        if (graph) {
+        const linkedUrl = fig && (fig.imageUrl || fig.image_url);
+        const graph = linkedUrl ? null : ((fig && (fig.graph || fig)) || null);
+        if (linkedUrl) {
+          const source = U.$('#eqFigSource', ov);
+          const urlInput = U.$('#eqFigUrl', ov);
+          const local = String(linkedUrl).startsWith('/resources/question-figures/');
+          if (source) source.value = local ? 'file' : 'link';
+          if (urlInput && !local) urlInput.value = linkedUrl;
+        } else if (graph && graph.type) {
+          const source = U.$('#eqFigSource', ov);
+          if (source) source.value = 'structure';
           const t = graph.type || 'tree';
           const typeSel = U.$('#eqFigType', ov);
           if (typeSel) typeSel.value = (t === 'tree' || t === 'adjacency_matrix' || t === 'graph') ? t : 'tree';
@@ -913,13 +984,41 @@
         const hasFig = U.$('#eqHasFig', ov);
         const syncFigUI = () => {
           const t = (U.$('#eqFigType', ov) || {}).value;
+          const source = (U.$('#eqFigSource', ov) || {}).value;
           const show = !!(hasFig && hasFig.checked);
           if (figBox) figBox.style.display = show ? '' : 'none';
-          if (U.$('#eqFigTreeRoot', ov)) U.$('#eqFigTreeRoot', ov).style.display = t === 'tree' ? '' : 'none';
-          if (U.$('#eqFigEdgesTree', ov)) U.$('#eqFigEdgesTree', ov).style.display = t === 'tree' ? '' : 'none';
-          if (U.$('#eqFigEdgesGraph', ov)) U.$('#eqFigEdgesGraph', ov).style.display = t === 'graph' ? '' : 'none';
-          if (!show || !window.DsFigure || !figBox) return;
+          const fileBox = U.$('#eqFigFile', ov);
+          const linkBox = U.$('#eqFigLink', ov);
+          const structure = U.$('#eqFigStructure', ov);
+          if (fileBox) fileBox.style.display = source === 'file' ? '' : 'none';
+          if (linkBox) linkBox.style.display = source === 'link' ? '' : 'none';
+          if (structure) structure.style.display = source === 'structure' ? '' : 'none';
+          if (U.$('#eqFigTreeRoot', ov)) U.$('#eqFigTreeRoot', ov).style.display = source === 'structure' && t === 'tree' ? '' : 'none';
+          if (U.$('#eqFigEdgesTree', ov)) U.$('#eqFigEdgesTree', ov).style.display = source === 'structure' && t === 'tree' ? '' : 'none';
+          if (U.$('#eqFigEdgesGraph', ov)) U.$('#eqFigEdgesGraph', ov).style.display = source === 'structure' && t === 'graph' ? '' : 'none';
+          if (!show) return;
           const prev = U.$('#eqFigPrev', ov);
+          if (!prev) return;
+          if (source === 'file') {
+            const picked = (U.$('#eqFigFileInput', ov) || {}).files;
+            if (picked && picked[0]) {
+              const img = document.createElement('img');
+              img.className = 'q-linked-image';
+              img.alt = '题目配图';
+              img.src = URL.createObjectURL(picked[0]);
+              prev.replaceChildren(img);
+            } else if (!U.mountQuestionImage(prev, (U.$('#eqFigUrl', ov) || {}).value) && !U.mountQuestionImage(prev, linkedUrl || '')) {
+              prev.innerHTML = '<span class="fz-12 t-dim">选择图片后在这里预览</span>';
+            }
+            return;
+          }
+          if (source === 'link') {
+            const url = U.httpImageUrl((U.$('#eqFigUrl', ov) || {}).value);
+            if (!url) prev.innerHTML = '<span class="fz-12 t-dim">粘贴图片链接后在这里预览</span>';
+            else U.mountQuestionImage(prev, url);
+            return;
+          }
+          if (!window.DsFigure) return;
           let spec = null;
           if (t === 'tree') {
             const root = (U.$('#eqFigRoot', ov).value || '').trim();
@@ -943,10 +1042,12 @@
           if (spec) DsFigure.mount(prev, spec); else if (prev) prev.innerHTML = '';
         };
         if (hasFig) hasFig.addEventListener('change', syncFigUI);
-        ['#eqFigType', '#eqFigRoot', '#eqFigNodesInput', '#eqFigEdgesTreeInput', '#eqFigEdgesGraphInput'].forEach(sel => {
+        ['#eqFigType', '#eqFigRoot', '#eqFigNodesInput', '#eqFigEdgesTreeInput', '#eqFigEdgesGraphInput', '#eqFigUrl'].forEach(sel => {
           const el = U.$(sel, ov);
           if (el) el.addEventListener('input', syncFigUI);
         });
+        U.$('#eqFigSource', ov)?.addEventListener('change', syncFigUI);
+        U.$('#eqFigFileInput', ov)?.addEventListener('change', syncFigUI);
         syncFigUI();
 
         // 添加选项
@@ -973,7 +1074,43 @@
           }
         });
 
-        U.$('#eqSave', ov).addEventListener('click', () => {
+        const syncBlankMode = () => {
+          const blank = (U.$('#eqType', ov) || {}).value === 'blank';
+          const choice = U.$('#eqChoiceSection', ov);
+          const blanks = U.$('#eqBlankSection', ov);
+          const hint = U.$('#eqBlankHint', ov);
+          const ans = U.$('#eqAnsField', ov);
+          const stem = U.$('#eqStem', ov);
+          if (stem) stem.placeholder = blank ? '用 ____ 标出每个空' : '输入题干…';
+          if (choice) choice.style.display = blank ? 'none' : '';
+          if (blanks) blanks.style.display = blank ? '' : 'none';
+          if (hint) hint.style.display = blank ? '' : 'none';
+          if (ans) ans.style.display = blank ? 'none' : '';
+          if (blank) {
+            const box = U.$('#eqBlanks', ov);
+            const stem = (U.$('#eqStem', ov) || {}).value || '';
+            const count = blankCountOf(stem);
+            const current = [...ov.querySelectorAll('.eq-blank-accept')].map(input => input.value);
+            const target = count > 0 ? count : 1;
+            if (box && target !== current.length) box.innerHTML = blankEditorHtml(current, count);
+          }
+        };
+        U.$('#eqType', ov)?.addEventListener('change', syncBlankMode);
+        U.$('#eqStem', ov)?.addEventListener('input', () => {
+          if ((U.$('#eqType', ov) || {}).value === 'blank') syncBlankMode();
+        });
+
+        U.$('#eqSave', ov).addEventListener('click', async () => {
+          const qType = (U.$('#eqType', ov) || {}).value || 'single';
+          let blankOptions = null;
+          if (qType === 'blank') {
+            blankOptions = collectBlankOptions(ov);
+            const marked = blankCountOf((U.$('#eqStem', ov) || {}).value || '');
+            if (!blankOptions || (marked && blankOptions.length !== marked)) {
+              Toast.warn('请为每个空填写答案', '题干里的 ____ 数量要和答案行数一致');
+              return;
+            }
+          }
           // 收集选项
           const opts = [...U.$('#eqOpts', ov).children].map(row => ({
             key: row.querySelector('.eq-opt-key').value,
@@ -996,8 +1133,8 @@
 
           const body = {
             stem: U.$('#eqStem', ov).value,
-            options: opts,
-            answer,
+            options: blankOptions || opts,
+            answer: blankOptions ? blankOptions.map(item => item.accept[0]).join('；') : answer,
             analysis: U.$('#eqAnalysis', ov).value,
             difficulty: parseInt(U.$('#eqDiff', ov).value),
             kp_id: kpId,
@@ -1012,7 +1149,27 @@
           };
           const hasFigEl = U.$('#eqHasFig', ov);
           if (hasFigEl && hasFigEl.checked) {
-            // 提交当前编辑器中的图结构（与新建题一致的 spec）
+            const source = (U.$('#eqFigSource', ov) || {}).value;
+            if (source === 'file') {
+              const picked = (U.$('#eqFigFileInput', ov) || {}).files;
+              let url = String(linkedUrl || '').startsWith('/resources/question-figures/') ? linkedUrl : '';
+              if (picked && picked[0]) {
+                const fd = new FormData();
+                fd.append('file', picked[0]);
+                let uploaded;
+                try { uploaded = await API.teacher.uploadQuestionFigure(fd); }
+                catch (err) { Toast.warn(err.message || '图片上传失败'); return; }
+                url = uploaded && uploaded.url;
+              }
+              if (!U.httpImageUrl(url)) { Toast.warn('请选择 PNG、JPG、GIF 或 WEBP 图片'); return; }
+              body.figure_json = { imageUrl: url, has_image: true };
+              body.has_image = true;
+            } else if (source === 'link') {
+              const url = U.httpImageUrl((U.$('#eqFigUrl', ov) || {}).value);
+              if (!url) { Toast.warn('请填写以 http:// 或 https:// 开头的图片链接'); return; }
+              body.figure_json = { imageUrl: url, has_image: true };
+              body.has_image = true;
+            } else {
             const t = U.$('#eqFigType', ov).value;
             if (t === 'tree') {
               const root = (U.$('#eqFigRoot', ov).value || '').trim();
@@ -1035,6 +1192,7 @@
               // 矩阵暂沿用原 figure
               body.figure_json = fig;
               body.has_image = true;
+            }
             }
           } else {
             body.figure_json = null;
@@ -1078,10 +1236,19 @@ function openNewQuestionModal(onDone) {
           <span class="fz-12 t-dim">考查知识点标签（可多选；标签=KP）</span>
           <div id="nqKpTags" class="chips" style="max-height:100px;overflow:auto"></div>
         </div>
+        <label class="stack" style="gap:4px"><span class="fz-12 t-dim">题型</span>
+          <select class="select" id="nqType">
+            <option value="single">单选题</option>
+            <option value="multi">多选题</option>
+            <option value="judge">判断题</option>
+            <option value="blank">填空题</option>
+          </select></label>
         <label class="stack" style="gap:4px"><span class="fz-12 t-dim">题干</span>
-          <textarea class="input" id="nqStem" style="min-height:64px" placeholder="输入题干…"></textarea></label>
-        <div class="stack" style="gap:6px">
-          <span class="fz-12 t-dim">选项（单选；勾选圆点为正确答案）</span>
+          <textarea class="input" id="nqStem" style="min-height:64px" placeholder="输入题干…"></textarea>
+          <span class="fz-12 t-dim" id="nqBlankHint" style="display:none">每个空写 ____ 。下面按空位填写答案，同一空多种写法用 | 分隔。</span></label>
+        <div class="stack" id="nqBlanks" style="display:none;gap:8px"></div>
+        <div class="stack" style="gap:6px" id="nqChoice">
+          <span class="fz-12 t-dim" id="nqChoiceLabel">选项（单选；勾选圆点为正确答案）</span>
           <div class="stack" style="gap:6px" id="nqOpts">
             ${["A","B","C","D"].map((k, i) => `
               <div class="row" style="gap:8px">
@@ -1096,8 +1263,25 @@ function openNewQuestionModal(onDone) {
         <label class="stack" style="gap:4px"><span class="fz-12 t-dim">解析</span>
           <textarea class="input" id="nqAnalysis" style="min-height:48px" placeholder="答案解析…"></textarea></label>
         <label class="row" style="gap:6px"><input type="checkbox" id="nqHasFig">
-          <span class="fz-12">本题含图像（手动编辑图像结构，实时预览）</span></label>
+          <span class="fz-12">本题含图像</span></label>
         <div id="nqFigBox" style="display:none" class="stack" style="gap:10px">
+          <label class="stack" style="gap:4px"><span class="fz-12 t-dim">配图方式</span>
+            <select class="select" id="nqFigSource">
+              <option value="file">上传图片</option>
+              <option value="link">图片链接</option>
+              <option value="structure">绘制结构图</option>
+            </select></label>
+          <div id="nqFigFile" class="stack" style="gap:6px">
+            <label class="stack" style="gap:4px"><span class="fz-12 t-dim">选择图片</span>
+              <input class="input" id="nqFigFileInput" type="file" accept="image/png,image/jpeg,image/gif,image/webp,.png,.jpg,.jpeg,.gif,.webp"></label>
+            <p class="fz-12 t-dim">从本机选择 PNG、JPG、GIF 或 WEBP，不超过 8MB。不需要公网地址。</p>
+          </div>
+          <div id="nqFigLink" class="stack" style="gap:6px;display:none">
+            <label class="stack" style="gap:4px"><span class="fz-12 t-dim">图片链接</span>
+              <input class="input" id="nqFigUrl" placeholder="粘贴 https:// 开头的图片地址"></label>
+            <p class="fz-12 t-dim">直接使用该链接显示图片，请填写可公开访问的地址。</p>
+          </div>
+          <div id="nqFigStructure" style="display:none" class="stack" style="gap:10px">
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
             <label class="stack" style="gap:4px"><span class="fz-12 t-dim">图型</span>
               <select class="select" id="nqFigType">
@@ -1111,12 +1295,14 @@ function openNewQuestionModal(onDone) {
           <label class="stack" style="gap:4px" id="nqFigNodes"><span class="fz-12 t-dim">节点（逗号分隔）</span>
             <input class="input" id="nqFigNodesInput" value="A,B,C,D"></label>
           <label class="stack" style="gap:4px" id="nqFigEdgesTree"><span class="fz-12 t-dim">边（每行：父,子,left|right）</span>
-            <textarea class="input" id="nqFigEdgesTreeInput" style="min-height:56px;font-family:monospace" placeholder="A,B,left\nA,C,right">A,B,left\nA,C,right</textarea></label>
+            <textarea class="input" id="nqFigEdgesTreeInput" style="min-height:56px;font-family:monospace" placeholder="A,B,left&#10;A,C,right">A,B,left
+A,C,right</textarea></label>
           <label class="stack" style="gap:4px" id="nqFigEdgesGraph" style="display:none"><span class="fz-12 t-dim">边（每行：起点,终点,权重）</span>
-            <textarea class="input" id="nqFigEdgesGraphInput" style="min-height:56px;font-family:monospace" placeholder="A,B,4\nB,C,2"></textarea></label>
+            <textarea class="input" id="nqFigEdgesGraphInput" style="min-height:56px;font-family:monospace" placeholder="A,B,4&#10;B,C,2"></textarea></label>
           <div id="nqFigMatrix" style="overflow:auto"></div>
+          </div>
           <div class="stack" style="gap:6px">
-            <span class="fz-12 t-dim">预览（题库同款渲染）</span>
+            <span class="fz-12 t-dim">预览</span>
             <div style="border:1px solid var(--border);border-radius:8px;padding:8px;background:var(--bg-1)"><div id="nqFigPrev" style="min-height:120px"></div></div>
           </div>
         </div>
@@ -1168,19 +1354,85 @@ function openNewQuestionModal(onDone) {
         paintKps();
       });
 
+      let savedChoice = null;
+      const readChoice = () => [...$("#nqOpts").querySelectorAll("[data-opt]")].map(input => ({
+        key: input.dataset.opt,
+        text: input.value,
+        checked: !!input.parentElement.querySelector("input[name=nqAns]")?.checked,
+      }));
+      const writeChoice = (rows, mode) => {
+        const multi = mode === "multi";
+        const locked = mode === "judge";
+        $("#nqChoiceLabel").textContent = multi
+          ? "选项（多选；勾选所有正确答案，至少两个）"
+          : locked
+            ? "选项（判断；选择「正确」或「错误」）"
+            : "选项（单选；勾选圆点为正确答案）";
+        $("#nqAddOpt").style.display = locked ? "none" : "";
+        $("#nqOpts").innerHTML = rows.map((row, index) => `
+          <div class="row" style="gap:8px">
+            <input type="${multi ? "checkbox" : "radio"}" name="nqAns" value="${row.key}" ${row.checked ? "checked" : ""} title="设为正确答案">
+            <span class="fz-12 fw-6" style="width:18px">${row.key}</span>
+            <input class="input" data-opt="${row.key}" value="${U.esc(row.text || "")}" placeholder="选项 ${row.key} 内容" style="flex:1" ${locked ? "readonly" : ""}>
+            <button class="btn btn--xs btn--ghost" data-delopt="${row.key}" ${(locked || index < 2) ? "disabled" : ""}>删除</button>
+          </div>`).join("");
+      };
+      const stemPlaceholder = {
+        single: "输入题干…",
+        multi: "输入题干…",
+        judge: "输入需要判断对错的陈述…",
+        blank: "用 ____ 标出每个空，例如：队列遵循____原则。",
+      };
+      const syncNewType = () => {
+        const type = $("#nqType").value;
+        const blank = type === "blank";
+        $("#nqStem").placeholder = stemPlaceholder[type] || "输入题干…";
+        $("#nqChoice").style.display = blank ? "none" : "";
+        $("#nqBlankHint").style.display = blank ? "" : "none";
+        $("#nqBlanks").style.display = blank ? "flex" : "none";
+        if (blank) {
+          const count = blankCountOf($("#nqStem").value);
+          const target = count > 0 ? count : 1;
+          const current = [...ov.querySelectorAll(".nq-blank-accept")].map(input => input.value);
+          if (current.length !== target) {
+            $("#nqBlanks").innerHTML = blankEditorHtml(current, count).replaceAll("eq-blank-accept", "nq-blank-accept");
+          }
+          return;
+        }
+        const current = readChoice();
+        const isJudgePair = current.length === 2 && current[0].text === "正确" && current[1].text === "错误";
+        if (type === "judge") {
+          if (!isJudgePair) savedChoice = current;
+          const picked = (current.find(row => row.checked) || {}).key === "B" ? "B" : "A";
+          writeChoice([
+            { key: "A", text: "正确", checked: picked !== "B" },
+            { key: "B", text: "错误", checked: picked === "B" },
+          ], "judge");
+          return;
+        }
+        let rows = isJudgePair && savedChoice ? savedChoice : current;
+        savedChoice = null;
+        if (!rows.length) {
+          rows = ["A", "B", "C", "D"].map((key, index) => ({ key, text: "", checked: index === 0 }));
+        }
+        if (type === "single") {
+          const first = rows.findIndex(row => row.checked);
+          rows.forEach((row, index) => { row.checked = index === (first < 0 ? 0 : first); });
+        }
+        writeChoice(rows, type);
+      };
+      $("#nqType").addEventListener("change", syncNewType);
+      $("#nqStem").addEventListener("input", () => { if ($("#nqType").value === "blank") syncNewType(); });
+      syncNewType();
+
       // 选项增删
       ov.querySelector("#nqAddOpt").addEventListener("click", () => {
-        const box = $("#nqOpts");
-        const used = [...box.querySelectorAll("[data-opt]")].map(x => x.dataset.opt);
-        const next = "ABCDEFGH".split('').find(k => !used.includes(k));
+        const rows = readChoice();
+        const used = rows.map(row => row.key);
+        const next = "ABCDEFGH".split("").find(key => !used.includes(key));
         if (!next) { Toast.warn("最多 8 个选项"); return; }
-        const div = document.createElement("div");
-        div.className = "row"; div.style.cssText = "gap:8px";
-        div.innerHTML = `<input type="radio" name="nqAns" value="${next}"><span class="fz-12 fw-6" style="width:18px">${next}</span>
-          <input class="input" data-opt="${next}" placeholder="选项 ${next} 内容" style="flex:1">
-          <button class="btn btn--xs btn--ghost" data-delopt="${next}">删除</button>`;
-        box.appendChild(div);
-        div.querySelector("[data-delopt]").addEventListener("click", () => div.remove());
+        rows.push({ key: next, text: "", checked: false });
+        writeChoice(rows, $("#nqType").value);
       });
       ov.addEventListener("click", e => {
         const d = e.target.closest("[data-delopt]");
@@ -1194,14 +1446,20 @@ function openNewQuestionModal(onDone) {
         renderPreview();
       });
       const figType = () => $("#nqFigType").value;
+      const figSource = () => $("#nqFigSource").value;
       const nodesList = () => ($("#nqFigNodesInput").value || "").split(/[,，\s]+/).map(s => s.trim()).filter(Boolean);
       function syncFigUI() {
+        const link = figSource() === "link";
+        const file = figSource() === "file";
         const t = figType();
-        $("#nqFigTreeRoot").style.display = t === "tree" ? "" : "none";
-        $("#nqFigEdgesTree").style.display = t === "tree" ? "" : "none";
-        $("#nqFigEdgesGraph").style.display = t === "graph" ? "" : "none";
+        $("#nqFigFile").style.display = file ? "" : "none";
+        $("#nqFigLink").style.display = link ? "" : "none";
+        $("#nqFigStructure").style.display = (file || link) ? "none" : "";
+        $("#nqFigTreeRoot").style.display = !file && !link && t === "tree" ? "" : "none";
+        $("#nqFigEdgesTree").style.display = !file && !link && t === "tree" ? "" : "none";
+        $("#nqFigEdgesGraph").style.display = !file && !link && t === "graph" ? "" : "none";
         const mWrap = $("#nqFigMatrix");
-        if (t === "adjacency_matrix") {
+        if (!file && !link && t === "adjacency_matrix") {
           const nodes = nodesList();
           mWrap.innerHTML = `<table class="ds-matrix"><thead><tr><th></th>${nodes.map(n => `<th>${U.esc(n)}</th>`).join("")}</tr></thead><tbody>${
             nodes.map((rn, i) => `<tr><th>${U.esc(rn)}</th>${nodes.map((cn, j) =>
@@ -1239,27 +1497,68 @@ function openNewQuestionModal(onDone) {
         return { type: "graph", nodes, edges, directed: true };
       }
       function renderPreview() {
-        if (figBox.style.display === "none" || !window.DsFigure) return;
-        const spec = buildSpec();
         const prev = $("#nqFigPrev");
+        if (!prev || figBox.style.display === "none") return;
+        if (figSource() === "file") {
+          const picked = ($("#nqFigFileInput") || {}).files;
+          if (picked && picked[0]) {
+            const img = document.createElement("img");
+            img.className = "q-linked-image";
+            img.alt = "题目配图";
+            img.src = URL.createObjectURL(picked[0]);
+            prev.replaceChildren(img);
+          } else prev.innerHTML = '<span class="fz-12 t-dim">选择图片后在这里预览</span>';
+          return;
+        }
+        if (figSource() === "link") {
+          const url = U.httpImageUrl($("#nqFigUrl").value);
+          if (!url) prev.innerHTML = '<span class="fz-12 t-dim">粘贴图片链接后在这里预览</span>';
+          else U.mountQuestionImage(prev, url);
+          return;
+        }
+        if (!window.DsFigure) return;
+        const spec = buildSpec();
         if (spec) DsFigure.mount(prev, spec); else prev.innerHTML = "";
       }
-      ["#nqFigType", "#nqFigNodesInput", "#nqFigEdgesTreeInput", "#nqFigEdgesGraphInput"].forEach(sel =>
+      ["#nqFigType", "#nqFigNodesInput", "#nqFigEdgesTreeInput", "#nqFigEdgesGraphInput", "#nqFigUrl"].forEach(sel =>
         ov.addEventListener("input", e => { if (e.target.matches(sel)) syncFigUI(); }));
+      $("#nqFigSource").addEventListener("change", syncFigUI);
+      $("#nqFigFileInput").addEventListener("change", syncFigUI);
       syncFigUI();
 
       // 提交
-      ov.querySelector("#nqSubmit").addEventListener("click", () => {
+      ov.querySelector("#nqSubmit").addEventListener("click", async () => {
         const stem = $("#nqStem").value.trim();
         if (!stem) { Toast.warn("请输入题干"); return; }
-        const opts = [...ov.querySelectorAll("[data-opt]")].map(x => ({ key: x.dataset.opt, text: x.value.trim() }));
-        if (opts.some(o => !o.text)) { Toast.warn("选项内容不能为空"); return; }
-        const answer = (ov.querySelector("input[name=nqAns]:checked") || {}).value || "";
+        const qType = $("#nqType").value;
+        const blank = qType === "blank";
+        let opts = [];
+        let answer = "";
+        if (blank) {
+          opts = collectBlankOptions(ov, ".nq-blank-accept");
+          const marked = blankCountOf(stem);
+          if (!opts || (marked && opts.length !== marked)) {
+            Toast.warn("请为每个空填写答案", "题干里的 ____ 数量要和答案行数一致");
+            return;
+          }
+          answer = opts.map(item => item.accept[0]).join("；");
+        } else if (qType === "judge") {
+          opts = [{ key: "A", text: "正确" }, { key: "B", text: "错误" }];
+          answer = (ov.querySelector("input[name=nqAns]:checked") || {}).value || "";
+          if (!answer) { Toast.warn("请选择正确或错误"); return; }
+        } else {
+          opts = [...ov.querySelectorAll("[data-opt]")].map(x => ({ key: x.dataset.opt, text: x.value.trim() }));
+          if (opts.length < 2 || opts.some(o => !o.text)) { Toast.warn("请填写至少两个选项，且内容不能为空"); return; }
+          const picked = [...ov.querySelectorAll("input[name=nqAns]:checked")].map(x => x.value).sort();
+          if (qType === "multi" && picked.length < 2) { Toast.warn("多选题至少勾选两个正确答案"); return; }
+          if (!picked.length) { Toast.warn("请勾选正确答案"); return; }
+          answer = picked.join("");
+        }
         const chapterId = $("#nqChapter") ? $("#nqChapter").value : "";
         const kpIds = [...selectedKps];
         if (!kpIds.length) { Toast.warn("请至少选择一个考查知识点标签"); return; }
         const q = {
-          type: "single", difficulty: parseInt($("#nqDiff").value, 10) || 3,
+          type: qType, difficulty: parseInt($("#nqDiff").value, 10) || 3,
           score: parseInt($("#nqScore").value, 10) || 5, status: "published",
           stem, options: opts, answer,
           analysis: $("#nqAnalysis").value.trim(),
@@ -1268,9 +1567,25 @@ function openNewQuestionModal(onDone) {
           kp_ids: kpIds,
         };
         if ($("#nqHasFig").checked) {
-          const spec = buildSpec();
-          if (!spec) { Toast.warn("图像结构不完整：请填写节点"); return; }
-          q.figure_json = { graph: spec, has_image: true };
+          if ($("#nqFigSource").value === "file") {
+            const picked = ($("#nqFigFileInput") || {}).files;
+            if (!picked || !picked[0]) { Toast.warn("请选择题目图片"); return; }
+            const fd = new FormData();
+            fd.append("file", picked[0]);
+            let uploaded;
+            try { uploaded = await API.teacher.uploadQuestionFigure(fd); }
+            catch (err) { Toast.warn(err.message || "图片上传失败"); return; }
+            if (!uploaded || !U.httpImageUrl(uploaded.url)) { Toast.warn("图片上传失败"); return; }
+            q.figure_json = { imageUrl: uploaded.url, has_image: true };
+          } else if ($("#nqFigSource").value === "link") {
+            const url = U.httpImageUrl($("#nqFigUrl").value);
+            if (!url) { Toast.warn("请填写以 http:// 或 https:// 开头的图片链接"); return; }
+            q.figure_json = { imageUrl: url, has_image: true };
+          } else {
+            const spec = buildSpec();
+            if (!spec) { Toast.warn("图像结构不完整：请填写节点"); return; }
+            q.figure_json = { graph: spec, has_image: true };
+          }
         }
         API.teacher.importQuestions({ questions: [q] }).then(() => {
           close();

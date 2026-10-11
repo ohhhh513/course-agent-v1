@@ -287,7 +287,12 @@ const AgentUI = (() => {
         if (!root.isConnected || revision !== version || !ctx.guard()) return;
         preview = result;
         status.textContent = `共 ${result.total} 题，可导入 ${result.valid} 题。请核对内容后确认导入；不会自动保存。`;
-        root.querySelector('#qiRows').innerHTML = result.questions.map((question, index) => `<section class="card"><div class="card__body"><b>第 ${index + 1} 题</b><textarea class="input" data-qi-field="stem" data-index="${index}">${U.esc(question.stem || '')}</textarea><p>${(question.options || []).map(o => U.esc(o.key + '. ' + o.text)).join('<br>')}</p><label>答案<input class="input" data-qi-field="answer" data-index="${index}" value="${U.esc(question.answer || '')}"></label><label>解析<textarea class="input" data-qi-field="analysis" data-index="${index}">${U.esc(question.analysis || '')}</textarea></label><p class="t-danger">${U.esc((result.errors.find(error => error.index === index) || { errors: [] }).errors.join('；'))}</p></div></section>`).join('');
+        root.querySelector('#qiRows').innerHTML = result.questions.map((question, index) => {
+          const optionText = question.type === 'blank'
+            ? (question.options || []).map(option => `第${option.blank}空：${(option.accept || []).join(' | ')}`).join('；')
+            : (question.options || []).map(option => (option.key || '') + '. ' + (option.text || '')).join('\n');
+          return `<section class="card"><div class="card__body"><b>第 ${index + 1} 题 · ${question.type === 'blank' ? '填空题' : (question.type === 'multi' ? '多选题' : '单选题')}</b><textarea class="input" data-qi-field="stem" data-index="${index}">${U.esc(question.stem || '')}</textarea><p>${U.esc(optionText)}</p><label>答案<input class="input" data-qi-field="answer" data-index="${index}" value="${U.esc(question.answer || '')}"></label><label>解析<textarea class="input" data-qi-field="analysis" data-index="${index}">${U.esc(question.analysis || '')}</textarea></label><p class="t-danger">${U.esc((result.errors.find(error => error.index === index) || { errors: [] }).errors.join('；'))}</p></div></section>`;
+        }).join('');
         root.querySelectorAll('[data-qi-field]').forEach(input => input.addEventListener('input', () => {
           const questions = result.questions.map(question => ({ ...question }));
           root.querySelectorAll('[data-qi-field]').forEach(field => { questions[Number(field.dataset.index)][field.dataset.qiField] = field.value; });

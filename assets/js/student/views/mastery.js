@@ -32,7 +32,7 @@
 
       <div class="grid g-2" style="margin-bottom:16px">
         <div class="card">
-          <div class="card__head"><h3>${icon('trend')} 成长轨迹（周）</h3><span class="spacer"></span></div>
+          <div class="card__head"><h3>${icon('trend')} 成长轨迹</h3><span class="spacer"></span><span class="fz-12 t-dim">只显示有练习的日期</span></div>
           <div class="card__body"><div class="chart" id="growthChart"></div></div>
         </div>
         <div class="card">
@@ -184,7 +184,15 @@
 
       // 成长轨迹（「能力目标达成度」雷达卡已于 2026-09-24 移除：目标图谱未实现，
       // 6 个维度恒为 0，只剩硬编码的「目标基线」有值）
-      API.student.growth().then(d => Charts.line('#growthChart', d, { area: true, max: 100, fmt: '{value}%' }));
+      API.student.growth().then(d => {
+        const box = U.$('#growthChart');
+        if (!box) return;
+        if (!d || !d.xAxis || !d.xAxis.length) {
+          box.innerHTML = '<div class="t-dim fz-13" style="padding:28px 8px">还没有练习记录。完成练习后，这里只显示有作答的日期。</div>';
+          return;
+        }
+        Charts.line('#growthChart', d, { area: true, max: 100, fmt: '{value}%' });
+      });
 
       // 对比
       API.student.compare().then(c => {

@@ -20,9 +20,31 @@ from ..dependencies import get_current_course_id
 from ..schemas.common import ok, fail, list_response
 from ..utils import loads, fmt_dt
 from ..services.catalog_helpers import question_kp_clause, question_kp_ids
+from ..services.blank_questions import (
+    RECORD_ANSWER_LEN, clip, grade_submission, is_blank_type, student_view,
+)
 from sqlalchemy import func
 
 router = APIRouter(prefix="/api/v1/practice", tags=["智能练习"])
+
+
+def _student_question(q: Question) -> dict:
+    """组卷下发给学生的题目。填空题只给空位序号，不给标准答案。"""
+    view = student_view(q.type, q.stem, loads(q.options) or [], q.answer or "")
+    return {
+        "qId": q.q_id,
+        "type": view["type"],
+        "difficulty": q.difficulty,
+        "score": q.score,
+        "stem": q.stem,
+        "options": view["options"],
+        "blanks": view["blanks"],
+        "kpPath": loads(q.kp_path) or [],
+        "kpId": q.kp_id,
+        "isKey": bool(q.is_key),
+        "preKp": loads(q.pre_kp) or [],
+        "figure": _figure_of(q),
+    }
 
 
 def _order_pool(db: Session, user_id: str, course_id: str, rows: list, target_kps: list[str]) -> list:
@@ -318,23 +340,14 @@ def create_session(
         total=count,
         status="running",
         questions_snapshot=json.dumps(
-            [{"qId": q.q_id, "type": q.type, "stem": q.stem, "options": loads(q.options) or []} for q in picked],
+            [{"qId": q.q_id, "type": q.type, "stem": q.stem} for q in picked],
             ensure_ascii=False,
         ),
     )
     db.add(session)
     db.commit()
 
-    questions = [
-        {
-            "qId": q.q_id, "type": q.type, "difficulty": q.difficulty, "score": q.score,
-            "stem": q.stem, "options": loads(q.options) or [],
-            "kpPath": loads(q.kp_path) or [], "kpId": q.kp_id, "isKey": bool(q.is_key),
-            "preKp": loads(q.pre_kp) or [],
-            "figure": _figure_of(q),
-        }
-        for q in picked
-    ]
+    questions = [_student_question(q) for q in picked]
     return ok({
         "sessionId": session_id, "mode": req.mode, "total": count,
         "questions": questions,
@@ -375,15 +388,13 @@ def current_session(
         if not q:
             continue
         ar = answered.get(qid)
-        questions.append({
-            "qId": q.q_id, "type": q.type, "difficulty": q.difficulty, "score": q.score,
-            "stem": q.stem, "options": loads(q.options) or [],
-            "kpPath": loads(q.kp_path) or [], "kpId": q.kp_id, "preKp": loads(q.pre_kp) or [],
-            "isKey": bool(q.is_key), "figure": _figure_of(q),
+        item = _student_question(q)
+        item.update({
             "answered": ar is not None,
             "myAnswer": (ar.my_answer if ar else ""),
             "correct": (bool(ar.is_correct) if ar else None),
         })
+        questions.append(item)
     answered_count = sum(1 for x in questions if x["answered"])
     return ok({
         "sessionId": session.session_id, "mode": session.mode,
@@ -412,15 +423,7 @@ def get_session_questions(
         Question.course_id == course_id,
         Question.q_id.in_(q_ids),
     ).all()
-    items = [
-        {
-            "qId": q.q_id, "type": q.type, "difficulty": q.difficulty, "score": q.score,
-            "stem": q.stem, "options": loads(q.options) or [],
-            "kpPath": loads(q.kp_path) or [], "kpId": q.kp_id, "preKp": loads(q.pre_kp) or [],
-            "isKey": bool(q.is_key),
-        }
-        for q in rows
-    ]
+    items = [_student_question(q) for q in rows]
     return ok(items)
 
 
@@ -449,7 +452,22 @@ def submit_answer(
     if session.user_id != user.user_id:
         return fail("无权操作他人练习会话", 403)
 
-    correct = req.answer == question.answer
+    blank_results = None
+    if is_blank_type(question.type):
+        try:
+            graded = grade_submission(question.stem, loads(question.options) or [], question.answer or "", req.answer)
+        except ValueError as exc:
+            return fail(f"这道填空题还不能作答：{exc}", 400)
+        correct = graded["correct"]
+        right_answer = graded["display"]
+        blank_results = graded["results"]
+        stored_mine = clip(graded["student_text"], RECORD_ANSWER_LEN)
+        stored_right = clip(right_answer, RECORD_ANSWER_LEN)
+    else:
+        correct = req.answer == question.answer
+        right_answer = question.answer
+        stored_mine = req.answer
+        stored_right = question.answer
 
     # 保存答题记录
     # ⚠️ course_id 必须显式写入：模型里的默认值是早期演示课 "C2026DS001"，
@@ -460,8 +478,8 @@ def submit_answer(
         course_id=session.course_id or question.course_id or course_id,
         q_id=req.qId,
         kp_id=question.kp_id,
-        my_answer=req.answer,
-        correct_answer=question.answer,
+        my_answer=stored_mine,
+        correct_answer=stored_right,
         is_correct=1 if correct else 0,
         duration_seconds=req.durationSeconds,
         error_type="" if correct else question.error_type,
@@ -487,16 +505,19 @@ def submit_answer(
     class_rate, avg_sec, _, _ = _calc_question_stats(db, question.q_id, course_id)
     delta = _mastery_delta(correct, question.difficulty, question.score)
 
-    return ok({
+    payload = {
         "qId": question.q_id,
         "correct": correct,
-        "rightAnswer": question.answer,
+        "rightAnswer": right_answer,
         "analysis": question.analysis,
         "kpPath": loads(question.kp_path) or [],
         "classCorrectRate": class_rate,
         "avgSeconds": avg_sec,
         "masteryDelta": delta,
-    })
+    }
+    if blank_results is not None:
+        payload["blankResults"] = blank_results
+    return ok(payload)
 
 
 @router.post("/sessions/{session_id}/finish")
@@ -699,9 +720,10 @@ def wrong_book(
             if filter_flag is not None and w["mastered"] != filter_flag:
                 continue
             meta = kp_meta.get(q.kp_id) or {}
+            shown = student_view(q.type, q.stem, loads(q.options) or [], q.answer or "")
             items.append({
-                "qId": q.q_id, "stem": q.stem, "myAnswer": w["myAnswer"],
-                "answer": q.answer,
+                "qId": q.q_id, "type": shown["type"], "stem": q.stem, "myAnswer": w["myAnswer"],
+                "answer": shown["answer"],
                 "wrongCount": w["wrongCount"],
                 "kp": meta.get("name") or q.kp_id or "未标注",
                 "kpId": q.kp_id,
@@ -778,10 +800,11 @@ def wrong_detail(
         for r in res_q.order_by(Resource.type).limit(4).all()
     ]
 
+    shown = student_view(q.type, q.stem, loads(q.options) or [], q.answer or "")
     return ok({
-        "qId": q.q_id, "type": q.type, "difficulty": q.difficulty, "score": q.score,
-        "stem": q.stem, "options": loads(q.options) or [],
-        "answer": q.answer, "analysis": q.analysis,
+        "qId": q.q_id, "type": shown["type"], "difficulty": q.difficulty, "score": q.score,
+        "stem": q.stem, "options": shown["options"], "blanks": shown["blanks"],
+        "answer": shown["answer"], "analysis": q.analysis,
         "kpPath": loads(q.kp_path) or [], "kpId": q.kp_id,
         "preKp": loads(q.pre_kp) or [], "isKey": bool(q.is_key),
         "figure": _figure_of(q),

@@ -1,5 +1,17 @@
 'use strict';
 
+  const BLANK_MARK_SRC = '_{2,}|＿{2,}|（\\s*）|\\(\\s*\\)';
+
+  function isMultiQuestion(q) {
+    return q && (q.type === 'multi' || q.type === 'multiple');
+  }
+
+  function blankSlotCount(q) {
+    const marked = (String(q.stem || '').match(new RegExp(BLANK_MARK_SRC, 'g')) || []).length;
+    const declared = Array.isArray(q.blanks) ? q.blanks.length : 0;
+    return Math.max(marked, declared, q.type === 'blank' ? 1 : 0);
+  }
+
   /* ================================================================
      视图 5 · 智能练习 / 专属题库
      ================================================================ */
@@ -411,21 +423,62 @@
      * 绘制由 assets/js/st/ds-figure.js 的 DsFigure 完成（含边权标签防遮挡）
      */
     mountQFigure(rootEl, figure) {
-      if (!rootEl || !figure || !window.DsFigure) return;
+      if (!rootEl || !figure) return;
       const figEl = rootEl.querySelector('#qFig') || rootEl.querySelector('#wrongFig');
       if (figEl) {
-        if (figure.graph) {
+        const imageUrl = figure.imageUrl || figure.image_url;
+        if (imageUrl && U.mountQuestionImage(figEl, imageUrl)) {
+          /* 链接配图优先于结构图 */
+        } else if (figure.graph && window.DsFigure) {
           DsFigure.mount(figEl, figure.graph);
         } else if (figure.has_image) {
           figEl.innerHTML = '<div class="callout callout--warn" style="padding:8px 12px">本题配图暂不绘制，请按纯文本作答。</div>';
         }
       }
-      if (figure.options_graph) {
+      if (figure.options_graph && window.DsFigure) {
         Object.keys(figure.options_graph).forEach(k => {
           const slot = rootEl.querySelector(`[data-optfig="${k}"]`);
           if (slot) DsFigure.mount(slot, figure.options_graph[k]);
         });
       }
+    },
+
+    _quizPrompt(q) {
+      const no = `<span class="q-no">${this.idx + 1}</span>`;
+      if (q.type !== 'blank') {
+        const options = Array.isArray(q.options) ? q.options : [];
+        const multi = isMultiQuestion(q);
+        return `
+          <div class="q-stem">${no}${q.stem}</div>
+          ${multi ? '<p class="fz-12 t-dim">多选题：可以选择多个选项，全部选对才算正确。</p>' : ''}
+          ${q.type === 'judge' ? '<p class="fz-12 t-dim">判断题：选择正确或错误。</p>' : ''}
+          <div class="opts" id="opts">
+            ${options.map(o => `
+              <button class="opt" data-k="${U.esc(o.key)}">
+                <span class="opt__key">${U.esc(o.key)}</span>
+                <span style="flex:1">${o.text}</span>
+                ${q.figure && q.figure.options_graph && q.figure.options_graph[o.key] ? `<div class="q-opt-fig" data-optfig="${U.esc(o.key)}"></div>` : ''}
+              </button>`).join('')}
+          </div>`;
+      }
+      const need = blankSlotCount(q);
+      let seen = 0;
+      const stemHtml = String(q.stem || '').replace(new RegExp(BLANK_MARK_SRC, 'g'), () => {
+        seen += 1;
+        return `<input class="blank-input" data-blank="${seen}" aria-label="第${seen}空" autocomplete="off">`;
+      });
+      const extra = [];
+      for (let i = seen + 1; i <= need; i++) {
+        extra.push(`<label class="blank-fallback__row"><span>第 ${i} 空</span><input class="blank-input" data-blank="${i}" autocomplete="off"></label>`);
+      }
+      return `
+        <div class="q-stem">${no}${stemHtml}</div>
+        ${extra.length ? `<div class="blank-fallback">${extra.join('')}</div>` : ''}
+        <p class="fz-12 t-dim">填空题：在空位中输入答案。同一空有多种正确写法时，写出其中一种即可。</p>`;
+    },
+
+    _blankAnswer() {
+      return JSON.stringify([...document.querySelectorAll('.q-body .blank-input')].map(input => input.value.trim()));
     },
 
     renderQuiz() {
@@ -452,16 +505,8 @@
         </div>
 
         <div class="q-body">
-          <div class="q-stem"><span class="q-no">${this.idx + 1}</span>${q.stem}</div>
+          ${this._quizPrompt(q)}
           <div class="q-figure" id="qFig"></div>
-          <div class="opts" id="opts">
-            ${q.options.map(o => `
-              <button class="opt" data-k="${o.key}">
-                <span class="opt__key">${o.key}</span>
-                <span style="flex:1">${o.text}</span>
-                ${q.figure && q.figure.options_graph && q.figure.options_graph[o.key] ? `<div class="q-opt-fig" data-optfig="${o.key}"></div>` : ''}
-              </button>`).join('')}
-          </div>
           <div id="fbBox"></div>
         </div>
 
@@ -483,12 +528,32 @@
 
       U.$('#qBack').addEventListener('click', () => { clearInterval(this._timer); this.collapsePanel(); });
       this.mountQFigure(target, q.figure);
-      U.$$('#opts .opt').forEach(o => o.addEventListener('click', () => {
-        U.$$('#opts .opt').forEach(x => x.classList.remove('is-picked'));
-        o.classList.add('is-picked');
-        this.picked = o.dataset.k;
-        U.$('#qSubmit').disabled = false;
-      }));
+      if (q.type === 'blank') {
+        const refresh = () => {
+          const missing = [...target.querySelectorAll('.blank-input')].some(input => !input.value.trim());
+          const btn = U.$('#qSubmit');
+          if (btn) btn.disabled = missing;
+        };
+        target.querySelectorAll('.blank-input').forEach(input => {
+          input.addEventListener('input', refresh);
+          input.addEventListener('keydown', e => {
+            if (e.key === 'Enter') { e.preventDefault(); const btn = U.$('#qSubmit'); if (btn && !btn.disabled) btn.click(); }
+          });
+        });
+        refresh();
+      } else {
+        U.$$('#opts .opt').forEach(o => o.addEventListener('click', () => {
+          if (isMultiQuestion(q)) {
+            o.classList.toggle('is-picked');
+            this.picked = [...target.querySelectorAll('#opts .opt.is-picked')].map(item => item.dataset.k).sort().join('');
+          } else {
+            U.$$('#opts .opt').forEach(x => x.classList.remove('is-picked'));
+            o.classList.add('is-picked');
+            this.picked = o.dataset.k;
+          }
+          U.$('#qSubmit').disabled = !this.picked;
+        }));
+      }
       U.$('#qSubmit').addEventListener('click', () => this.submit(q));
       if (this.idx === 0 && target.scrollIntoView) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
     },
@@ -502,17 +567,31 @@
       clearInterval(this._timer);
       const dur = Math.floor((Date.now() - this.startAt) / 1000);
       const sid = this.sessionId || 'cur';
-      API.practice.submitAnswer({ sessionId: sid, qId: q.qId, answer: this.picked, durationSeconds: dur }).then(r => {
+      const answer = q.type === 'blank' ? this._blankAnswer() : this.picked;
+      API.practice.submitAnswer({ sessionId: sid, qId: q.qId, answer, durationSeconds: dur }).then(r => {
         this.answers[q.qId] = r;
+        if (q.type === 'blank') {
+          const byIndex = {};
+          (r.blankResults || []).forEach(item => { byIndex[item.index] = item; });
+          document.querySelectorAll('.q-body .blank-input').forEach(input => {
+            input.disabled = true;
+            const item = byIndex[Number(input.dataset.blank)];
+            if (item) input.classList.add(item.correct ? 'is-right' : 'is-wrong');
+          });
+        }
         // 标注选项：先清除之前可能残留的 badge（防重复渲染），再加一次
         U.$$('#opts .opt').forEach(o => {
           o.classList.add('is-disabled');
           // 移除已有的 opt__flag badge（防止多次提交时叠加）
           o.querySelectorAll('.opt__flag').forEach(b => b.remove());
-          if (o.dataset.k === r.rightAnswer) {
+          const rightKeys = isMultiQuestion(q) ? String(r.rightAnswer || '') : '';
+          const mineKeys = isMultiQuestion(q) ? String(this.picked || '') : '';
+          const chosenRight = isMultiQuestion(q) ? rightKeys.includes(o.dataset.k) : o.dataset.k === r.rightAnswer;
+          const chosenMine = isMultiQuestion(q) ? mineKeys.includes(o.dataset.k) : o.dataset.k === this.picked;
+          if (chosenRight) {
             o.classList.remove('is-picked'); o.classList.add('is-right');
             o.insertAdjacentHTML('beforeend', `<span class="opt__flag badge badge--ok">正确答案</span>`);
-          } else if (o.dataset.k === this.picked) {
+          } else if (chosenMine) {
             o.classList.remove('is-picked'); o.classList.add('is-wrong');
             o.insertAdjacentHTML('beforeend', `<span class="opt__flag badge badge--danger">你的选择</span>`);
           }
@@ -533,6 +612,8 @@
           return `<div class="kp-tree__row ${cls}">${icon(ic)}${inner}</div>`;
         }).join('');
 
+        const blankLines = (r.blankResults || []).map(item =>
+          `<div>第 ${item.index} 空${item.correct ? '正确' : '不正确'}，参考答案：${U.esc(item.expect || '')}</div>`).join('');
         U.$('#fbBox').innerHTML = `
         <div class="feedback feedback--${r.correct ? 'ok' : 'no'}">
           <div class="feedback__head">${icon(r.correct ? 'checkCircle' : 'xCircle')}
@@ -543,6 +624,7 @@
           <div class="feedback__body">
             <div class="feedback__sec">
               <h5>题目解析</h5>
+              ${blankLines ? `<div class="stack" style="gap:4px;margin-bottom:8px">${blankLines}</div>` : ''}
               <div>${r.analysis || '暂无解析'}</div>
             </div>
             <div class="feedback__sec">
@@ -759,7 +841,7 @@
                   <span class="badge badge--brand">${U.esc(w.kpName || w.kp)}</span>
                   <span class="badge badge--outline">${U.esc(w.chapter || '未分章')}</span>
                   <span class="badge badge--outline">难度 ${U.stars(w.difficulty)}</span>
-                  <span class="fz-12 t-dim">我的答案 <b class="t-danger">${w.myAnswer}</b> · 正确答案 <b class="t-ok">${w.answer}</b></span>
+                  <span class="fz-12 t-dim">我的答案 <b class="t-danger">${U.esc(w.myAnswer || '')}</b> · 正确答案 <b class="t-ok">${U.esc(w.answer || '')}</b></span>
                   <span class="spacer"></span>
                   ${w.mastered ? '<span class="badge badge--ok">已掌握</span>'
               : `<button class="btn btn--xs btn--outline" data-redo="${w.qId}">重做</button>
@@ -827,10 +909,12 @@
     openWrongDetail(qId, filter) {
       const f = filter || 'false';
       API.practice.wrongDetail({ qId }).then(d => {
-        const optHtml = d.options.map(o => {
-          const isRight = o.key === d.answer;
+        const blankDetail = d.type === 'blank';
+        const multiDetail = d.type === 'multi' || d.type === 'multiple';
+        const optHtml = blankDetail ? '' : (d.options || []).map(o => {
+          const isRight = multiDetail ? String(d.answer || '').includes(o.key) : o.key === d.answer;
           const hasMini = d.figure && d.figure.options_graph && d.figure.options_graph[o.key];
-          return `<div class="opt${isRight ? ' is-right' : ''}"><span class="opt__key">${o.key}</span><span style="flex:1">${o.text}</span>${hasMini ? `<div class="q-opt-fig" data-optfig="${o.key}"></div>` : ''}${isRight ? '<span class="opt__flag badge badge--ok">正确答案</span>' : ''}</div>`;
+          return `<div class="opt${isRight ? ' is-right' : ''}"><span class="opt__key">${U.esc(o.key)}</span><span style="flex:1">${o.text}</span>${hasMini ? `<div class="q-opt-fig" data-optfig="${U.esc(o.key)}"></div>` : ''}${isRight ? '<span class="opt__flag badge badge--ok">正确答案</span>' : ''}</div>`;
         }).join('');
 
         Modal.open({
@@ -847,8 +931,9 @@
               <div class="callout" style="margin-bottom:14px"><b style="font-size:15.5px;line-height:1.7">${d.stem}</b></div>
               <div class="q-figure" id="wrongFig" style="margin:-6px 0 14px"></div>
 
-              <h5 class="fz-12 t-dim" style="margin:0 0 6px">选项</h5>
-              <div class="opts opts--readonly" style="margin-bottom:14px">${optHtml}</div>
+              ${blankDetail
+                ? `<h5 class="fz-12 t-dim" style="margin:0 0 6px">参考答案</h5><div class="callout" style="margin-bottom:14px">${U.esc(d.answer || '')}</div>`
+                : `<h5 class="fz-12 t-dim" style="margin:0 0 6px">选项</h5><div class="opts opts--readonly" style="margin-bottom:14px">${optHtml}</div>`}
 
               <div class="grid g-3" style="margin-bottom:14px">
                 <div class="stat" style="--_c:var(--danger)"><div class="stat__label">错题次数</div><div class="stat__value">${d.history.length}<small>次</small></div></div>

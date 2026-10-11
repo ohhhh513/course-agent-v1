@@ -9,6 +9,7 @@ import uuid
 import shutil
 from datetime import datetime, timedelta, timezone
 from collections import defaultdict
+from urllib.parse import urlparse
 from fastapi import APIRouter, Depends, Query, Body, Form, UploadFile, File, HTTPException, BackgroundTasks
 from starlette.concurrency import run_in_threadpool
 from sqlalchemy.orm import Session
@@ -32,6 +33,7 @@ from ..utils import (
     loads,
     fmt_dt,
 )
+from ..services.blank_questions import is_blank_type, pack_blank
 from ..media_utils import (
     BASE_DIR, COVERS_DIR, mp4_duration, pdf_pages,
     guess_type, chapter_id_of, parse_title, save_upload_file, generate_cover,
@@ -1920,6 +1922,13 @@ def update_question(
 
     # 图结构：figure_json / has_image 可更新；显式传 has_image 优先，否则跟随 figure
     fig = norm.get("figure_json", None)
+    if isinstance(fig, dict) and (fig.get("imageUrl") or fig.get("image_url")):
+        try:
+            fig = _sanitize_figure(fig)
+            norm["figure_json"] = fig
+        except ValueError as exc:
+            db.rollback()
+            return fail(str(exc), 400)
     if fig is not None:
         if fig == "" or fig == {}:
             q.figure_json = None
@@ -1958,6 +1967,15 @@ def update_question(
                 q.kp_path = json.dumps([name_map.get(q.kp_id, q.kp_id)], ensure_ascii=False)
 
     # 旧自由标签表：若仍传 tagIds 且不是 KP，忽略（产品语义：标签=KP）
+    if is_blank_type(q.type):
+        try:
+            packed = pack_blank(q.stem or "", q.answer or "", loads(q.options) or [])
+        except ValueError as exc:
+            db.rollback()
+            return fail(str(exc), 400)
+        q.type = "blank"
+        q.options = json.dumps(packed["options"], ensure_ascii=False)
+        q.answer = packed["stored_answer"]
     db.commit()
     return ok({"qId": q_id, "updated": True})
 
@@ -2062,8 +2080,14 @@ def import_questions(
                 ).first()
                 if ch:
                     chapter = ch.name
-            options = json.dumps(q.get("options", []), ensure_ascii=False) if isinstance(q.get("options"), list) else q.get("options", "[]")
+            options = q.get("options", [])
             answer = q.get("answer", "")
+            if is_blank_type(q_type):
+                packed = pack_blank(stem, answer, options if isinstance(options, list) else None)
+                q_type = "blank"
+                options = packed["options"]
+                answer = packed["stored_answer"]
+            options = json.dumps(options, ensure_ascii=False) if isinstance(options, list) else (options or "[]")
             analysis = q.get("analysis", "")
             kp_path = json.dumps(
                 q.get("kp_path") or [kp_id_name.get(i, i) for i in kp_ids] or [kp_id_name.get(kp_id, kp_id)],
@@ -2071,6 +2095,8 @@ def import_questions(
             )
             is_key = int(q.get("is_key", 0))
             fig = q.get("figure_json")
+            if isinstance(fig, dict):
+                fig = _sanitize_figure(fig)
             fig_json = json.dumps(fig, ensure_ascii=False) if isinstance(fig, (dict, list)) else (fig or None)
 
             new_q = Question(
@@ -2114,6 +2140,64 @@ def import_questions(
         "failed": failed,
         "errors": errors[:10],
     })
+
+
+def _sanitize_figure(fig):
+    """配图地址写入现有 figure_json。接受公网链接，或本系统上传后的题目图片路径。"""
+    if not isinstance(fig, dict):
+        return fig
+    raw = fig.get("imageUrl") or fig.get("image_url")
+    if not raw:
+        return fig
+    text = str(raw).strip()
+    local = re.fullmatch(r"/resources/question-figures/[A-Za-z0-9]+/[A-Za-z0-9]+\.(?:png|jpe?g|gif|webp)", text, re.I)
+    if local:
+        text = local.group(0)
+    else:
+        parsed = urlparse(text)
+        if parsed.scheme not in ("http", "https") or not parsed.netloc or parsed.username or parsed.password or len(text) > 2000:
+            raise ValueError("题目配图须上传图片文件，或填写不带账号密码的 http、https 地址")
+    cleaned = dict(fig)
+    cleaned.pop("image_url", None)
+    cleaned["imageUrl"] = text
+    cleaned["has_image"] = True
+    return cleaned
+
+
+_FIGURE_MIME_EXT = {
+    "image/png": ".png",
+    "image/jpeg": ".jpg",
+    "image/gif": ".gif",
+    "image/webp": ".webp",
+}
+
+
+@question_router.post("/figure")
+async def upload_question_figure(
+    file: UploadFile = File(...),
+    course_id: str = Depends(get_current_course_id),
+):
+    """保存题目配图到本系统，不要求图片已有公网地址。"""
+    from ..agent_st.agent.file_text import detect_image_mime, image_mime_for_extension
+
+    if not re.fullmatch(r"[A-Za-z0-9]+", course_id or ""):
+        return fail("当前课程无效", 400)
+    data = await file.read(8 * 1024 * 1024 + 1)
+    if len(data) > 8 * 1024 * 1024:
+        return fail("图片不能超过 8MB", 400)
+    if not data:
+        return fail("图片内容为空", 400)
+    mime = detect_image_mime(data)
+    if mime not in _FIGURE_MIME_EXT:
+        return fail("只接受 PNG、JPG、GIF、WEBP", 400)
+    claimed = image_mime_for_extension(file.filename or "")
+    if claimed and claimed != mime:
+        return fail("文件扩展名与图片内容不一致", 400)
+    folder = BASE_DIR / "resources" / "question-figures" / course_id
+    folder.mkdir(parents=True, exist_ok=True)
+    name = uuid.uuid4().hex + _FIGURE_MIME_EXT[mime]
+    (folder / name).write_bytes(data)
+    return ok({"url": f"/resources/question-figures/{course_id}/{name}"})
 
 
 # ====== 文件上传导入（Word / PDF / 图片）======

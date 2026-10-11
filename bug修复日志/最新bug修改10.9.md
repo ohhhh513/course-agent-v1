@@ -135,3 +135,11 @@
 
 - `backend/app/main.py`：FastAPI 启动时打印当前环境名与 Python 版本，例如 `environment=stucourse Python=3.11.16`。Conda 环境根据实际解释器前缀识别，venv 显示其目录名，普通系统 Python 显示 `system`；不输出解释器完整路径，不改变接口、数据库或业务行为。
 - 验证：`E:\anaconda\envs\stucourse\python.exe -m py_compile app\main.py` 通过；使用同一解释器调用应用启动钩子，`DATABASE_URL=sqlite:///:memory:`，日志输出 `[runtime] environment=stucourse Python=3.11.16`。验证数据库仅为内存库，未读写真实数据库。
+
+## 十三、练习支持填空题（2026-10-11）
+
+- `backend/app/services/blank_questions.py`：填空题的空位、多种可接受答案和判分放在现有 `questions.options` JSON 中，`questions.answer` 只存不超过 64 字的摘要；不新增表或列。
+- `backend/app/routers/practice.py`：学生组卷不返回填空标准答案；提交时按空判分，选择题仍是整串相等。响应里多一个 `blankResults` 字段，只在填空题出现。
+- `backend/app/services/question_preview.py`、`backend/app/routers/teacher.py`：导入和教师保存接受填空题。题干用 `____` 标空，多个空用 `；` 分段，同一空多种写法用 `|`。
+- `assets/js/student/views/practice.js`、`assets/js/teacher/views/question.js`：学生练习在空位输入；教师新建、编辑题目可以选择填空题。
+- 验证：`py_compile` 通过；`tests/test_blank_questions.py` 五项（双空判对、错序判错、学生端不泄露答案、导入预览）通过。未改数据库，未做浏览器点击验收。

@@ -976,9 +976,41 @@ def ability_radar(
     })
 
 
-# =============================================================================
-# 成长轨迹 — 从 answer_records 按周聚合
-# =============================================================================
+# 成长轨迹横轴最多保留的练习日。多于此时只取首尾和均匀间隔的日期，不把没练习的日期画进去。
+_GROWTH_MAX_POINTS = 8
+
+
+def _thin_dated_points(points: list, limit: int) -> list:
+    """points 为按日期升序的 (date, value)。点数不超过 limit，且始终保留首尾。"""
+    count = len(points)
+    if count <= limit or limit < 2:
+        return points[-limit:] if limit < 2 else points
+    chosen = {round(i * (count - 1) / (limit - 1)) for i in range(limit)}
+    return [points[i] for i in sorted(chosen)]
+
+
+def _mastery_on_practice_days(records) -> list:
+    """每个有作答的本地日期算一个掌握率：截至当天，每道题只保留最近一次，答对题数 / 做过的题数。
+
+    没练习的日期不产生点，避免曲线被 0 拉断。
+    """
+    by_day = defaultdict(list)
+    for record in records:
+        local = _to_local(record.created_at)
+        if not local or not record.q_id:
+            continue
+        by_day[local.date()].append(record)
+    latest = {}
+    points = []
+    for day in sorted(by_day):
+        for record in sorted(by_day[day], key=lambda item: item.created_at or datetime.min):
+            latest[record.q_id] = 1 if record.is_correct else 0
+        if not latest:
+            continue
+        mastery = round(sum(latest.values()) / len(latest) * 100, 1)
+        points.append((day, mastery))
+    return _thin_dated_points(points, _GROWTH_MAX_POINTS)
+
 
 @router.get("/growth")
 def growth(
@@ -987,74 +1019,18 @@ def growth(
     user: User = Depends(get_current_user),
     course_id: str = Depends(get_current_course_id),
 ):
-    """成长轨迹 — 按周从 answer_records 聚合生成曲线（按当前课程隔离）"""
-    uid = user.user_id
-    today = date.today()
-
-    # 取过去 8 周的 answer_records
-    eight_weeks_ago = today - timedelta(weeks=8)
-    recs = db.query(AnswerRecord).filter(
-        AnswerRecord.user_id == uid,
-        AnswerRecord.course_id == course_id,     # 课程隔离：只统计当前课程
-        func.date(AnswerRecord.created_at) >= eight_weeks_ago,
+    """成长轨迹 — 只画有练习的日期，掌握率取截至该日的最近一次作答正确率。"""
+    records = db.query(AnswerRecord).filter(
+        AnswerRecord.user_id == user.user_id,
+        AnswerRecord.course_id == course_id,
+        AnswerRecord.created_at.isnot(None),
     ).all()
-
-    # 按 ISO 周分组
-    week_data = defaultdict(lambda: {"correct": 0, "total": 0, "kps": set()})
-    for r in recs:
-        if not r.created_at:
-            continue
-        iso_year, iso_week, _ = r.created_at.isocalendar()
-        key = f"{iso_year}-W{iso_week:02d}"
-        week_data[key]["total"] += 1
-        if r.is_correct:
-            week_data[key]["correct"] += 1
-        if r.kp_id:
-            week_data[key]["kps"].add(r.kp_id)
-
-    # 有序周：以“当前周周一(8/31)”为第1周起点，往后排（第1周→第8周，时间前进）
-    first_monday = today - timedelta(days=today.isoweekday() - 1)
-    weeks = []
-    for i in range(0, 8):
-        monday = first_monday + timedelta(weeks=i)
-        iso_year, iso_week, _ = monday.isocalendar()
-        key = f"{iso_year}-W{iso_week:02d}"
-        w = week_data.get(key, {"correct": 0, "total": 0, "kps": set()})
-        weeks.append({
-            "label": f"第{i+1}周·{monday.strftime('%m/%d')}",
-            "correct": w["correct"], "total": w["total"],
-            "kp_count": len(w["kps"]),
-        })
-
-    # 累计完成率：已掌握知识点占比。
-    # 原实现依赖 learning_paths.mastered_at，但该字段只有 seed 会写（seed 不再生成
-    # 学习路径后恒为 NULL），故改为按真实掌握率统计；分母也不再写死 28（图谱已是 34 个）。
-    total_kp = db.query(GraphNode).filter(
-        GraphNode.graph_type == "knowledge",
-        GraphNode.course_id == course_id,        # 课程隔离：分母只数本课知识点
-    ).count() or 1
-    mastered_kps = db.query(LearningPath).filter(
-        LearningPath.user_id == uid,
-        LearningPath.course_id == course_id,     # 课程隔离
-        LearningPath.mastery >= 80,
-    ).count()
-    mastered_ratio = round(min(mastered_kps, total_kp) / total_kp * 100, 1)
-
-    completion_series = []
-    mastery_series = []
-    for w in weeks:
-        completion_series.append(mastered_ratio)
-        if w["total"] > 0:
-            mastery_series.append(round(w["correct"] / w["total"] * 100, 1))
-        else:
-            mastery_series.append(0)
-
+    points = _mastery_on_practice_days(records)
     return ok({
         "dimension": dimension,
-        "xAxis": [w["label"] for w in weeks],
+        "xAxis": [day.strftime("%m/%d") for day, _mastery in points],
         "series": [
-            {"name": "知识点完成率", "data": completion_series, "color": "#6366f1"},
-            {"name": "掌握率(本周)", "data": mastery_series, "color": "#22c55e"},
+            {"name": "掌握率", "data": [mastery for _day, mastery in points], "color": "#22c55e"},
         ],
         "milestones": [],
     })

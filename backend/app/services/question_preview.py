@@ -8,6 +8,7 @@ import json
 import re
 
 from app.models.graph import GraphNode
+from app.services.blank_questions import is_blank_type, pack_blank
 
 
 def parse_question_text(text):
@@ -32,7 +33,7 @@ def parse_question_text(text):
                 continue
             matched = re.match(r"^(?:参考答案|答案|answer)\s*[:：]\s*(.*)", line, re.I)
             if matched:
-                answer, section = matched.group(1).strip().upper(), "answer"
+                answer, section = matched.group(1).strip(), "answer"
                 continue
             matched = re.match(r"^(?:解析|分析|analysis)\s*[:：]\s*(.*)", line, re.I)
             if matched:
@@ -48,8 +49,17 @@ def parse_question_text(text):
             elif section == "stem":
                 stem.append(line)
         if stem:
+            letter = bool(re.fullmatch(r"[A-Ha-h]+", answer or ""))
+            if options:
+                qtype = "multi" if letter and len(answer) > 1 else "single"
+                answer = answer.upper()
+            elif letter:
+                qtype = "single"
+                answer = answer.upper()
+            else:
+                qtype = "blank"
             questions.append({"stem": "\n".join(stem), "options": options, "answer": answer,
-                              "analysis": "\n".join(analysis), "type": "multi" if len(answer) > 1 and options else "single"})
+                              "analysis": "\n".join(analysis), "type": qtype})
     return questions
 
 
@@ -102,8 +112,9 @@ def preview_questions(db, course_id, text="", questions=None):
         issues = []
         if not isinstance(raw, dict):
             normalized.append({}); errors.append({"index": index, "errors": ["题目必须为对象"]}); continue
+        raw_answer = str(raw.get("answer") or "").strip()
         question = {"stem": str(raw.get("stem") or raw.get("question") or "").strip(),
-                    "answer": str(raw.get("answer") or "").strip().upper(), "analysis": str(raw.get("analysis") or ""),
+                    "answer": raw_answer, "analysis": str(raw.get("analysis") or ""),
                     "type": str(raw.get("type") or "single"), "status": "pending",
                     "chapterId": str(raw.get("chapterId") or raw.get("chapter_id") or ""),
                     "kpIds": raw.get("kpIds") or raw.get("kp_ids") or ([raw["kp_id"]] if raw.get("kp_id") else [])}
@@ -111,12 +122,14 @@ def preview_questions(db, course_id, text="", questions=None):
             question["type"] = "single"
         if question["type"] in ("多选", "多选题"):
             question["type"] = "multi"
+        if is_blank_type(question["type"]):
+            question["type"] = "blank"
         if not question["stem"] or len(question["stem"]) > 20000:
             issues.append("题干为空或过长")
         if len(question["analysis"]) > 20000:
             issues.append("解析过长")
-        if question["type"] not in ("single", "multi"):
-            issues.append("此导入预览支持单选和多选题")
+        if question["type"] not in ("single", "multi", "blank"):
+            issues.append("此导入预览支持单选、多选和填空题")
         for key, default, minimum, maximum in (("difficulty", 3, 1, 5), ("score", 5, 1, 100)):
             try:
                 value = int(raw.get(key, default))
@@ -125,19 +138,29 @@ def preview_questions(db, course_id, text="", questions=None):
                 question[key] = value
             except (ValueError, TypeError):
                 question[key] = raw.get(key); issues.append(f"{key} 超出范围")
-        options = raw.get("options", [])
-        if isinstance(options, dict):
-            options = [{"key": key, "text": value} for key, value in options.items()]
-        if not isinstance(options, list) or not all(isinstance(option, dict) for option in options):
-            options = []; issues.append("选项格式不正确")
-        question["options"] = [{"key": str(o.get("key") or "").upper(), "text": str(o.get("text") or "")} for o in options]
-        letters = [o["key"] for o in question["options"]]
-        if not 2 <= len(options) <= 8 or len(set(letters)) != len(letters) or any(not re.fullmatch("[A-H]", letter) for letter in letters) or any(not o["text"].strip() for o in question["options"]):
-            issues.append("选项需为 2～8 个不同字母且内容非空")
-        answer = re.sub(r"[,，、\s]", "", question["answer"])
-        question["answer"] = answer
-        if not answer or any(letter not in letters for letter in answer) or (question["type"] == "single" and len(answer) != 1):
-            issues.append("答案不对应选项或不符合题型")
+        if question["type"] == "blank":
+            try:
+                packed = pack_blank(question["stem"], raw_answer, raw.get("options"))
+                question["options"] = packed["options"]
+                question["answer"] = packed["display"]
+            except ValueError as exc:
+                question["options"] = []
+                issues.append(str(exc))
+        else:
+            question["answer"] = raw_answer.upper()
+            options = raw.get("options", [])
+            if isinstance(options, dict):
+                options = [{"key": key, "text": value} for key, value in options.items()]
+            if not isinstance(options, list) or not all(isinstance(option, dict) for option in options):
+                options = []; issues.append("选项格式不正确")
+            question["options"] = [{"key": str(o.get("key") or "").upper(), "text": str(o.get("text") or "")} for o in options]
+            letters = [o["key"] for o in question["options"]]
+            if not 2 <= len(options) <= 8 or len(set(letters)) != len(letters) or any(not re.fullmatch("[A-H]", letter) for letter in letters) or any(not o["text"].strip() for o in question["options"]):
+                issues.append("选项需为 2～8 个不同字母且内容非空")
+            answer = re.sub(r"[,，、\s]", "", question["answer"])
+            question["answer"] = answer
+            if not answer or any(letter not in letters for letter in answer) or (question["type"] == "single" and len(answer) != 1):
+                issues.append("答案不对应选项或不符合题型")
         if question["chapterId"] and question["chapterId"] not in chapters:
             issues.append("章节不属于当前课程")
         if not isinstance(question["kpIds"], list) or any(not isinstance(k, str) or k not in kps for k in question["kpIds"]):

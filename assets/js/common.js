@@ -150,6 +150,43 @@ const U = {
       ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   },
 
+  /** 题目配图地址：外链，或本系统保存的题目图片。 */
+  httpImageUrl(raw) {
+    const text = String(raw == null ? '' : raw).trim();
+    if (!text || text.includes('..') || text.includes('\\')) return '';
+    if (/^\/resources\/question-figures\/[A-Za-z0-9]+\/[A-Za-z0-9]+\.(png|jpe?g|gif|webp)$/i.test(text)) return text;
+    try {
+      const url = new URL(text);
+      if ((url.protocol !== 'http:' && url.protocol !== 'https:') || url.username || url.password) return '';
+      return url.href;
+    } catch (e) {
+      return '';
+    }
+  },
+
+  /** 把图片链接画进容器；加载失败时给出说明，不把链接写进脚本。 */
+  mountQuestionImage(container, raw) {
+    if (!container) return false;
+    const url = this.httpImageUrl(raw);
+    if (!url) {
+      container.textContent = '';
+      return false;
+    }
+    const img = document.createElement('img');
+    img.className = 'q-linked-image';
+    img.alt = '题目配图';
+    img.referrerPolicy = 'no-referrer';
+    img.addEventListener('error', () => {
+      const note = document.createElement('div');
+      note.className = 'callout callout--warn';
+      note.textContent = '图片无法打开，请确认链接可公开访问。';
+      container.replaceChildren(note);
+    });
+    img.src = url;
+    container.replaceChildren(img);
+    return true;
+  },
+
   /** 骨架屏 */
   skeleton(h) {
     return `<div style="height:${h || 120}px;border-radius:var(--r-md);background:linear-gradient(90deg,var(--surface-2) 25%,var(--surface-3) 50%,var(--surface-2) 75%);background-size:200% 100%;animation:sk 1.4s infinite"></div>`;
