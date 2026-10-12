@@ -6,8 +6,8 @@ if (window.__studentAuthed) {
   // 各视图会误显示「未加入课程」，且刷新前不会自愈。
   const ready = window.__courseReady;
   if (ready && typeof ready.then === 'function') {
-    ready.catch(() => {}).then(() => Router.init('dashboard'));
+    ready.catch(() => {}).then(() => Router.init('ai'));
   } else {
-    Router.init('dashboard');
+    Router.init('ai');
   }
 }

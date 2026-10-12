@@ -13,8 +13,8 @@ const Chat = AgentChatView.create({
   badges: `<span class="badge badge--ok">${icon('shield')} 严格溯源</span>
            <span class="badge badge--outline">${icon('bot')} RAG + 工具调用</span>`,
   placeholder: '输入你的问题，Enter 发送 / Shift+Enter 换行',
-  welcomeHtml: `<b>👋 你好！我是你的 AI 助教</b>
-    <p style="margin:8px 0 0;color:var(--text-2)">你可以向我提问课程相关的问题，我会结合教材、课件和教学视频为你解答。试试从下方选择一个问题，或直接在输入框提问吧！</p>`,
+  welcomeTitle: '你好，有什么想一起学的？',
+  welcomeText: '课程答疑、查找资源、安排练习，从你的问题开始。',
   // 推荐问题与「学习驾驶舱 - AI 助教」同一数据源（/student/dashboard 的 suggestedQuestions；
   // 旧接口 /ai/suggest-questions 后端恒为空，弃用）
   recommended: () => API.student.dashboard().then(d => (d && d.suggestedQuestions) || []),

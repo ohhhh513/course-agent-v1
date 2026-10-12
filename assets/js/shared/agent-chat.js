@@ -276,7 +276,7 @@ window.AgentChatView = (function () {
    *   containerId  视图容器选择器（'#view-ai'）
    *   badges       顶部徽标 HTML（各端不同）
    *   placeholder  输入框 placeholder
-   *   welcomeHtml  新建会话时的欢迎气泡 HTML
+   *   welcomeTitle / welcomeText  新对话中央欢迎标题与说明
    *   recommended  () => Promise<string[]>  推荐问题（「猜你想问」）
    *   applyAction  (action) => boolean      界面动作白名单执行器（各端页面不同）
    *   emptyRecommend / recommendFail        推荐区兜底文案
@@ -344,7 +344,8 @@ window.AgentChatView = (function () {
       containerId: '',
       badges: '',
       placeholder: '输入你的问题，Enter 发送 / Shift+Enter 换行',
-      welcomeHtml: '',
+      welcomeTitle: '你好，有什么可以帮你？',
+      welcomeText: '告诉我你的问题，或从下方选择一个话题开始。',
       recommended: () => Promise.resolve([]),
       applyAction: () => false,
       emptyRecommend: '暂无推荐问题',
@@ -379,36 +380,42 @@ window.AgentChatView = (function () {
         if (!el) return;
         el.innerHTML = `
         <div class="chat-shell">
-          <div class="card chat">
+          <div class="card chat chat--empty">
             <div class="chat__method">
               ${cfg.badges}
               <span class="spacer"></span>
               <button class="btn btn--ghost btn--sm" id="newSessBtn">${icon('plus')} 新建会话</button>
             </div>
-            <div class="chat__log" id="chatLog"></div>
-            <div class="chat__input">
-              ${cfg.allowUpload ? '<div class="att-tray" id="attTray" hidden></div>' : ''}
-              <div class="composer">
-                <textarea id="chatInput" rows="1" placeholder="${U.esc(cfg.placeholder)}"></textarea>
-                <div class="composer__acts">
-                  <button class="btn btn--ghost btn--icon btn--sm" id="chatUpload" type="button">${icon('upload')}</button>
-                  <button class="btn btn--primary btn--icon" id="chatSend">${icon('send')}</button>
-                </div>
+            <div class="chat__workspace">
+              <div class="chat__intro" id="chatIntro">
+                <div class="chat__emblem" aria-hidden="true">${icon('bot')}</div>
+                <h2>${U.esc(cfg.welcomeTitle)}</h2>
+                <p>${U.esc(cfg.welcomeText)}</p>
               </div>
-              ${cfg.allowUpload ? '<input type="file" id="chatFile" multiple hidden accept=".txt,.md,.csv,.json,.xlsx,.docx,.pdf,.jpg,.jpeg,.png,.gif,.webp,image/jpeg,image/png,image/gif,image/webp">' : ''}
+              <div class="chat__log" id="chatLog" hidden></div>
+              <div class="chat__input">
+                <div class="composer">
+                  ${cfg.allowUpload ? '<div class="att-tray" id="attTray" hidden></div>' : ''}
+                  <textarea id="chatInput" rows="3" aria-label="输入你的问题" placeholder="${U.esc(cfg.placeholder)}"></textarea>
+                  <div class="composer__acts">
+                    ${cfg.allowUpload ? `<button class="btn btn--ghost btn--icon btn--sm" id="chatUpload" type="button" title="上传图片或文件" aria-label="上传图片或文件">${icon('plus')}</button>` : ''}
+                    <span class="composer__hint">Enter 发送 · Shift+Enter 换行</span>
+                    <button class="btn btn--primary btn--icon" id="chatSend" type="button" aria-label="发送">${icon('send')}</button>
+                  </div>
+                </div>
+                ${cfg.allowUpload ? '<input type="file" id="chatFile" multiple hidden accept=".txt,.md,.csv,.json,.xlsx,.docx,.pdf,.jpg,.jpeg,.png,.gif,.webp,image/jpeg,image/png,image/gif,image/webp">' : ''}
+              </div>
+              <div class="chat__recommend" id="chatRecommend">
+                <h3>${icon('bulb')} 猜你想问</h3>
+                <div class="chat__questions" id="askBox" aria-live="polite"><p class="fz-12 t-dim">正在准备推荐问题…</p></div>
+              </div>
             </div>
           </div>
 
-          <div class="stack">
-            <div class="card">
-              <div class="card__head"><h3>${icon('bulb')} 猜你想问</h3></div>
-              <div class="card__body card__body--tight" id="askBox" style="max-height:188px;overflow-y:auto"></div>
-            </div>
-            <div class="card">
-              <div class="card__head"><h3>${icon('clock')} 历史会话</h3></div>
-              <div class="card__body card__body--flush"><div class="list" id="sessBox"></div></div>
-            </div>
-          </div>
+          <aside class="card chat__history" aria-label="历史会话">
+            <div class="card__head"><h3>${icon('clock')} 历史会话</h3></div>
+            <div class="card__body card__body--flush"><div class="list" id="sessBox"></div></div>
+          </aside>
         </div>`;
 
         this._bindImageZoom(el);
@@ -416,11 +423,12 @@ window.AgentChatView = (function () {
         // 首次进入时只在本次登录没有记录时新开对话；同次登录重绘则恢复上次选中的会话。
         this.loadSession(this._restoreOpenSessionId());
 
-        // 侧栏 · 猜你想问：推荐由各端结合当前业务数据和本人近期提问生成。
+        // 新对话输入框下的推荐由各端结合当前业务数据和本人近期提问生成。
+        const askBox = U.$('#askBox');
         Promise.resolve().then(() => cfg.recommended()).then(qs0 => {
           const qs = (qs0 || []).slice(0, 4);
           const box = U.$('#askBox');
-          if (!box) return;
+          if (!box || box !== askBox) return;
           box.innerHTML = qs.length
             ? qs.map(q => `<button class="ask-item" data-ask="${U.esc(q)}">${icon('bulb')}<span>${U.esc(q)}</span></button>`).join('')
             : `<p class="fz-12 t-dim" style="padding:4px 2px">${U.esc(cfg.emptyRecommend)}</p>`;
@@ -429,9 +437,14 @@ window.AgentChatView = (function () {
           U.$$('#askBox [data-ask]').forEach(b => b.addEventListener('click', () => this.fillInput(b.dataset.ask)));
         }).catch(() => {
           const box = U.$('#askBox');
-          if (box) box.innerHTML = `<p class="fz-12 t-dim" style="padding:4px 2px">${U.esc(cfg.recommendFail)}</p>`;
+          if (box && box === askBox) box.innerHTML = `<p class="fz-12 t-dim" style="padding:4px 2px">${U.esc(cfg.recommendFail)}</p>`;
         });
-        A.sessions().then(r => this.renderSessions(r));
+        const sessBox = U.$('#sessBox');
+        A.sessions().then(r => {
+          if (U.$('#sessBox') === sessBox) this.renderSessions(r);
+        }).catch(() => {
+          if (U.$('#sessBox') === sessBox) sessBox.innerHTML = '<p class="chat__history-empty">历史会话加载失败，请重新进入页面。</p>';
+        });
 
         // 发送 / 停止（主流智能体形态：同一个按钮，生成中变成「停止」）
         const input = U.$('#chatInput');
@@ -1067,7 +1080,23 @@ window.AgentChatView = (function () {
         if (log) log.scrollTop = log.scrollHeight;
       },
 
+      _setEmptyState(empty) {
+        const root = U.$(cfg.containerId);
+        if (!root) return;
+        root.querySelector('.chat')?.classList.toggle('chat--empty', empty);
+        const intro = root.querySelector('#chatIntro');
+        const recommend = root.querySelector('#chatRecommend');
+        const log = root.querySelector('#chatLog');
+        if (intro) intro.hidden = !empty;
+        if (recommend) recommend.hidden = !empty;
+        if (log) log.hidden = empty;
+      },
+
       loadSession(sid) {
+        if (this.busy) {
+          Toast.info('请先停止当前回答，再切换会话');
+          return;
+        }
         this._uiNavigationRevision = (this._uiNavigationRevision || 0) + 1;
         this.sessionId = sid || 'new';
         this._attachmentRestoreToken += 1;
@@ -1079,19 +1108,19 @@ window.AgentChatView = (function () {
         this._renderTray();
         const log = U.$('#chatLog');
         if (!log) return;
+        this._setEmptyState(this.sessionId === 'new');
+        U.$$('#sessBox [data-sid]').forEach(item => item.classList.toggle('is-active', item.dataset.sid === this.sessionId));
 
-        // 'new' 会话：不请求后端（后端返回空数组），直接显示欢迎界面
+        // 新对话使用独立欢迎区，发送前不在消息列表里插入欢迎气泡。
         if (!sid || sid === 'new') {
-          log.innerHTML = `<div class="msg msg--ai"><div class="msg__av">AI</div>
-            <div class="msg__wrap"><div class="bubble">${cfg.welcomeHtml}</div></div></div>`;
-          this.scroll();
+          log.innerHTML = '';
           return;
         }
 
         log.innerHTML = `<div class="msg msg--ai"><div class="msg__av">AI</div><div class="msg__wrap"><div class="bubble"><span class="typing"><i></i><i></i><i></i></span> <span class="fz-12 t-dim">加载会话中…</span></div></div></div>`;
         const requestedSessionId = this.sessionId;
         A.messages({ sessionId: sid }).then(list => {
-          if (this.sessionId !== requestedSessionId) return;
+          if (this.sessionId !== requestedSessionId || U.$('#chatLog') !== log) return;
           if (!list || list.length === 0) {
             log.innerHTML = `<div class="msg msg--ai"><div class="msg__av">AI</div><div class="msg__wrap"><div class="bubble t-dim">该会话暂无消息，可能已被清理</div></div></div>`;
           } else {
@@ -1108,7 +1137,7 @@ window.AgentChatView = (function () {
           this._loadStoredImagePreviews(log, requestedSessionId);
           this.scroll();
         }).catch(() => {
-          if (this.sessionId !== requestedSessionId) return;
+          if (this.sessionId !== requestedSessionId || U.$('#chatLog') !== log) return;
           log.innerHTML = `<div class="msg msg--ai"><div class="msg__av">AI</div><div class="msg__wrap"><div class="bubble t-dim">加载会话失败，请重试</div></div></div>`;
         });
       },
@@ -1168,6 +1197,7 @@ window.AgentChatView = (function () {
           return;
         }
         if (!log || this.busy) return;
+        this._setEmptyState(false);
         // 附件随本轮提交：先快照再清空待发区（发送中的文件列表不随后续选择变化）
         const files = (this.pendingFiles || []).slice();
         this.pendingFiles = [];
@@ -1384,7 +1414,10 @@ window.AgentChatView = (function () {
         if (!btn) return;
         btn.innerHTML = icon(busy ? 'square' : 'send');
         btn.title = busy ? '停止生成' : '发送';
+        btn.setAttribute('aria-label', btn.title);
         btn.classList.toggle('is-stopping', !!busy);
+        const newSession = U.$('#newSessBtn');
+        if (newSession) newSession.disabled = !!busy;
       },
 
       /**
@@ -1413,18 +1446,16 @@ window.AgentChatView = (function () {
         const box = U.$('#sessBox');
         if (!box) return;
         const list = (r && r.list) || [];
-        box.innerHTML = list.map(s => `
+        box.innerHTML = list.length ? list.map(s => `
           <div class="list__item list__item--clickable ${s.sessionId === this.sessionId ? 'is-active' : ''}" data-sid="${U.esc(s.sessionId)}">
             <div class="list__main"><b class="clamp-2">${U.esc(s.title)}</b>
               <p>${s.time} · ${s.rounds} 轮 · ${U.esc(s.kp)}</p></div>
             <button class="sess-del" data-del="${U.esc(s.sessionId)}" title="删除会话">${icon('trash')}</button>
-          </div>`).join('');
+          </div>`).join('') : '<p class="chat__history-empty">暂无历史会话<br>开始对话后会保存在这里</p>';
         // 打开会话
         U.$$('#sessBox [data-sid]').forEach(item => {
           item.addEventListener('click', () => {
             const sid = item.dataset.sid;
-            U.$$('#sessBox [data-sid]').forEach(x => x.classList.remove('is-active'));
-            item.classList.add('is-active');
             this.loadSession(sid);
           });
         });

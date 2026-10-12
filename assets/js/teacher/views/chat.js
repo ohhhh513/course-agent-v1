@@ -15,9 +15,8 @@ const TeacherChat = AgentChatView.create({
   badges: `<span class="badge badge--ok">${icon('shield')} 教师视角</span>
            <span class="badge badge--outline">${icon('grid')} 全班学情</span>`,
   placeholder: '问班级学情，例如「我班上谁最需要关注」，Enter 发送 / Shift+Enter 换行',
-  welcomeHtml: `<b>👋 教师智能助手</b>
-    <p style="margin:8px 0 0;color:var(--text-2)">你可以问全班层面的学情（谁需要关注、哪个知识点整体最差、
-    哪几道题全班都错），也可以照常问课程内容。数据实时取自本课程的学习记录，不是教材检索。</p>`,
+  welcomeTitle: '你好，今天需要什么教学帮助？',
+  welcomeText: '查看班级学情、管理课程资源、准备题目，告诉我你想做什么。',
   // 基于当前课程驾驶舱生成推荐，并按教师近期答疑主题调整顺序。
   recommended: () => Promise.all([
     API.teacher.dashboard().catch(() => null),

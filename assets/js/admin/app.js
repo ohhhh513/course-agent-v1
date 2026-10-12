@@ -16,6 +16,6 @@
 
   initTopbar('index.html?role=admin');
 
-  // 默认落「账号管理」；支持 #assistant 直达智能助手
-  Router.init('users');
+  // 登录后默认打开智能助手；带页面锚点时仍支持直达对应功能。
+  Router.init('assistant');
 })();

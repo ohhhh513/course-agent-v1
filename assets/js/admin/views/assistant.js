@@ -18,10 +18,8 @@ const AdminChat = AgentChatView.create({
   badges: `<span class="badge badge--ok">${icon('shield')} 平台治理</span>
            <span class="badge badge--outline">${icon('grid')} 全平台 · 写操作需确认</span>`,
   placeholder: '问平台情况，例如「系统现在什么状态」，Enter 发送 / Shift+Enter 换行',
-  welcomeHtml: `<b>👋 平台治理助手</b>
-    <p style="margin:8px 0 0;color:var(--text-2)">你可以问平台运行与治理情况：账号与课程规模、题库 / 资源数据量、
-    知识库索引状态、数据一致性体检。数据实时取自平台真实业务表；<b>上传学生／教师信息文件（或点名用户名）可生成
-    账号录入 / 删除动作，需你在卡片上确认后才会写入或删除</b>。</p>`,
+  welcomeTitle: '你好，今天需要处理什么？',
+  welcomeText: '查询平台情况、核查课程数据、管理师生账号，重要操作由你确认。',
   // 根据平台实时汇总和管理员近期提问生成，并按关注主题调整顺序。
   recommended: () => Promise.all([
     API.adminAgent.recommendationContext().catch(() => null),

@@ -505,22 +505,41 @@
 .empty--sm svg { width: 28px; height: 28px; margin-bottom: 8px; }
 
 /* ---------- AI 对话 ---------- */
-.chat-shell { display: grid; grid-template-columns: minmax(0, 1fr) 292px; gap: 16px; align-items: start; }
+.chat-shell {
+  --chat-height: max(560px, calc(100dvh - var(--topbar-h) - 48px));
+  display: grid; grid-template-columns: minmax(0, 1fr) 264px; gap: 18px; align-items: start;
+}
 .chat {
-  height: calc(100vh - var(--topbar-h) - 44px); min-height: 520px;
+  height: var(--chat-height); min-width: 0;
   display: flex; flex-direction: column; overflow: hidden;
 }
 .chat__method {
   display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
-  padding: 10px 16px; border-bottom: 1px solid var(--border-soft); background: var(--surface-2);
+  flex: 0 0 auto; padding: 12px 20px; border-bottom: 1px solid var(--border-soft);
 }
 .chat__method #methodChips { flex: 1 1 auto; min-width: 0; }
-.chat__log { flex: 1 1 0; min-height: 0; overflow-y: auto; padding: 20px; display: flex; flex-direction: column; gap: 18px; position: relative; isolation: isolate; }
+.chat__workspace { display: flex; flex-direction: column; flex: 1; min-height: 0; overflow: hidden; }
+.chat__intro { flex: 0 0 auto; width: 100%; max-width: 840px; margin: auto auto 0; padding: 28px 28px 30px; text-align: center; }
+.chat__emblem {
+  display: grid; place-items: center; width: 66px; height: 66px; margin: 0 auto 22px;
+  border-radius: var(--r-xl); color: var(--brand-500); background: var(--brand-soft);
+  border: 1px solid color-mix(in srgb, var(--brand-500) 22%, var(--border-soft));
+}
+.chat__emblem svg { width: 34px; height: 34px; }
+.chat__intro h2 { font-size: clamp(23px, 2.2vw, 32px); line-height: 1.4; letter-spacing: -.025em; }
+.chat__intro p { margin-top: 12px; font-size: 14px; line-height: 1.8; color: var(--text-3); }
+.chat__log {
+  flex: 1 1 0; min-height: 0; overflow-y: auto; overscroll-behavior: contain;
+  padding: 28px max(24px, calc((100% - 840px) / 2)); display: flex; flex-direction: column;
+  gap: 26px; position: relative; isolation: isolate; scrollbar-gutter: stable;
+}
+.chat__intro[hidden], .chat__log[hidden], .chat__recommend[hidden] { display: none; }
+.chat--empty .chat__workspace { overflow-y: auto; }
 .chat__log img { max-width: 220px; max-height: 160px; object-fit: contain; border-radius: var(--r-sm); }
 .chat__log svg { max-width: 32px; max-height: 32px; }
 .chat__log > svg:not(.msg__av svg) { display: none; }
 .chat__log:empty::before {
-  content: '从右上「猜你想问」点一条开始，或在下方输入你的问题';
+  content: '在下方输入你的问题，开始对话';
   color: var(--text-3); font-size: 14px; margin: auto; text-align: center;
 }
 .msg { display: flex; gap: 11px; max-width: 100%; animation: fade-up .3s var(--ease); }
@@ -544,7 +563,8 @@
   border-color: color-mix(in srgb, var(--brand-500) 87%, #fff);
   color: #fff; border-bottom-right-radius: var(--r-xs);
 }
-.msg--ai .bubble { border-bottom-left-radius: var(--r-xs); }
+.msg--ai .bubble { padding: 4px 0; border: 0; background: transparent; }
+.msg--ai .msg__wrap { flex: 1; max-width: calc(100% - 41px); }
 .bubble p + p { margin-top: 9px; }
 /* 强调一律用「本色加粗」而不是变色（2026-10-08 用户要求）：
    原先用 --brand-300 浅蓝，对比度低且与「链接/可点」的视觉语义混淆。 */
@@ -603,20 +623,33 @@
 .cite-item__meta { margin-top: 5px; font-size: 12px; color: var(--text-3); font-family: var(--font-num); }
 
 /* 输入区 */
-.chat__input { padding: 12px 16px 14px; border-top: 1px solid var(--border-soft); background: var(--surface); }
+.chat__input { flex: 0 0 auto; width: 100%; max-width: 888px; margin: 0 auto; padding: 12px 24px 20px; background: var(--surface); }
 .composer {
-  display: flex; align-items: flex-end; gap: 9px;
-  background: var(--surface-2); border: 1px solid var(--border);
-  border-radius: var(--r-md); padding: 8px 9px;
+  display: flex; flex-direction: column; gap: 12px;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--r-lg); padding: 16px;
+  box-shadow: var(--shadow);
   transition: border-color var(--t-fast), box-shadow var(--t-fast);
 }
-.composer:focus-within { border-color: var(--brand-500); box-shadow: 0 0 0 3px rgba(99,102,241,.14); }
+.composer:focus-within { border-color: var(--brand-500); box-shadow: 0 0 0 3px var(--brand-soft); }
 .composer textarea {
-  flex: 1; min-height: 24px; max-height: 148px; resize: none; border: none;
-  background: none; font-size: 14.5px; line-height: 1.6; padding: 4px 2px;
+  display: block; width: 100%; min-height: 52px; max-height: 148px; resize: none; border: none;
+  background: none; font-size: 14.5px; line-height: 1.6; padding: 2px; overflow-y: auto;
 }
+.chat--empty .composer textarea { min-height: 78px; }
+.composer textarea::placeholder { color: var(--text-3); }
 .composer textarea:focus { outline: none; }
-.composer__acts { display: flex; gap: 4px; align-items: center; flex: 0 0 auto; }
+.composer__acts { display: flex; gap: 10px; align-items: center; width: 100%; }
+.composer__hint { flex: 1; font-size: 12px; color: var(--text-3); }
+.composer__acts #chatSend { margin-left: auto; }
+.chat__recommend { flex: 0 0 auto; width: 100%; max-width: 888px; margin: 0 auto auto; padding: 4px 24px 32px; }
+.chat__recommend h3 { display: flex; align-items: center; gap: 6px; margin-bottom: 12px; font-size: 13px; font-weight: 500; color: var(--text-3); }
+.chat__recommend h3 svg { width: 15px; height: 15px; }
+.chat__questions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.chat__questions .ask-item { margin: 0; padding: 12px 14px; background: var(--surface-2); }
+.chat__questions .ask-item span { min-width: 0; overflow-wrap: anywhere; }
+.chat__questions .ask-item:hover { transform: translateY(-2px); }
+.chat__questions > p { grid-column: 1 / -1; }
 /* 生成中：发送键切换为「停止」（主流智能体形态；三端答疑页共用同一个模块） */
 .composer__acts .btn.is-stopping { background: var(--surface-3); color: var(--text-2); }
 .composer__acts .btn.is-stopping:hover { background: var(--border-soft); color: var(--text); }
@@ -678,6 +711,25 @@
 .ask-item + .ask-item { margin-top: 7px; }
 .ask-item:hover { border-color: var(--brand-400); color: var(--text); transform: translateX(2px); }
 .ask-item svg { width: 14px; height: 14px; flex: 0 0 14px; margin-top: 2px; color: var(--brand-400); }
+
+@media (max-width: 1180px) {
+  .chat-shell { grid-template-columns: minmax(0, 1fr) 224px; gap: 12px; }
+  .chat__questions { grid-template-columns: minmax(0, 1fr); }
+  .chat__intro { padding-bottom: 22px; }
+}
+@media (max-width: 760px) {
+  .chat-shell { --chat-height: max(520px, calc(100dvh - 230px)); grid-template-columns: minmax(0, 1fr); }
+  .chat__method { gap: 8px; padding: 10px 14px; }
+  .chat__method .badge { font-size: 11px; }
+  .chat__intro { padding: 26px 18px 20px; }
+  .chat__emblem { width: 54px; height: 54px; margin-bottom: 16px; }
+  .chat__input { padding: 10px 14px 16px; }
+  .chat__recommend { padding: 0 14px 24px; }
+  .chat__log { padding: 20px 14px; }
+  .composer { padding: 12px; }
+  .composer__hint { font-size: 11px; }
+  .chat-shell .chat__history { height: 240px; }
+}
 
 /* ---------- 练习 / 题目 ---------- */
 .quiz-head {
@@ -1432,17 +1484,15 @@
 }
 
 /* 答疑右栏：与左侧聊天区等高，历史会话独立滚动 */
-.chat-shell > .stack {
-  height: calc(100vh - var(--topbar-h) - 44px); min-height: 520px;
-  overflow: hidden;
-}
-.chat-shell > .stack .card:last-child {
-  flex: 1 1 auto; min-height: 0;
+.chat__history {
+  height: var(--chat-height); min-width: 0;
   display: flex; flex-direction: column; overflow: hidden;
 }
-.chat-shell > .stack .card:last-child .card__body {
+.chat__history .card__head { flex: 0 0 auto; }
+.chat__history .card__body {
   flex: 1 1 auto; min-height: 0; overflow-y: auto;
 }
+.chat__history-empty { padding: 28px 16px; color: var(--text-3); text-align: center; font-size: 13px; line-height: 1.9; }
 /* 历史会话条目：悬停出现删除按钮 */
 #sessBox .list__item { position: relative; padding-right: 30px; }
 #sessBox .list__item .list__main { padding-right: 0; }

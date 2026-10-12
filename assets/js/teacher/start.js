@@ -6,8 +6,8 @@ if (window.__teacherAuthed) {
   // 驾驶舱等视图会误显示「尚未创建或选择课程」，刷新前不会自愈。
   const ready = window.__courseReady;
   if (ready && typeof ready.then === 'function') {
-    ready.catch(() => {}).then(() => Router.init('dashboard'));
+    ready.catch(() => {}).then(() => Router.init('chat'));
   } else {
-    Router.init('dashboard');
+    Router.init('chat');
   }
 }
