@@ -36,6 +36,7 @@
         <button class="is-active" data-t="gen">${icon('sparkle')} AI 智能出题</button>
         <button data-t="draft">${icon('pencil')} 草稿箱</button>
         <button data-t="bank">${icon('file')} 题库管理</button>
+        <button data-t="recycle">${icon('trash')} 回收站</button>
       </div>
       <div id="qBody"></div>`;
       U.$$('#qTabs button', el).forEach(b => b.addEventListener('click', () => {
@@ -43,6 +44,7 @@
         b.classList.add('is-active'); this.tab = b.dataset.t;
         if (this.tab === 'gen') this.renderGen();
         else if (this.tab === 'draft') this.renderDrafts();
+        else if (this.tab === 'recycle') this.renderRecycle();
         else this.renderBank();
       }));
       this.renderGen();
@@ -622,12 +624,23 @@
               <td class="t-center num ${q.correctRate === null ? 't-dim' : (q.correctRate < 60 ? 't-danger' : '')}">${q.correctRate === null ? '—' : q.correctRate + '%'}</td>
               <td class="t-center"><span class="badge ${bd}">${lbl}</span></td>
               <td class="t-center"><button class="btn btn--xs btn--ghost" data-edit="${q.qId}">编辑</button>
-                <button class="btn btn--xs btn--ghost" data-del="${q.qId}">删除</button></td>
+                <button class="btn btn--xs btn--ghost" type="button" data-del="${U.esc(q.qId)}">删除</button></td>
             </tr>`;
           }).join('')}</tbody>`;
         U.$$('[data-edit]', t).forEach(b => b.addEventListener('click', () => this.editQ(b.dataset.edit, r.list)));
-        U.$$('[data-del]', t).forEach(b => b.addEventListener('click', () => {
-          API.question.remove({ qId: b.dataset.del }).then(() => { Toast.ok('已删除习题'); this.loadBank(); });
+        U.$$('[data-del]', t).forEach(b => b.addEventListener('click', (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          const qId = b.getAttribute('data-del');
+          if (!qId) return;
+          b.disabled = true;
+          API.question.remove({ qId }).then(() => {
+            Toast.ok('已移入回收站', '7 天内可在「回收站」恢复');
+            this.loadBank();
+          }).catch(err => {
+            b.disabled = false;
+            Toast.error('删除失败', (err && err.message) || '请稍后重试');
+          });
         }));
 
         const pager = U.$('#bankPagination');
@@ -695,6 +708,131 @@
         U.$('[data-page-action="prev"]', pager).addEventListener('click', () => go(this.bankPage - 1));
         U.$('[data-page-action="next"]', pager).addEventListener('click', () => go(this.bankPage + 1));
         U.$$('[data-page-action="jump"]', pager).forEach(b => b.addEventListener('click', openJumpModal));
+      });
+    },
+
+    renderRecycle() {
+      const box = U.$('#qBody');
+      if (!box) return;
+      box.innerHTML = `<div class="card"><div class="card__body">${U.skeleton(160)}</div></div>`;
+      const typeName = { single: '单选题', multi: '多选题', multiple: '多选题', blank: '填空题', judge: '判断题', essay: '简答题' };
+      API.question.recycle().then(data => {
+        const list = (data && data.list) || [];
+        box.innerHTML = `
+        <div class="card">
+          <div class="card__head">
+            <h3>${icon('trash')} 习题回收站</h3>
+            <span class="badge badge--outline">${list.length} 题</span>
+            <span class="spacer"></span>
+            <span class="fz-12 t-dim">下架后保留 7 天，到期自动永久删除</span>
+          </div>
+          <div class="card__body card__body--flush">
+            ${list.length ? `<div class="tbl-wrap"><table class="tbl" style="width:100%;table-layout:fixed">
+              <colgroup>
+                <col style="width:132px">
+                <col>
+                <col style="width:88px">
+                <col style="width:156px">
+                <col style="width:72px">
+                <col style="width:148px">
+              </colgroup>
+              <thead><tr>
+                <th>题号</th><th>题干</th><th>题型</th><th>下架时间</th><th>剩余</th><th class="t-center">操作</th>
+              </tr></thead>
+              <tbody>
+              ${list.map((item, index) => `<tr data-recycle-detail="${index}" style="cursor:pointer">
+                <td class="mono fz-12">${U.esc(item.qId)}</td>
+                <td><div class="bank-stem-scroll">${U.esc(item.stem || '')}</div></td>
+                <td>${U.esc(typeName[item.type] || item.type || '—')}</td>
+                <td class="fz-12" style="white-space:nowrap">${U.esc(item.deletedAt || '')}</td>
+                <td class="fz-12" style="white-space:nowrap">${item.daysLeft} 天</td>
+                <td class="t-center" style="white-space:nowrap">
+                  <button class="btn btn--xs btn--ghost" type="button" data-view="${index}">查看</button>
+                  <button class="btn btn--xs btn--outline" type="button" data-restore="${U.esc(item.qId)}">恢复</button>
+                </td>
+              </tr>`).join('')}
+              </tbody></table></div>` : '<div class="t-dim fz-13" style="padding:28px">回收站是空的。从题库删除的题目会先放在这里。</div>'}
+          </div>
+        </div>`;
+        const openDetail = (index) => this.openRecycleDetail(list[index], () => this.renderRecycle());
+        U.$$('[data-recycle-detail]', box).forEach(row => row.addEventListener('click', event => {
+          if (event.target.closest('button')) return;
+          openDetail(Number(row.dataset.recycleDetail));
+        }));
+        U.$$('[data-view]', box).forEach(button => button.addEventListener('click', () => openDetail(Number(button.dataset.view))));
+        U.$$('[data-restore]', box).forEach(button => button.addEventListener('click', () => {
+          API.question.restore({ qId: button.dataset.restore }).then(() => {
+            Toast.ok('已恢复到题库');
+            this.renderRecycle();
+          }).catch(err => Toast.warn(err.message || '恢复失败'));
+        }));
+      }).catch(err => {
+        box.innerHTML = `<div class="card"><div class="card__body t-dim">${U.esc(err.message || '回收站加载失败')}</div></div>`;
+      });
+    },
+
+    openRecycleDetail(item, onRestore) {
+      if (!item) return;
+      const typeName = { single: '单选题', multi: '多选题', multiple: '多选题', blank: '填空题', judge: '判断题', essay: '简答题' };
+      const blank = item.type === 'blank';
+      const options = Array.isArray(item.options) ? item.options : [];
+      const optionHtml = blank
+        ? `<div class="callout">参考答案：${U.esc(item.answer || '未填写')}</div>`
+        : `<div class="opts opts--readonly">${options.map(option => `
+            <div class="opt${option.right ? ' is-right' : ''}">
+              <span class="opt__key">${U.esc(option.key || '')}</span>
+              <span style="flex:1">${U.esc(option.text || '')}</span>
+              ${option.right ? '<span class="opt__flag badge badge--ok">正确答案</span>' : ''}
+            </div>`).join('') || '<div class="t-dim fz-13">没有选项</div>'}</div>`;
+      Modal.open({
+        title: '题目详情 · ' + (item.qId || ''),
+        size: 'wide',
+        body: `
+          <div class="stack" style="gap:12px">
+            <div class="row row--wrap fz-12 t-dim">
+              <span class="badge badge--outline mono">${U.esc(item.qId || '')}</span>
+              <span class="badge badge--brand">${U.esc(typeName[item.type] || item.type || '—')}</span>
+              <span class="badge badge--outline">${U.esc(item.chapter || '未分章')}</span>
+              <span class="badge badge--outline">难度 ${U.stars(item.difficulty)}</span>
+              <span class="badge badge--outline">${item.score || 0} 分</span>
+              <span class="spacer"></span>
+              <span>剩余 ${item.daysLeft} 天</span>
+            </div>
+            <div>
+              <div class="fz-12 t-dim" style="margin-bottom:6px">考查知识点</div>
+              <div class="row row--wrap">${(item.kpNames || []).map(name => `<span class="badge badge--outline">${U.esc(name)}</span>`).join('') || '<span class="t-dim">未标注</span>'}</div>
+            </div>
+            <div>
+              <div class="fz-12 t-dim" style="margin-bottom:6px">题干</div>
+              <div class="callout" style="white-space:pre-wrap">${U.esc(item.stem || '')}</div>
+            </div>
+            <div id="recycleFig"></div>
+            <div>
+              <div class="fz-12 t-dim" style="margin-bottom:6px">${blank ? '填空答案' : '选项'}</div>
+              ${optionHtml}
+            </div>
+            <div>
+              <div class="fz-12 t-dim" style="margin-bottom:6px">解析</div>
+              <div class="callout" style="white-space:pre-wrap">${U.esc(item.analysis || '暂无解析')}</div>
+            </div>
+            <div class="fz-12 t-dim">下架时间 ${U.esc(item.deletedAt || '')}，将于 ${U.esc(item.purgeAt || '')} 永久删除</div>
+          </div>`,
+        footer: `<button class="btn" data-close>关闭</button><button class="btn btn--primary" type="button" id="recycleRestore">${icon('refresh')} 恢复到题库</button>`,
+        onMount(ov, close) {
+          const figure = item.figureJson;
+          const figEl = U.$('#recycleFig', ov);
+          if (figEl && figure) {
+            if (figure.imageUrl || figure.image_url) U.mountQuestionImage(figEl, figure.imageUrl || figure.image_url);
+            else if (figure.graph && window.DsFigure) DsFigure.mount(figEl, figure.graph);
+          }
+          U.$('#recycleRestore', ov).addEventListener('click', () => {
+            API.question.restore({ qId: item.qId }).then(() => {
+              Toast.ok('已恢复到题库');
+              close();
+              if (onRestore) onRestore();
+            }).catch(err => Toast.warn(err.message || '恢复失败'));
+          });
+        },
       });
     },
 
@@ -771,10 +909,6 @@
               <select id="eqDiff" class="select">
                 ${[1,2,3,4,5].map(i => `<option value="${i}" ${i === (q.difficulty || 3) ? 'selected' : ''}>${'★'.repeat(i)}${'☆'.repeat(5-i)} ${['入门','简单','中等','较难','困难'][i-1]}</option>`).join('')}
               </select>
-            </div>
-            <div class="edit-field">
-              <label>来源</label>
-              <input class="input" id="eqSource" value="${U.esc(q.source || q.sourceRef?.fileId || q.sourceRef?.locator || '')}" placeholder="如 讲义第3章、题库导入">
             </div>
             <div class="edit-field">
               <label>题型</label>
@@ -875,30 +1009,19 @@
             <button class="btn btn--xs btn--outline" id="eqAddOpt" type="button">+ 添加选项</button>
           </div>
           <div class="question-edit__options" id="eqOpts">
-            ${((q.type === 'blank' ? null : q.options) || [{key:'A',text:'',right:false},{key:'B',text:'',right:false},{key:'C',text:'',right:false},{key:'D',text:'',right:false}]).map((o,i) => `
+            ${((q.type === 'blank' ? null : q.options) || [{key:'A',text:'',right:false},{key:'B',text:'',right:false},{key:'C',text:'',right:false},{key:'D',text:'',right:false}]).map((o,i) => {
+              const key = String(o.key || 'ABCD'[i] || 'A').toUpperCase();
+              const marked = !!(o.right || String(q.answer || '').toUpperCase().includes(key));
+              return `
               <div class="eq-opt" data-i="${i}">
-                <select class="select eq-opt-key" aria-label="选项字母">${'ABCDEFG'.slice(0,8).split('').map(k => `<option ${k === (o.key || 'ABCD'[i]) ? 'selected' : ''}>${k}</option>`).join('')}</select>
-                <input class="input eq-opt-text" value="${U.esc(o.text || '')}" placeholder="选项 ${o.key || 'ABCD'[i]} 内容">
+                <select class="select eq-opt-key" aria-label="选项字母">${'ABCDEFGH'.split('').map(k => `<option ${k === key ? 'selected' : ''}>${k}</option>`).join('')}</select>
+                <input class="input eq-opt-text" value="${U.esc(o.text || '')}" placeholder="选项 ${key} 内容">
                 <label class="question-edit__correct">
-                  <input type="checkbox" class="eq-opt-right" ${o.right ? 'checked' : ''}> <span>正确答案</span>
+                  <input type="checkbox" class="eq-opt-right" ${marked ? 'checked' : ''}> <span>正确答案</span>
                 </label>
                 <button class="btn btn--xs btn--ghost eq-opt-del" type="button">删除</button>
-              </div>`).join('')}
-          </div>
-        </section>
-
-        <section class="question-edit__section">
-          <div class="edit-grid edit-grid--2">
-            <div class="edit-field" id="eqAnsField" style="display:${(q.type || '') === 'blank' ? 'none' : ''}">
-              <label>答案</label>
-              <input class="input" id="eqAns" value="${U.esc(q.type === 'blank' ? '' : (q.answer || ''))}" placeholder="如 B 或 AB">
-            </div>
-            <div class="edit-field">
-              <label>状态</label>
-              <select id="eqStatus" class="select">
-                ${[['pending','待审核'],['published','已发布'],['archived','归档']].map(([v,l]) => `<option value="${v}" ${v === (q.status || 'pending') ? 'selected' : ''}>${l}</option>`).join('')}
-              </select>
-            </div>
+              </div>`;
+            }).join('')}
           </div>
         </section>
 
@@ -1079,13 +1202,11 @@
           const choice = U.$('#eqChoiceSection', ov);
           const blanks = U.$('#eqBlankSection', ov);
           const hint = U.$('#eqBlankHint', ov);
-          const ans = U.$('#eqAnsField', ov);
           const stem = U.$('#eqStem', ov);
           if (stem) stem.placeholder = blank ? '用 ____ 标出每个空' : '输入题干…';
           if (choice) choice.style.display = blank ? 'none' : '';
           if (blanks) blanks.style.display = blank ? '' : 'none';
           if (hint) hint.style.display = blank ? '' : 'none';
-          if (ans) ans.style.display = blank ? 'none' : '';
           if (blank) {
             const box = U.$('#eqBlanks', ov);
             const stem = (U.$('#eqStem', ov) || {}).value || '';
@@ -1125,16 +1246,23 @@
           const match = U.$('#eqKpList', ov)?.querySelector(`option[value="${kpText}"]`);
           if (match && match.dataset.id) kpId = match.dataset.id;
 
-          // 收集答案（从选项 right 自动推导，如果没手动填）
-          let answer = U.$('#eqAns', ov).value.trim();
-          if (!answer) {
-            answer = opts.filter(o => o.right).map(o => o.key).join('');
+          const picked = opts.filter(o => o.right).map(o => o.key).sort();
+          if (!blankOptions && (qType === 'single' || qType === 'judge') && picked.length !== 1) {
+            Toast.warn('请只勾选一个正确答案');
+            return;
           }
+          if (!blankOptions && qType === 'multi' && picked.length < 2) {
+            Toast.warn('多选题请至少勾选两个正确答案');
+            return;
+          }
+          const answer = blankOptions
+            ? blankOptions.map(item => item.accept[0]).join('；')
+            : picked.join('');
 
           const body = {
             stem: U.$('#eqStem', ov).value,
             options: blankOptions || opts,
-            answer: blankOptions ? blankOptions.map(item => item.accept[0]).join('；') : answer,
+            answer,
             analysis: U.$('#eqAnalysis', ov).value,
             difficulty: parseInt(U.$('#eqDiff', ov).value),
             kp_id: kpId,
@@ -1142,7 +1270,6 @@
             type: U.$('#eqType', ov).value,
             score: parseInt(U.$('#eqScore', ov).value) || 5,
             is_key: U.$('#eqKey', ov).checked ? 1 : 0,
-            status: U.$('#eqStatus', ov).value,
             chapterId: U.$('#eqChapter', ov) ? U.$('#eqChapter', ov).value : (q.chapterId || ''),
             kp_ids: [...selectedKps],
             kp_id: ([...selectedKps][0] || q.kpId || ''),

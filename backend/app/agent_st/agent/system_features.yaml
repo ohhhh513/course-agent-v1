@@ -358,14 +358,14 @@ roles:
             title: 编辑正式题库的题目
             aliases: [修改题目, 编辑习题, 保存修订, 修改答案]
             location: AI 出题与题库 → 题库管理 → 题目行最右侧「编辑」
-            steps: [在「题库管理」找到题目，点击该行最右侧「编辑」。, 在「编辑习题」弹窗调整题干、选项、答案、解析，以及知识点、难度、来源、题型、分值、重点标记、归属章节或标签。, 底部点击「保存修订」；点击「取消」放弃。]
-            anchors: [data-edit, 编辑习题, eqStem, eqAns, eqAnalysis, eqSave]
+            steps: [在「题库管理」找到题目，点击该行最右侧「编辑」。, 在「编辑习题」弹窗调整题干、选项、解析，以及知识点、难度、题型、分值、重点标记、归属章节或标签。勾选选项旁的「正确答案」。, 底部点击「保存修订」；点击「取消」放弃。]
+            anchors: [data-edit, 编辑习题, eqStem, eq-opt-right, eqAnalysis, eqSave]
           - id: teacher.question.bank.options
             title: 在题目编辑弹窗增加选项或设置正确答案
-            aliases: [添加选项, 删除选项, 正确答案勾选, 题目状态]
-            location: 题库管理的「编辑习题」弹窗 →「选项设置」及答案状态区
-            steps: [「选项设置」右上角点「＋ 添加选项」，每行可选字母、输入内容、勾选正确答案或点「删除」。, 核对「答案」及「状态」（待审核 / 已发布 / 归档），最后点底部「保存修订」。]
-            anchors: [选项设置, eqAddOpt, eq-opt-del, eq-opt-right, eqStatus, 保存修订]
+            aliases: [添加选项, 删除选项, 正确答案勾选]
+            location: 题库管理的「编辑习题」弹窗 →「选项设置」
+            steps: [「选项设置」右上角点「＋ 添加选项」，每行可选字母、输入内容、勾选正确答案或点「删除」。, 勾选完成后点底部「保存修订」。从题库删除的题目进入「回收站」，7 天内可恢复。]
+            anchors: [选项设置, eqAddOpt, eq-opt-del, eq-opt-right, 保存修订]
           - id: teacher.question.bank.figure
             title: 编辑题目中的图像结构与预览
             aliases: [含图像, 二叉树图, 邻接矩阵, 一般图, 实时预览]

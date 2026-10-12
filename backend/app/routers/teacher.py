@@ -1780,8 +1780,12 @@ def question_bank(
     user: User = Depends(get_current_user),
     course_id: str = Depends(get_current_course_id),
 ):
+    _purge_expired_questions(db, course_id)
     from ..models.question import Question
-    q = db.query(Question).filter(Question.course_id == course_id)   # 课程隔离
+    q = db.query(Question).filter(
+        Question.course_id == course_id,
+        Question.status != "recycled",
+    )
     if kpId: q = q.filter(Question.kp_id == kpId)
     if type: q = q.filter(Question.type == type)
     if status and status != "all": q = q.filter(Question.status == status)
@@ -1866,7 +1870,8 @@ def question_bank(
             "kpIds": kp_ids,
             "correctRate": correct_rate_map.get(x.q_id),
             "isKey": bool(x.is_key),
-            "options": loads(x.options) or [],
+            "options": _options_with_right(loads(x.options) or [], x.answer or "", x.type or ""),
+            "answer": x.answer or "",
             "analysis": x.analysis,
             "kpPath": loads(x.kp_path) or [],
             "tags": tags,
@@ -1996,16 +2001,150 @@ def review_questions(
     return ok({"affected": len(q_ids), "action": req.action})
 
 
+_RECYCLE_STATUS = "recycled"
+_RECYCLE_DAYS = 7
+
+
+def _options_with_right(options, answer: str, q_type: str):
+    """把已保存的答案字母标到选项上，供编辑页勾选。填空题的 options 是空位答案，不按字母解释。"""
+    if q_type == "blank" or not isinstance(options, list):
+        return options if isinstance(options, list) else []
+    letters = set(re.sub(r"[^A-H]", "", str(answer or "").upper()))
+    marked = []
+    for option in options:
+        if not isinstance(option, dict):
+            marked.append(option)
+            continue
+        item = dict(option)
+        key = str(item.get("key") or "").upper()
+        item["right"] = bool(item.get("right")) or (bool(key) and key in letters)
+        marked.append(item)
+    return marked
+
+
+def _recycle_started(question) -> datetime | None:
+    raw = str(getattr(question, "source_ref_locator", "") or "").strip()
+    try:
+        return datetime.strptime(raw, "%Y-%m-%dT%H:%M:%S")
+    except ValueError:
+        return None
+
+
+def _hard_delete_question(db: Session, q_id: str):
+    from ..models.tag import QuestionTagLink
+    db.query(QuestionTagLink).filter(QuestionTagLink.q_id == q_id).delete(synchronize_session=False)
+    db.query(AnswerRecord).filter(AnswerRecord.q_id == q_id).delete(synchronize_session=False)
+    db.query(Question).filter(Question.q_id == q_id).delete(synchronize_session=False)
+
+
+def _purge_expired_questions(db: Session, course_id: str | None = None) -> int:
+    """回收站中超过 7 天的题目连同其作答记录一并删除。"""
+    query = db.query(Question).filter(Question.status == _RECYCLE_STATUS)
+    if course_id:
+        query = query.filter(Question.course_id == course_id)
+    now = datetime.utcnow()
+    removed = 0
+    for question in query.all():
+        started = _recycle_started(question)
+        if started and now - started >= timedelta(days=_RECYCLE_DAYS):
+            _hard_delete_question(db, question.q_id)
+            removed += 1
+    if removed:
+        db.commit()
+    return removed
+
+
+@question_router.get("/recycle")
+def recycle_bin(
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+    course_id: str = Depends(get_current_course_id),
+):
+    """已下架题目。满 7 天未恢复则永久删除。"""
+    _purge_expired_questions(db, course_id)
+    rows = db.query(Question).filter(
+        Question.course_id == course_id,
+        Question.status == _RECYCLE_STATUS,
+    ).all()
+    kp_id_name = {
+        n.id: n.name for n in db.query(GraphNode).filter(
+            GraphNode.graph_type == "knowledge",
+            GraphNode.course_id == course_id,
+        ).all()
+    }
+    now = datetime.utcnow()
+    items = []
+    for question in rows:
+        started = _recycle_started(question)
+        if not started:
+            continue
+        purge_at = started + timedelta(days=_RECYCLE_DAYS)
+        remain = purge_at - now
+        days_left = max(0, remain.days + (1 if remain.seconds or remain.microseconds else 0))
+        kp_ids = _parse_kp_ids(getattr(question, "kp_ids", None))
+        if question.kp_id and question.kp_id not in kp_ids:
+            kp_ids.insert(0, question.kp_id)
+        items.append({
+            "qId": question.q_id,
+            "stem": question.stem,
+            "type": question.type,
+            "difficulty": question.difficulty,
+            "score": question.score,
+            "chapter": question.chapter or "",
+            "kp": kp_id_name.get(question.kp_id, question.kp_id or ""),
+            "kpNames": [kp_id_name.get(kid, kid) for kid in kp_ids],
+            "options": _options_with_right(loads(question.options) or [], question.answer or "", question.type or ""),
+            "answer": question.answer or "",
+            "analysis": question.analysis or "",
+            "hasImage": bool(question.has_image),
+            "figureJson": loads(question.figure_json) if question.figure_json else None,
+            "deletedAt": started.strftime("%Y-%m-%d %H:%M"),
+            "purgeAt": purge_at.strftime("%Y-%m-%d %H:%M"),
+            "daysLeft": days_left,
+        })
+    items.sort(key=lambda item: item["purgeAt"])
+    return ok({"total": len(items), "list": items})
+
+
+@question_router.post("/{q_id}/restore")
+def restore_question(
+    q_id: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+    course_id: str = Depends(get_current_course_id),
+):
+    """从回收站恢复为已发布。"""
+    question = db.query(Question).filter(
+        Question.q_id == q_id,
+        Question.course_id == course_id,
+    ).first()
+    if not question or question.status != _RECYCLE_STATUS:
+        return fail("回收站中没有这道题", 404)
+    question.status = "published"
+    question.source_ref_locator = ""
+    db.commit()
+    return ok({"qId": q_id, "restored": True})
+
+
 @question_router.delete("/{q_id}")
 def remove_question(
     q_id: str,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
+    course_id: str = Depends(get_current_course_id),
 ):
-    from ..models.question import Question
-    db.query(Question).filter(Question.q_id == q_id).delete()
-    db.commit()
-    return ok({"qId": q_id, "removed": True})
+    """下架到回收站，7 天内可恢复，到期后永久删除。"""
+    question = db.query(Question).filter(
+        Question.q_id == q_id,
+        Question.course_id == course_id,
+    ).first()
+    if not question:
+        return fail("题目不存在", 404)
+    if question.status != _RECYCLE_STATUS:
+        question.status = _RECYCLE_STATUS
+        question.source_ref_locator = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%S")
+        db.commit()
+    return ok({"qId": q_id, "recycled": True})
 
 
 class ImportQuestionReq(BaseModel):
@@ -3112,7 +3251,10 @@ def structure_overview(
     # 题目数口径 = 主 KP ∪ kp_ids 标签，与上面的资源数（_resource_kp_ids）一致；
     # 否则「自己没题、只被别的题挂标签」的子知识点会显示 题目 0，但学生能练、也会出预警。
     q_counts: dict = {}
-    for _q in db.query(Question).filter(Question.course_id == course_id).all():
+    for _q in db.query(Question).filter(
+        Question.course_id == course_id,
+        Question.status != "recycled",
+    ).all():
         for _kid in _question_kp_ids(_q):
             q_counts[_kid] = q_counts.get(_kid, 0) + 1
     pre_map = {}
@@ -3398,7 +3540,9 @@ def delete_kp(
         Resource.course_id == course_id, Resource.kp_id == kp_id,
     ).count()
     q_n = db.query(Question).filter(
-        Question.course_id == course_id, Question.kp_id == kp_id,
+        Question.course_id == course_id,
+        Question.kp_id == kp_id,
+        Question.status != "recycled",
     ).count()
     if res_n or q_n:
         return fail(

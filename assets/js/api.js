@@ -883,8 +883,10 @@ window.API = (function () {
     review: (p) => request('POST', '/question/review', p, (q) =>
       ({ affected: (q.qIds || []).length, action: q.action })),
 
-    /** DELETE /question/{qId}  删除习题 */
+    /** DELETE /question/{qId}  下架到回收站，7 天内可恢复 */
     remove: (p) => request('DELETE', '/question/' + p.qId, p, () => ({ qId: p.qId, removed: true })),
+    recycle: () => request('GET', '/question/recycle', null, () => ({ total: 0, list: [] })),
+    restore: (p) => request('POST', '/question/' + p.qId + '/restore', {}, () => ({ qId: p.qId, restored: true })),
 
     /** POST /question/import  批量导入题目（JSON 数组） */
     importBatch: (p) => request('POST', '/question/import', p, (q) => ({ taskId: 'IMP' + Date.now(), total: (q.questions || []).length, success: (q.questions || []).length, failed: 0 })),

@@ -807,10 +807,6 @@
           "type": "string",
           "maxLength": 20000
         },
-        "answer": {
-          "selector": "#eqAns",
-          "type": "string"
-        },
         "difficulty": {
           "selector": "#eqDiff",
           "type": "integer",
@@ -823,15 +819,6 @@
           "minimum": 1,
           "maximum": 100
         },
-        "status": {
-          "selector": "#eqStatus",
-          "type": "string",
-          "enum": [
-            "pending",
-            "published",
-            "archived"
-          ]
-        },
         "chapterId": {
           "selector": "#eqChapter",
           "type": "string"
@@ -843,10 +830,6 @@
         "kpIds": {
           "selector": "",
           "type": "array"
-        },
-        "source": {
-          "selector": "#eqSource",
-          "type": "string"
         },
         "type": {
           "selector": "#eqType",
