@@ -310,7 +310,7 @@ const AgentUI = (() => {
       commit.disabled = true;
       try {
         const result = await API.teacher.importQuestions({ questions: preview.questions });
-        status.textContent = `成功导入 ${result.success} 题，失败 ${result.failed} 题。${(result.errors || []).join('；')}`;
+        status.textContent = `成功导入 ${result.success} 题（已加入草稿箱，待审核）。请到「草稿箱」发布后学生方可练习。${(result.errors || []).join('；')}`;
         preview = null;
         Question.loadBank();
       } catch (error) { status.textContent = error.message || '导入失败'; commit.disabled = false; }

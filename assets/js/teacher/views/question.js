@@ -1686,7 +1686,7 @@ A,C,right</textarea></label>
         if (!kpIds.length) { Toast.warn("请至少选择一个考查知识点标签"); return; }
         const q = {
           type: qType, difficulty: parseInt($("#nqDiff").value, 10) || 3,
-          score: parseInt($("#nqScore").value, 10) || 5, status: "published",
+          score: parseInt($("#nqScore").value, 10) || 5,
           stem, options: opts, answer,
           analysis: $("#nqAnalysis").value.trim(),
           chapterId,
@@ -1716,7 +1716,7 @@ A,C,right</textarea></label>
         }
         API.teacher.importQuestions({ questions: [q] }).then(() => {
           close();
-          Toast.ok("题目已保存进题库", "可在题库列表查看");
+          Toast.ok("题目已加入草稿箱", "请到「草稿箱」发布后学生方可练习");
           if (onDone) onDone();
         }).catch(err => Toast.error("保存失败", err && err.message || ""));
       });

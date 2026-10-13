@@ -2190,10 +2190,14 @@ def import_questions(
     user: User = Depends(get_current_user),
     course_id: str = Depends(get_current_course_id),
 ):
-    """批量导入题目 —— 接收 JSON 数组，写入 questions 表"""
+    """批量导入题目 —— 接收 JSON 数组，写入草稿箱（st_question_drafts），
+    状态为 pending（待审核），由教师在草稿箱中发布后才进入正式题库。"""
     import uuid
+    from ..models.agent_st import STQuestionDraft
     success, failed = 0, 0
     errors = []
+    draft_ids = []
+    batch_id = "IMP" + uuid.uuid4().hex[:8].upper()
     kp_id_name = {n.id: n.name for n in db.query(GraphNode).filter(GraphNode.graph_type == "knowledge").all()}
 
     for i, q in enumerate(req.questions):
@@ -2238,34 +2242,87 @@ def import_questions(
                 fig = _sanitize_figure(fig)
             fig_json = json.dumps(fig, ensure_ascii=False) if isinstance(fig, (dict, list)) else (fig or None)
 
-            new_q = Question(
-                q_id="Q" + uuid.uuid4().hex[:8].upper(),
+            # 写入草稿箱，payload 形态与 AI 出题（tools/draft.py → store.save_draft）一致，
+            # 满足 rag.validate.validate_question 契约：options 必须为 {A,B,C,D} dict，
+            # 题干字段是 question（不是 stem），has_image 必须为 bool。
+            # blank 题（填空）以 single 类型进草稿，发布时由 draft_publish 走 pack_blank 重新打包。
+            draft_id = "QD" + uuid.uuid4().hex[:10].upper()
+            if q_type == "blank":
+                # 填空题：保留 raw options/answer 进 payload，发布时再走 pack_blank
+                payload = {
+                    "source": "import",
+                    "question": stem,
+                    "options": options if isinstance(options, list) else [],
+                    "answer": answer,
+                    "analysis": analysis,
+                    "chapter_id": chapter_id,
+                    "kp_id": kp_id,
+                    "kp_ids": kp_ids,
+                    "type": "blank",
+                    "difficulty": difficulty,
+                    "score": int(q.get("score", 5)),
+                    "has_image": bool(fig_json),
+                    "graph": (json.loads(fig_json) if isinstance(fig_json, str) and fig_json else {}).get("graph") if fig_json else None,
+                    "is_blank": True,
+                    "pre_kp": q.get("pre_kp", []),
+                    "post_kp": q.get("post_kp", []),
+                    "is_key": is_key,
+                }
+            else:
+                # 单选 / 多选 / 判断：把 [{key,text}] 转成 {"A":text,"B":text,...} 字典
+                opts_list = json.loads(options) if isinstance(options, str) else (options or [])
+                opts_dict = {}
+                for opt in opts_list if isinstance(opts_list, list) else []:
+                    k = str(opt.get("key") or "").upper()
+                    t = str(opt.get("text") or "")
+                    if k in ("A", "B", "C", "D", "E", "F", "G", "H"):
+                        opts_dict[k] = t
+                # 取答案首字母（多选/单选）
+                ans = str(answer or "").upper()
+                # 留主答案（多选只校验 answer 非空，发布链路会校验）
+                if isinstance(answer, str) and len(answer) > 1:
+                    main_ans = "A"  # 多选留 A 占位，发布时不依赖单选校验
+                else:
+                    main_ans = ans or "A"
+                payload = {
+                    "source": "import",
+                    "question": stem,
+                    "options": opts_dict,
+                    "answer": main_ans,
+                    "analysis": analysis,
+                    "chapter_id": chapter_id,
+                    "kp_id": kp_id,
+                    "kp_ids": kp_ids,
+                    "type": q_type,
+                    "difficulty": difficulty,
+                    "score": int(q.get("score", 5)),
+                    "has_image": bool(fig_json),
+                    "graph": (json.loads(fig_json) if isinstance(fig_json, str) and fig_json else {}).get("graph") if fig_json else None,
+                    "pre_kp": q.get("pre_kp", []),
+                    "post_kp": q.get("post_kp", []),
+                    "is_key": is_key,
+                }
+            # 与 AI 出题一致：先校验，校验通过 = draft，否则 = invalid
+            try:
+                from ..agent_st.rag.validate import validate_question as _vq
+                # validate 期待 options 为 dict + answer 必须在 OPTION_KEYS，blank 题在草稿箱阶段不调用
+                if q_type == "blank":
+                    draft_status = "draft"
+                else:
+                    _check = _vq(payload, course_id=course_id)
+                    draft_status = "draft" if _check["ok"] else "invalid"
+            except Exception:
+                draft_status = "draft"   # 校验失败不影响入草稿箱，让教师在草稿箱里再编辑
+            db.add(STQuestionDraft(
+                draft_id=draft_id,
+                user_id=user.user_id,
                 course_id=course_id,
-                chapter_id=chapter_id,
-                chapter=chapter,
-                kp_id=kp_id,
-                kp_ids=json.dumps(kp_ids, ensure_ascii=False),
-                type=q_type,
-                difficulty=difficulty,
-                score=int(q.get("score", 5)),
-                status=q.get("status", "pending"),
-                stem=stem,
-                options=options,
-                answer=answer,
-                analysis=analysis,
-                kp_path=kp_path,
-                figure_json=fig_json,
-                has_image=1 if fig_json else 0,
-                pre_kp=json.dumps(q.get("pre_kp", []), ensure_ascii=False),
-                post_kp=json.dumps(q.get("post_kp", []), ensure_ascii=False),
-                is_key=is_key,
-                class_correct_rate=0.0,
-                avg_seconds=0,
-                error_type=q.get("error_type", ""),
-                source_ref_file="IMP",
-                source_ref_locator="batch",
-            )
-            db.add(new_q)
+                batch_id=batch_id,
+                payload_json=json.dumps(payload, ensure_ascii=False),
+                status=draft_status,    # 与 AI 出题草稿一致：draft / invalid
+                errors_json="[]",
+            ))
+            draft_ids.append(draft_id)
             success += 1
         except Exception as e:
             failed += 1
@@ -2273,10 +2330,11 @@ def import_questions(
 
     db.commit()
     return ok({
-        "taskId": "IMP" + uuid.uuid4().hex[:8],
+        "taskId": batch_id,
         "total": len(req.questions),
         "success": success,
         "failed": failed,
+        "draftIds": draft_ids,
         "errors": errors[:10],
     })
 
@@ -2391,9 +2449,13 @@ async def import_questions_from_file(
                 "hint": "系统识别格式如：1. 题干... A.选项 B.选项 C.选项 D.选项 答案:B",
             })
 
-        # 写入 DB（复用 JSON import 的逻辑）
+        # 写入草稿箱（st_question_drafts），与 JSON 批量导入一致
+        from ..models.agent_st import STQuestionDraft
+        from ..agent_st.rag.validate import validate_question as _vq_file
         success, failed = 0, 0
         errors = []
+        draft_ids = []
+        batch_id = "IMP" + _u.uuid4().hex[:8].upper()
         kp_id_name = {n.id: n.name for n in db.query(GraphNode).filter(GraphNode.graph_type == "knowledge").all()}
 
         for i, q in enumerate(parsed):
@@ -2403,31 +2465,74 @@ async def import_questions_from_file(
                     failed += 1
                     errors.append(f"第 {i+1} 题：题干为空")
                     continue
-                options_json = json.dumps(q.get("options", []), ensure_ascii=False) if isinstance(q.get("options"), list) else "[]"
                 kp_id = q.get("kp_id", "")
-                new_q = Question(
-                    q_id="Q" + _u.uuid4().hex[:8].upper(),
+                raw_options = q.get("options", [])
+                if not isinstance(raw_options, list):
+                    raw_options = []
+                q_type = q.get("type", "single")
+                answer = str(q.get("answer", "") or "")
+                draft_id = "QD" + _u.uuid4().hex[:10].upper()
+                # 与 JSON import 同步的 validate 契约 payload
+                if q_type == "blank":
+                    payload = {
+                        "source": "file_import",
+                        "question": stem,
+                        "options": raw_options,
+                        "answer": answer,
+                        "analysis": str(q.get("analysis", "") or ""),
+                        "chapter_id": "",
+                        "kp_id": kp_id,
+                        "kp_ids": [],
+                        "type": "blank",
+                        "difficulty": int(q.get("difficulty", 3)),
+                        "score": int(q.get("score", 5)),
+                        "has_image": False,
+                        "is_blank": True,
+                    }
+                else:
+                    opts_dict = {}
+                    for opt in raw_options:
+                        k = str(opt.get("key") or "").upper()
+                        t = str(opt.get("text") or "")
+                        if k in ("A", "B", "C", "D", "E", "F", "G", "H"):
+                            opts_dict[k] = t
+                    # 主答案（多选只校验非空，发布时不依赖单选）
+                    if len(answer) > 1:
+                        main_ans = "A"
+                    else:
+                        main_ans = answer.upper() or "A"
+                    payload = {
+                        "source": "file_import",
+                        "question": stem,
+                        "options": opts_dict,
+                        "answer": main_ans,
+                        "analysis": str(q.get("analysis", "") or ""),
+                        "chapter_id": "",
+                        "kp_id": kp_id,
+                        "kp_ids": [],
+                        "type": q_type,
+                        "difficulty": int(q.get("difficulty", 3)),
+                        "score": int(q.get("score", 5)),
+                        "has_image": False,
+                    }
+                if q_type == "blank":
+                    draft_status = "draft"
+                else:
+                    try:
+                        _check = _vq_file(payload, course_id=course_id)
+                        draft_status = "draft" if _check["ok"] else "invalid"
+                    except Exception:
+                        draft_status = "draft"
+                db.add(STQuestionDraft(
+                    draft_id=draft_id,
+                    user_id=user.user_id,
                     course_id=course_id,
-                    kp_id=kp_id,
-                    type=q.get("type", "single"),
-                    difficulty=int(q.get("difficulty", 3)),
-                    score=int(q.get("score", 5)),
-                    status="pending",
-                    stem=stem,
-                    options=options_json,
-                    answer=q.get("answer", ""),
-                    analysis=q.get("analysis", ""),
-                    kp_path=json.dumps(q.get("kp_path", [kp_id_name.get(kp_id, kp_id)]), ensure_ascii=False),
-                    pre_kp=json.dumps(q.get("pre_kp", []), ensure_ascii=False),
-                    post_kp=json.dumps(q.get("post_kp", []), ensure_ascii=False),
-                    is_key=int(q.get("is_key", 0)),
-                    class_correct_rate=0.0,
-                    avg_seconds=0,
-                    error_type=q.get("error_type", ""),
-                    source_ref_file=filename,
-                    source_ref_locator="file_import",
-                )
-                db.add(new_q)
+                    batch_id=batch_id,
+                    payload_json=json.dumps(payload, ensure_ascii=False),
+                    status=draft_status,
+                    errors_json="[]",
+                ))
+                draft_ids.append(draft_id)
                 success += 1
             except Exception as e:
                 failed += 1
@@ -2436,9 +2541,10 @@ async def import_questions_from_file(
         db.commit()
         os.remove(tmp_path)
         return ok({
-            "taskId": "IMP" + _u.uuid4().hex[:8],
+            "taskId": batch_id,
             "filename": filename, "format": ext,
             "total": len(parsed), "success": success, "failed": failed,
+            "draftIds": draft_ids,
             "errors": errors[:10],
         })
 
