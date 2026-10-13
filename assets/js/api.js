@@ -510,8 +510,7 @@ window.API = (function () {
     /** DELETE /ai/sessions/{sessionId}  删除会话（仅本人会话，含全部消息） */
     deleteSession: (p) => request('DELETE', `/ai/sessions/${p.sessionId}`, p, () => ({ deleted: true })),
 
-    /** GET /ai/suggest-questions  猜你想问（基于薄弱点 + 高频问题） */
-    suggestQuestions: (p) => request('GET', '/ai/suggest-questions', p, () => M().studentDashboard.suggestedQuestions),
+    // 「猜你想问」已下线：原 /ai/suggest-questions 接口随该功能一并废弃，API 不再暴露包装方法。
 
     /**
      * POST /ai/chat  发起提问（真实环境建议用 SSE 流式：POST /ai/chat/stream）

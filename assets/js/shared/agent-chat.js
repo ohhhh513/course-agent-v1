@@ -13,6 +13,88 @@
 window.AgentChatView = (function () {
   'use strict';
 
+  /* ---------- 打字机动画 + 粒子飞溅（欢迎区） ---------- */
+
+  /** 每轮显示 welcome 标题时的打字机效果（只播放一次）。标题隐藏 → 逐字显出 → 停留 */
+  function startTypewriter(el) {
+    if (!el) return;
+    const text = el.dataset.text || el.textContent || '';
+    if (!text) return;
+    el.textContent = '';
+
+    const PHASE = {
+      TYPO: 55,     // 打字速度 ms/字
+      HOLD: 3000,    // 打完后停留 ms
+    };
+
+    let i = 0;
+    const typeIn = () => {
+      if (i < text.length) {
+        el.textContent += text[i++];
+        setTimeout(typeIn, PHASE.TYPO);
+      } else {
+        // 打完 + 停留后永久显示，不再擦除
+      }
+    };
+
+    typeIn();
+  }
+
+  /** 在指定元素上方触发粒子飞溅（<6 个粒子，弹性缩放） */
+  function burstParticles(el) {
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    const cx = rect.left + rect.width / 2;
+    const cy = rect.top + rect.height / 2;
+    const colors = ['#3b82f6', '#06b6d4', '#8b5cf6', '#ec4899', '#f59e0b', '#10b981'];
+    const N = Math.floor(Math.random() * 4) + 3;  // 3~6 个
+
+    const canvas = document.createElement('canvas');
+    canvas.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:9999;';
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+    document.body.appendChild(canvas);
+
+    const ctx = canvas.getContext('2d');
+    const particles = Array.from({ length: N }, (_, k) => ({
+      x: cx, y: cy,
+      vx: (Math.random() - 0.5) * 6,
+      vy: (Math.random() - 0.5) * 6 - 2,
+      r: Math.random() * 5 + 3,
+      color: colors[k % colors.length],
+      alpha: 1,
+      decay: Math.random() * 0.025 + 0.018,
+    }));
+
+    let raf;
+    const draw = () => {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      let alive = false;
+      for (const p of particles) {
+        p.x += p.vx;
+        p.y += p.vy;
+        p.vy += 0.15;
+        p.alpha -= p.decay;
+        if (p.alpha <= 0) continue;
+        alive = true;
+        ctx.save();
+        ctx.globalAlpha = Math.max(0, p.alpha);
+        ctx.fillStyle = p.color;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+      }
+      if (alive) {
+        raf = requestAnimationFrame(draw);
+      } else {
+        cancelAnimationFrame(raf);
+        canvas.remove();
+      }
+    };
+    raf = requestAnimationFrame(draw);
+  }
+
   /**
    * 轻量 Markdown → HTML 渲染（讲解 Agent 输出为 Markdown）。
    * 支持：**加粗** / *斜体* / `行内代码` / ```代码块``` / #~###### 标题 /
@@ -277,67 +359,8 @@ window.AgentChatView = (function () {
    *   badges       顶部徽标 HTML（各端不同）
    *   placeholder  输入框 placeholder
    *   welcomeTitle / welcomeText  新对话中央欢迎标题与说明
-   *   recommended  () => Promise<string[]>  推荐问题（「猜你想问」）
    *   applyAction  (action) => boolean      界面动作白名单执行器（各端页面不同）
-   *   emptyRecommend / recommendFail        推荐区兜底文案
    */
-  function recentUserQuestions(apiGroup, sessionLimit = 3, questionLimit = 12) {
-    if (!apiGroup || typeof apiGroup.sessions !== 'function' || typeof apiGroup.messages !== 'function') {
-      return Promise.resolve([]);
-    }
-    return Promise.resolve().then(() => apiGroup.sessions()).then(result => {
-      const sessions = (result && Array.isArray(result.list) ? result.list : []).slice(0, sessionLimit);
-      return Promise.all(sessions.map(session => {
-        if (!session || !session.sessionId) return Promise.resolve([]);
-        return apiGroup.messages({ sessionId: session.sessionId }).catch(() => []);
-      }));
-    }).then(groups => {
-      const questions = [];
-      const seen = new Set();
-      for (const group of groups) {
-        const messages = Array.isArray(group) ? group : (group && Array.isArray(group.list) ? group.list : []);
-        for (let i = messages.length - 1; i >= 0; i -= 1) {
-          const message = messages[i];
-          if (!message || message.role !== 'me') continue;
-          const text = String(message.content || '').trim();
-          const key = text.toLowerCase().replace(/[\s，。！？、；：,.!?;:]+/g, '');
-          if (!text || seen.has(key)) continue;
-          seen.add(key);
-          questions.push(text);
-          if (questions.length >= questionLimit) return questions;
-        }
-      }
-      return questions;
-    }).catch(() => []);
-  }
-
-  function rankRecommendationCandidates(candidates, questions, limit = 4) {
-    const history = Array.isArray(questions) ? questions.slice(0, 12) : [];
-    const ranked = (Array.isArray(candidates) ? candidates : []).map((candidate, index) => {
-      const keywords = Array.isArray(candidate.keywords) ? candidate.keywords : [];
-      let score = Number(candidate.priority) || 0;
-      history.forEach((question, historyIndex) => {
-        const lower = String(question || '').toLowerCase();
-        const weight = Math.max(0.35, 1.25 - historyIndex * 0.08);
-        const hits = keywords.reduce((count, keyword) =>
-          count + (keyword && lower.includes(String(keyword).toLowerCase()) ? 1 : 0), 0);
-        score += hits * weight * 2;
-      });
-      return { candidate, index, score };
-    }).sort((a, b) => b.score - a.score || a.index - b.index);
-
-    const selected = [];
-    const seenTopics = new Set();
-    ranked.forEach(({ candidate }) => {
-      if (selected.length >= limit || !candidate || !candidate.prompt) return;
-      const topic = candidate.topic || candidate.prompt;
-      if (seenTopics.has(topic)) return;
-      seenTopics.add(topic);
-      selected.push(candidate.prompt);
-    });
-    return selected;
-  }
-
   function create(config) {
     const cfg = Object.assign({
       viewKey: '',
@@ -345,11 +368,8 @@ window.AgentChatView = (function () {
       badges: '',
       placeholder: '输入你的问题，Enter 发送 / Shift+Enter 换行',
       welcomeTitle: '你好，有什么可以帮你？',
-      welcomeText: '告诉我你的问题，或从下方选择一个话题开始。',
-      recommended: () => Promise.resolve([]),
+      welcomeText: '告诉我你的问题。',
       applyAction: () => false,
-      emptyRecommend: '暂无推荐问题',
-      recommendFail: '推荐问题加载失败',
       // 接口来源：默认走 /ai/*（学生 / 教师答疑）；管理员治理流传 { api: API.adminAgent }
       // 切到 /admin/agent/* —— 事件协议完全一致，只是端点与角色闸门不同。
       api: null,
@@ -382,14 +402,15 @@ window.AgentChatView = (function () {
         <div class="chat-shell">
           <div class="card chat chat--empty">
             <div class="chat__method">
-              ${cfg.badges}
-              <span class="spacer"></span>
               <button class="btn btn--ghost btn--sm" id="newSessBtn">${icon('plus')} 新建会话</button>
+              <span class="spacer"></span>
+              ${cfg.badges}
+              <button class="btn btn--ghost btn--sm" id="toggleHistoryBtn" aria-expanded="false" title="显示历史会话" aria-label="显示历史会话">${icon('clock')} 历史会话</button>
             </div>
             <div class="chat__workspace">
               <div class="chat__intro" id="chatIntro">
-                <div class="chat__emblem" aria-hidden="true">${icon('bot')}</div>
-                <h2>${U.esc(cfg.welcomeTitle)}</h2>
+                <div class="chat__emblem" id="chatEmblem" aria-hidden="true">${icon('bot')}</div>
+                <h2 class="typewriter-title" data-text="${U.esc(cfg.welcomeTitle)}">${U.esc(cfg.welcomeTitle)}</h2>
                 <p>${U.esc(cfg.welcomeText)}</p>
               </div>
               <div class="chat__log" id="chatLog" hidden></div>
@@ -398,22 +419,22 @@ window.AgentChatView = (function () {
                   ${cfg.allowUpload ? '<div class="att-tray" id="attTray" hidden></div>' : ''}
                   <textarea id="chatInput" rows="3" aria-label="输入你的问题" placeholder="${U.esc(cfg.placeholder)}"></textarea>
                   <div class="composer__acts">
-                    ${cfg.allowUpload ? `<button class="btn btn--ghost btn--icon btn--sm" id="chatUpload" type="button" title="上传图片或文件" aria-label="上传图片或文件">${icon('plus')}</button>` : ''}
+                    ${cfg.allowUpload ? `<button class="btn btn--ghost btn--icon btn--sm" id="chatUpload" type="button" title="上传图片或文件" aria-label="上传图片或文件">${icon('upload')}</button>` : ''}
                     <span class="composer__hint">Enter 发送 · Shift+Enter 换行</span>
                     <button class="btn btn--primary btn--icon" id="chatSend" type="button" aria-label="发送">${icon('send')}</button>
                   </div>
                 </div>
                 ${cfg.allowUpload ? '<input type="file" id="chatFile" multiple hidden accept=".txt,.md,.csv,.json,.xlsx,.docx,.pdf,.jpg,.jpeg,.png,.gif,.webp,image/jpeg,image/png,image/gif,image/webp">' : ''}
               </div>
-              <div class="chat__recommend" id="chatRecommend">
-                <h3>${icon('bulb')} 猜你想问</h3>
-                <div class="chat__questions" id="askBox" aria-live="polite"><p class="fz-12 t-dim">正在准备推荐问题…</p></div>
-              </div>
             </div>
           </div>
 
-          <aside class="card chat__history" aria-label="历史会话">
-            <div class="card__head"><h3>${icon('clock')} 历史会话</h3></div>
+          <aside class="card chat__history" id="chatHistory" aria-label="历史会话" hidden>
+            <div class="card__head">
+              <h3>${icon('clock')} 历史会话</h3>
+              <span class="spacer"></span>
+              <button class="btn btn--ghost btn--icon btn--sm" id="closeHistoryBtn" title="收起历史会话" aria-label="收起历史会话">${icon('x')}</button>
+            </div>
             <div class="card__body card__body--flush"><div class="list" id="sessBox"></div></div>
           </aside>
         </div>`;
@@ -423,22 +444,6 @@ window.AgentChatView = (function () {
         // 首次进入时只在本次登录没有记录时新开对话；同次登录重绘则恢复上次选中的会话。
         this.loadSession(this._restoreOpenSessionId());
 
-        // 新对话输入框下的推荐由各端结合当前业务数据和本人近期提问生成。
-        const askBox = U.$('#askBox');
-        Promise.resolve().then(() => cfg.recommended()).then(qs0 => {
-          const qs = (qs0 || []).slice(0, 4);
-          const box = U.$('#askBox');
-          if (!box || box !== askBox) return;
-          box.innerHTML = qs.length
-            ? qs.map(q => `<button class="ask-item" data-ask="${U.esc(q)}">${icon('bulb')}<span>${U.esc(q)}</span></button>`).join('')
-            : `<p class="fz-12 t-dim" style="padding:4px 2px">${U.esc(cfg.emptyRecommend)}</p>`;
-          // 点击「猜你想问」只把问题填进输入框，不直接发送：
-          // 统一为「帮你把问题写好，发不发由你决定」。
-          U.$$('#askBox [data-ask]').forEach(b => b.addEventListener('click', () => this.fillInput(b.dataset.ask)));
-        }).catch(() => {
-          const box = U.$('#askBox');
-          if (box && box === askBox) box.innerHTML = `<p class="fz-12 t-dim" style="padding:4px 2px">${U.esc(cfg.recommendFail)}</p>`;
-        });
         const sessBox = U.$('#sessBox');
         A.sessions().then(r => {
           if (U.$('#sessBox') === sessBox) this.renderSessions(r);
@@ -476,8 +481,35 @@ window.AgentChatView = (function () {
           Toast.info('已创建新会话');
         });
 
+        // 历史会话侧栏：默认隐藏，点击右上方"历史会话"按钮滑出
+        const historyEl = U.$('#chatHistory');
+        const toggleBtn = U.$('#toggleHistoryBtn');
+        const closeBtn = U.$('#closeHistoryBtn');
+        const chatShell = el.querySelector('.chat-shell') || el;
+        const _setHistoryOpen = (open) => {
+          if (!historyEl || !toggleBtn) return;
+          historyEl.hidden = !open;
+          chatShell.classList.toggle('is-history-open', !!open);
+          toggleBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+          toggleBtn.title = open ? '隐藏历史会话' : '显示历史会话';
+          toggleBtn.setAttribute('aria-label', toggleBtn.title);
+        };
+        toggleBtn?.addEventListener('click', () => _setHistoryOpen(historyEl.hidden));
+        closeBtn?.addEventListener('click', () => _setHistoryOpen(false));
+
         // 其他视图带入的草稿：填入输入框，由用户自行决定是否发送
         this._applyPendingDraft();
+
+        // 打字机效果：欢迎区标题循环播放
+        const titleEl = U.$('.typewriter-title');
+        if (titleEl) startTypewriter(titleEl);
+
+        // 粒子飞溅：鼠标悬停图标时触发（气泡 <6 个粒子）
+        const emblemEl = U.$('#chatEmblem');
+        if (emblemEl) {
+          emblemEl.style.cursor = 'pointer';
+          emblemEl.addEventListener('mouseenter', () => burstParticles(emblemEl));
+        }
       },
 
       /**
@@ -1493,8 +1525,6 @@ window.AgentChatView = (function () {
   return {
     create: create,
     mdToHtml: mdToHtml,
-    recentUserQuestions: recentUserQuestions,
-    rankRecommendationCandidates: rankRecommendationCandidates,
     // 待批准写操作卡片：出题页（teacher/views/question.js）等其它页面复用同一套渲染与交互
     confirmCardHtml: confirmCardHtml,
     bindConfirms: bindConfirms,

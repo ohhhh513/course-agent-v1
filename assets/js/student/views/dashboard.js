@@ -184,18 +184,8 @@
         </div>
       </div>
 
-      <!-- AI 快捷 / 薄弱点 / 最近动态 -->
-      <div class="grid g-3">
-        <div class="card">
-          <div class="card__head"><h3>${icon('bot')} AI 助教</h3><span class="spacer"></span><span class="badge badge--brand">7×24 在线</span></div>
-          <div class="card__body">
-            <button class="btn btn--primary btn--block" data-goto="ai">${icon('send')} 一键发起提问</button>
-            <div class="divider"></div>
-            <p class="fz-12 t-dim" style="margin-bottom:9px">猜你想问</p>
-            ${d.suggestedQuestions.slice(0, 4).map(q => `
-              <button class="ask-item" data-ask="${U.esc(q)}">${icon('bulb')}<span>${U.esc(q)}</span></button>`).join('')}
-          </div>
-        </div>
+      <!-- 薄弱点提示 / 最近学习动态（占满两列） -->
+      <div class="grid g-2">
 
         <div class="card">
           <div class="card__head"><h3>${icon('alert')} 薄弱点提示</h3><span class="spacer"></span><span class="badge badge--danger">${d.weakPoints.length} 项</span></div>
@@ -239,10 +229,6 @@
 
       // 交互绑定
       U.$$('[data-goto]', el).forEach(b => b.addEventListener('click', () => Router.go(b.dataset.goto)));
-      U.$$('[data-ask]', el).forEach(b => b.addEventListener('click', () => {
-        // 不自动发送：新建会话并把问题填入答疑输入框，由用户确认后自行发送
-        Chat.draft(b.dataset.ask);
-      }));
       U.$$('[data-practice-kp]', el).forEach(b => b.addEventListener('click', () => {
         Router.go('practice');
         Toast.info('已定位薄弱知识点', '可直接开始靶向强化练习');

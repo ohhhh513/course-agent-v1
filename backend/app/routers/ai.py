@@ -149,18 +149,6 @@ def ai_session_attachment(
     )
 
 
-@router.get("/suggest-questions")
-def suggest_questions(
-    db: Session = Depends(get_db),
-    user=Depends(get_current_user),
-):
-    """推荐提问方向 —— 不再硬编码，返回空列表让前端展示默认提示"""
-    row = db.query(TeacherClassDashboard).filter(TeacherClassDashboard.data_type == "suggested_questions").first()
-    if row:
-        return ok(loads(row.data_json))
-    return ok([])
-
-
 def _agent_events(req: ChatReq, user, course_id=None, flow_id: str = "explain", extra_context: dict = None):
     """运行 Agent，返回事件 dict 生成器（流式/非流式共用）。
 

@@ -10,14 +10,14 @@
 const Chat = AgentChatView.create({
   viewKey: 'ai',
   containerId: '#view-ai',
-  badges: `<span class="badge badge--ok">${icon('shield')} 严格溯源</span>
-           <span class="badge badge--outline">${icon('bot')} RAG + 工具调用</span>`,
+  badges: '',
   placeholder: '输入你的问题，Enter 发送 / Shift+Enter 换行',
   welcomeTitle: '你好，有什么想一起学的？',
   welcomeText: '课程答疑、查找资源、安排练习，从你的问题开始。',
   // 推荐问题与「学习驾驶舱 - AI 助教」同一数据源（/student/dashboard 的 suggestedQuestions；
   // 旧接口 /ai/suggest-questions 后端恒为空，弃用）
-  recommended: () => API.student.dashboard().then(d => (d && d.suggestedQuestions) || []),
+  // 「猜你想问」已下线：欢迎区不显示推荐问题
+  recommended: () => Promise.resolve([]),
 
   // 支持上传附件（txt/md/csv/json/xlsx/docx/pdf，最多 5 个、单个 ≤10MB）：
   // 文件文本随本轮问题一起提交给助手，**不落库正文、不进知识库**；历史会话只回显文件名。
