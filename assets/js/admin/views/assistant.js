@@ -17,9 +17,47 @@ const AdminChat = AgentChatView.create({
   containerId: '#view-assistant',
   badges: `<span class="badge badge--ok">${icon('shield')} 平台治理</span>
            <span class="badge badge--outline">${icon('grid')} 全平台 · 写操作需确认</span>`,
-  placeholder: '问平台情况，例如「系统现在什么状态」，Enter 发送 / Shift+Enter 换行',
-  welcomeTitle: '你好，今天需要处理什么？',
-  welcomeText: '查询平台情况、核查课程数据、管理师生账号，重要操作由你确认。',
+  placeholder: '问平台情况，例如「系统现在什么状态」',
+  welcomeTitle: '今天需要处理什么？',
+  welcomeText: '可以查账号、核课程数据、看预警，重要操作仍由你确认。',
+  skills: [
+    {
+      id: 'accounts', label: '账号治理', icon: 'users',
+      hint: '想看账号概况，还是导入、删除的入口？',
+      prompts: [
+        { label: '账号概况', text: '请汇总平台当前的师生账号情况，并指出需要核对的地方。' },
+        { label: '怎么导入账号', text: '怎么批量导入师生账号？请告诉我入口，先不要导入。' },
+        { label: '怎么删除账号', text: '怎么删除账号？请先说明影响和入口，先不要删除。' },
+      ],
+    },
+    {
+      id: 'courses', label: '课程核查', icon: 'folder',
+      hint: '想查课程关联，还是内容是否完整？',
+      prompts: [
+        { label: '课程关联', text: '请检查课程和师生账号的关联，并指出异常。' },
+        { label: '内容是否完整', text: '请检查题库、资源和知识点数据是否完整。' },
+        { label: '数据在哪里看', text: '课程和教学内容数据在哪里看？请给我入口。' },
+      ],
+    },
+    {
+      id: 'alerts', label: '预警治理', icon: 'bell',
+      hint: '想看哪些预警要先核查？',
+      prompts: [
+        { label: '优先核查哪些', text: '请梳理当前学情预警里，管理员应优先核查的事项。' },
+        { label: '预警概况', text: '请说明平台现在记录了多少学情预警，以及它们主要集中在什么问题上。' },
+        { label: '预警在哪里看', text: '管理员怎么查看学情预警？请告诉我入口，先不要改数据。' },
+      ],
+    },
+    {
+      id: 'runtime', label: '运行状态', icon: 'shield',
+      hint: '想看智能体状态，还是数据核对顺序？',
+      prompts: [
+        { label: '智能体状态', text: '请说明智能体现在的运行状态，以及需要检查的配置。' },
+        { label: '数据怎么核对', text: '平台数据看起来异常时，我该按什么顺序核对？' },
+        { label: '知识库是否可用', text: '请检查知识库和检索现在是否可用，并指出需要处理的环节。' },
+      ],
+    },
+  ],
   // 根据平台实时汇总和管理员近期提问生成，并按关注主题调整顺序。
   recommended: () => Promise.all([
     API.adminAgent.recommendationContext().catch(() => null),

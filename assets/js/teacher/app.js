@@ -44,7 +44,7 @@ function refreshTeacherViewsAfterCourseChange() {
   if (window.Auth && !Auth.requireAuth('teacher')) return;
   window.__teacherAuthed = true;
   Theme.init();
-  U.$$('.nav-item').forEach(n => n.insertAdjacentHTML('afterbegin', icon(n.dataset.icon, 'nav-item__icon')));
+  U.$$('.nav-item').forEach(n => n.insertAdjacentHTML('afterbegin', navIcon(n.dataset.icon)));
   initTopbar();
 })();
 

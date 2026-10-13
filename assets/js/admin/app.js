@@ -8,7 +8,7 @@
 
   Theme.init();
   // 侧栏图标注入
-  U.$$('.nav-item').forEach(n => n.insertAdjacentHTML('afterbegin', icon(n.dataset.icon || 'users', 'nav-item__icon')));
+  U.$$('.nav-item').forEach(n => n.insertAdjacentHTML('afterbegin', navIcon(n.dataset.icon || 'users')));
   Auth.applyUserBadge();
   if (document.getElementById('tbUid')) {
     document.getElementById('tbUid').textContent = '管理员 · admin';

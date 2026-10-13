@@ -30,6 +30,7 @@ const ICONS = {
   trend: '<path d="m3 17 6-6 4 4 8-8"/><path d="M21 7h-5v5" transform="translate(0.5,-0.5)"/>',
   down: '<path d="m3 7 6 6 4-4 8 8"/><path d="M21 17h-5v-5" transform="translate(0.5,0.5)"/>',
   arrowRight: '<path d="M5 12h14M13 6l6 6-6 6"/>',
+  arrowUp: '<path d="M12 19V5M6 11l6-6 6 6"/>',
   arrowLeft: '<path d="M19 12H5M11 6l-6 6 6 6"/>',
   chevronDown: '<path d="m6 9 6 6 6-6"/>',
   chevronRight: '<path d="m9 6 6 6-6 6"/>',
@@ -77,6 +78,19 @@ const ICONS = {
 function icon(name, cls) {
   const path = ICONS[name] || ICONS.info;
   return `<svg class="${cls || ''}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${path}</svg>`;
+}
+
+/** 课程智能助手标识（书本 + 助手 + 引导箭头）。独立 SVG 文件，避免渐变 id 冲突。 */
+const ASSISTANT_MARK_SRC = 'assets/img/course-assistant.svg';
+
+function assistantMark(cls) {
+  const c = cls ? ` class="${cls}"` : '';
+  return `<img${c} src="${ASSISTANT_MARK_SRC}" alt="" draggable="false">`;
+}
+
+function navIcon(name) {
+  if (name === 'bot') return assistantMark('nav-item__icon nav-item__icon--mark');
+  return icon(name || 'info', 'nav-item__icon');
 }
 
 /* ---------------- 2. 工具函数 ---------------- */

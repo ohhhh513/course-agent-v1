@@ -13,9 +13,47 @@ const TeacherChat = AgentChatView.create({
   viewKey: 'chat',
   containerId: '#view-chat',
   badges: '',
-  placeholder: '问班级学情，例如「我班上谁最需要关注」，Enter 发送 / Shift+Enter 换行',
-  welcomeTitle: '你好，今天需要什么教学帮助？',
-  welcomeText: '查看班级学情、管理课程资源、准备题目，告诉我你想做什么。',
+  placeholder: '问班级学情，例如「谁最需要关注」',
+  welcomeTitle: '今天需要什么教学帮助？',
+  welcomeText: '可以看班级学情、分析错题、准备题目，或生成报告。',
+  skills: [
+    {
+      id: 'class', label: '班级学情', icon: 'users',
+      hint: '想看谁需要关注，还是某个知识点？',
+      prompts: [
+        { label: '谁最需要关注', text: '请看我当前班级，列出最需要关注的学生和原因。' },
+        { label: '整体掌握情况', text: '请概括当前班级的整体掌握情况，并指出共同的薄弱点。' },
+        { label: '某个知识点', text: '请看这个知识点在班里的掌握情况：哪些人比较弱，可能是什么原因。知识点：' },
+      ],
+    },
+    {
+      id: 'wrong', label: '错题分析', icon: 'flask',
+      hint: '想看共性错题，还是某一题？',
+      prompts: [
+        { label: '共性错题', text: '请列出班里最近最集中的错题，并说明共同错因。' },
+        { label: '某题为什么错', text: '请分析这道题在班里的错误情况：错在哪，课堂上该怎么讲。题目或知识点：' },
+        { label: '高频薄弱点', text: '请从错题里归纳最高频的薄弱知识点，并建议怎么处理。' },
+      ],
+    },
+    {
+      id: 'question', label: 'AI 出题', icon: 'sparkle',
+      hint: '想按知识点出题，还是出一套小测？',
+      prompts: [
+        { label: '按知识点出题', text: '请按这个知识点出一组题，标注难度，并说明怎么放进题库。知识点：' },
+        { label: '出一套小测', text: '请帮我设计一套课堂小测，包含考查范围、题型和难度。范围：' },
+        { label: '针对错题巩固', text: '请根据班里的共性错题出一组巩固题，并说明每题针对什么错因。' },
+      ],
+    },
+    {
+      id: 'report', label: '学情报告', icon: 'file',
+      hint: '要生成报告，还是先看已有报告？',
+      prompts: [
+        { label: '生成班级报告', text: '请根据当前班级学情生成一份学情报告。' },
+        { label: '先看怎么生成', text: '怎么生成学情报告？请打开生成配置，先不要生成。' },
+        { label: '查看已有报告', text: '请打开当前课程已有的学情报告。' },
+      ],
+    },
+  ],
   // 「猜你想问」已下线：教师端欢迎区不显示推荐问题
   recommended: () => Promise.resolve([]),
 

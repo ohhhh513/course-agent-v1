@@ -366,9 +366,9 @@ window.AgentChatView = (function () {
       viewKey: '',
       containerId: '',
       badges: '',
-      placeholder: '输入你的问题，Enter 发送 / Shift+Enter 换行',
-      welcomeTitle: '你好，有什么可以帮你？',
-      welcomeText: '告诉我你的问题。',
+      placeholder: '输入你的问题',
+      welcomeTitle: '今天帮你做些什么？',
+      welcomeText: '从下面的技能开始，或直接写下你的问题。',
       applyAction: () => false,
       // 接口来源：默认走 /ai/*（学生 / 教师答疑）；管理员治理流传 { api: API.adminAgent }
       // 切到 /admin/agent/* —— 事件协议完全一致，只是端点与角色闸门不同。
@@ -378,6 +378,9 @@ window.AgentChatView = (function () {
       // 关闭的端**不渲染**上传按钮，避免出现点了没反应的占位按钮。
       // 上限与后端 services/attachments.py 保持一致。
       allowUpload: false,
+      // 输入框下方的技能按钮。选中后收成输入框里的标签，下方换成该技能的常用说法。
+      // 说法只填入输入框，不自动发送。
+      skills: [],
     }, config || {});
     const A = cfg.api || API.ai;   // 本实例使用的接口组（sessions / messages / chatStream / deleteSession）
 
@@ -385,6 +388,7 @@ window.AgentChatView = (function () {
       method: 'guided', busy: false, sessionId: 'new',   // method 字段保留仅为 API 兼容
       pendingDraft: null,   // 其他视图带入的待提问草稿：只填入输入框，绝不自动发送
       pendingFiles: [],     // 待发送附件（File 对象；仅 allowUpload 端会用到）
+      activeSkillId: null,  // 输入框当前选中的技能；清空标签或切换会话后复位
       _attachmentRestoreToken: 0,
       _restoringAttachments: false,
       _filePreviewUrls: new WeakMap(),
@@ -409,20 +413,23 @@ window.AgentChatView = (function () {
             </div>
             <div class="chat__workspace">
               <div class="chat__intro" id="chatIntro">
-                <div class="chat__emblem" id="chatEmblem" aria-hidden="true">${icon('bot')}</div>
+                <div class="chat__emblem" id="chatEmblem" aria-hidden="true">${assistantMark()}</div>
                 <h2 class="typewriter-title" data-text="${U.esc(cfg.welcomeTitle)}">${U.esc(cfg.welcomeTitle)}</h2>
                 <p>${U.esc(cfg.welcomeText)}</p>
               </div>
               <div class="chat__log" id="chatLog" hidden></div>
               <div class="chat__input">
                 <div class="composer">
-                  ${cfg.allowUpload ? '<div class="att-tray" id="attTray" hidden></div>' : ''}
-                  <textarea id="chatInput" rows="3" aria-label="输入你的问题" placeholder="${U.esc(cfg.placeholder)}"></textarea>
-                  <div class="composer__acts">
-                    ${cfg.allowUpload ? `<button class="btn btn--ghost btn--icon btn--sm" id="chatUpload" type="button" title="上传图片或文件" aria-label="上传图片或文件">${icon('upload')}</button>` : ''}
-                    <span class="composer__hint">Enter 发送 · Shift+Enter 换行</span>
-                    <button class="btn btn--primary btn--icon" id="chatSend" type="button" aria-label="发送">${icon('send')}</button>
+                  <div class="composer__body">
+                    ${cfg.allowUpload ? '<div class="att-tray" id="attTray" hidden></div>' : ''}
+                    <div class="skill-chip" id="skillChip" hidden></div>
+                    <textarea id="chatInput" rows="3" aria-label="输入你的问题" placeholder="${U.esc(cfg.placeholder)}"></textarea>
+                    <div class="composer__acts">
+                      ${cfg.allowUpload ? `<button class="composer__upload" id="chatUpload" type="button" title="上传图片或文件" aria-label="上传图片或文件">${icon('plus')}</button>` : ''}
+                      <button class="composer__send" id="chatSend" type="button" aria-label="发送">${icon('arrowUp')}</button>
+                    </div>
                   </div>
+                  <div class="skill-row" id="skillRow" ${(cfg.skills || []).length ? '' : 'hidden'}></div>
                 </div>
                 ${cfg.allowUpload ? '<input type="file" id="chatFile" multiple hidden accept=".txt,.md,.csv,.json,.xlsx,.docx,.pdf,.jpg,.jpeg,.png,.gif,.webp,image/jpeg,image/png,image/gif,image/webp">' : ''}
               </div>
@@ -456,7 +463,13 @@ window.AgentChatView = (function () {
         const submit = () => {
           if (this.busy) return;             // 生成中按 Enter 不发送（也不会误触停止）
           const v = input.value.trim();
-          if (v) { input.value = ''; input.style.height = 'auto'; this.ask(v); }
+          if (!v) return;
+          const skill = this._activeSkill();
+          const mark = skill ? `【${skill.label}】` : '';
+          const question = mark && !v.startsWith(mark) ? `${mark}${v}` : v;
+          input.value = '';
+          input.style.height = 'auto';
+          this.ask(question);
         };
         U.$('#chatSend').addEventListener('click', () => {
           if (this.busy) { this.stop(); return; }
@@ -469,10 +482,23 @@ window.AgentChatView = (function () {
         input.addEventListener('input', () => {
           input.style.height = 'auto';
           input.style.height = Math.min(input.scrollHeight, 148) + 'px';
+          this._syncSendReady();
         });
 
         // 附件上传（仅开启 allowUpload 的端）：选文件 → chips → 随本轮问题提交
         if (cfg.allowUpload) this._bindUpload();
+
+        // 技能按钮：点技能换成常用说法；点说法只填入输入框。
+        U.$('#skillRow')?.addEventListener('click', e => {
+          const skillBtn = e.target.closest('[data-skill]');
+          if (skillBtn) { this._selectSkill(skillBtn.dataset.skill); return; }
+          const promptBtn = e.target.closest('[data-prompt]');
+          if (promptBtn) this._applySkillPrompt(Number(promptBtn.dataset.prompt));
+        });
+        U.$('#skillChip')?.addEventListener('click', e => {
+          if (e.target.closest('[data-skill-clear]')) this._clearSkill();
+        });
+        this._paintSkill();
 
         // 新建会话
         U.$('#newSessBtn')?.addEventListener('click', () => {
@@ -891,7 +917,7 @@ window.AgentChatView = (function () {
         }
         const mName = { lecture: '讲授法', guided: '引导式', case: '案例式', heuristic: '启发式', fun: '趣味式' }[m.method] || '';
         const cites = (m.citations || []);
-        return `<div class="msg msg--ai"><div class="msg__av">AI</div>
+        return `<div class="msg msg--ai"><div class="msg__av msg__av--mark">${assistantMark()}</div>
           <div class="msg__wrap">
             <div class="bubble">${this.toolsPanelHtml(m.toolLog, false)}<div class="bubble__body">${mdToHtml(m.content)}</div>
               ${cites.length ? `
@@ -1124,6 +1150,70 @@ window.AgentChatView = (function () {
         if (log) log.hidden = empty;
       },
 
+      _activeSkill() {
+        return (cfg.skills || []).find(s => s.id === this.activeSkillId) || null;
+      },
+
+      _selectSkill(id) {
+        const skill = (cfg.skills || []).find(s => s.id === id);
+        if (!skill) return;
+        this.activeSkillId = skill.id;
+        this._paintSkill();
+        U.$('#chatInput')?.focus();
+      },
+
+      _clearSkill() {
+        this.activeSkillId = null;
+        this._paintSkill();
+        const input = U.$('#chatInput');
+        if (!input) return;
+        input.value = '';
+        input.style.height = 'auto';
+        this._syncSendReady();
+      },
+
+      /** 常用说法只写入输入框，光标停在末尾，由用户决定是否发送。 */
+      _applySkillPrompt(index) {
+        const skill = this._activeSkill();
+        const prompt = skill && skill.prompts && skill.prompts[index];
+        const input = U.$('#chatInput');
+        if (!prompt || !input) return;
+        input.value = prompt.text;
+        input.dispatchEvent(new Event('input'));
+        input.focus();
+        const end = input.value.length;
+        try { input.setSelectionRange(end, end); } catch (_) {}
+        this._syncSendReady();
+      },
+
+      _paintSkill() {
+        const skills = cfg.skills || [];
+        const skill = this._activeSkill();
+        const row = U.$('#skillRow');
+        const chip = U.$('#skillChip');
+        const input = U.$('#chatInput');
+        if (row) {
+          row.hidden = !skills.length;
+          row.innerHTML = !skills.length ? '' : (skill
+            ? (skill.prompts || []).map((p, i) =>
+              `<button type="button" class="skill-pill skill-pill--prompt" data-prompt="${i}"><span>${U.esc(p.label)}</span>${icon('arrowRight')}</button>`
+            ).join('')
+            : skills.map(s =>
+              `<button type="button" class="skill-pill" data-skill="${U.esc(s.id)}">${icon(s.icon)}<span>${U.esc(s.label)}</span></button>`
+            ).join(''));
+        }
+        if (chip) {
+          if (!skill) {
+            chip.hidden = true;
+            chip.innerHTML = '';
+          } else {
+            chip.hidden = false;
+            chip.innerHTML = `<span class="skill-chip__body">${icon(skill.icon)}<span>${U.esc(skill.label)}</span><button type="button" class="skill-chip__x" data-skill-clear title="清除技能" aria-label="清除技能">${icon('x')}</button></span>`;
+          }
+        }
+        if (input) input.placeholder = (skill && skill.hint) || cfg.placeholder;
+      },
+
       loadSession(sid) {
         if (this.busy) {
           Toast.info('请先停止当前回答，再切换会话');
@@ -1138,6 +1228,8 @@ window.AgentChatView = (function () {
         this._clearPreviewUrls();
         this.pendingFiles = [];
         this._renderTray();
+        this.activeSkillId = null;
+        this._paintSkill();
         const log = U.$('#chatLog');
         if (!log) return;
         this._setEmptyState(this.sessionId === 'new');
@@ -1149,12 +1241,12 @@ window.AgentChatView = (function () {
           return;
         }
 
-        log.innerHTML = `<div class="msg msg--ai"><div class="msg__av">AI</div><div class="msg__wrap"><div class="bubble"><span class="typing"><i></i><i></i><i></i></span> <span class="fz-12 t-dim">加载会话中…</span></div></div></div>`;
+        log.innerHTML = `<div class="msg msg--ai"><div class="msg__av msg__av--mark">${assistantMark()}</div><div class="msg__wrap"><div class="bubble"><span class="typing"><i></i><i></i><i></i></span> <span class="fz-12 t-dim">加载会话中…</span></div></div></div>`;
         const requestedSessionId = this.sessionId;
         A.messages({ sessionId: sid }).then(list => {
           if (this.sessionId !== requestedSessionId || U.$('#chatLog') !== log) return;
           if (!list || list.length === 0) {
-            log.innerHTML = `<div class="msg msg--ai"><div class="msg__av">AI</div><div class="msg__wrap"><div class="bubble t-dim">该会话暂无消息，可能已被清理</div></div></div>`;
+            log.innerHTML = `<div class="msg msg--ai"><div class="msg__av msg__av--mark">${assistantMark()}</div><div class="msg__wrap"><div class="bubble t-dim">该会话暂无消息，可能已被清理</div></div></div>`;
           } else {
             log.innerHTML = list.map(m => this.tpl(m)).join('');
             Array.from(log.children).forEach((messageEl, index) => {
@@ -1170,7 +1262,7 @@ window.AgentChatView = (function () {
           this.scroll();
         }).catch(() => {
           if (this.sessionId !== requestedSessionId || U.$('#chatLog') !== log) return;
-          log.innerHTML = `<div class="msg msg--ai"><div class="msg__av">AI</div><div class="msg__wrap"><div class="bubble t-dim">加载会话失败，请重试</div></div></div>`;
+          log.innerHTML = `<div class="msg msg--ai"><div class="msg__av msg__av--mark">${assistantMark()}</div><div class="msg__wrap"><div class="bubble t-dim">加载会话失败，请重试</div></div></div>`;
         });
       },
 
@@ -1267,7 +1359,7 @@ window.AgentChatView = (function () {
         // 流式 AI 气泡：可折叠思考/工具面板 + 实时正文
         this.bindCites();
         log.insertAdjacentHTML('beforeend',
-          `<div class="msg msg--ai" id="streamMsg"><div class="msg__av">AI</div><div class="msg__wrap">
+          `<div class="msg msg--ai" id="streamMsg"><div class="msg__av msg__av--mark">${assistantMark()}</div><div class="msg__wrap">
             <div class="bubble"><span id="streamPanel"></span><span id="streamText"></span><span class="typing" id="streamCursor"><i></i><i></i><i></i></span></div></div></div>`);
         this.scroll();
 
@@ -1441,13 +1533,22 @@ window.AgentChatView = (function () {
        * 发送按钮的两种形态（主流智能体形态）：空闲 = 发送，生成中 = 停止。
        * 三端共用（学生 / 教师 / 管理员答疑页都是这一个模块）。
        */
+      _syncSendReady() {
+        const btn = U.$('#chatSend');
+        const input = U.$('#chatInput');
+        if (!btn || !input || this.busy) return;
+        btn.classList.toggle('is-ready', !!input.value.trim());
+      },
+
       _setSendMode(busy) {
         const btn = U.$('#chatSend');
         if (!btn) return;
-        btn.innerHTML = icon(busy ? 'square' : 'send');
+        btn.innerHTML = icon(busy ? 'square' : 'arrowUp');
         btn.title = busy ? '停止生成' : '发送';
         btn.setAttribute('aria-label', btn.title);
         btn.classList.toggle('is-stopping', !!busy);
+        if (busy) btn.classList.remove('is-ready');
+        else this._syncSendReady();
         const newSession = U.$('#newSessBtn');
         if (newSession) newSession.disabled = !!busy;
       },

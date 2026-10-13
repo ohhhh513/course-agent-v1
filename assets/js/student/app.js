@@ -8,7 +8,7 @@
   
     Theme.init();
     // 侧栏图标注入
-    U.$$('.nav-item').forEach(n => n.insertAdjacentHTML('afterbegin', icon(n.dataset.icon, 'nav-item__icon')));
+    U.$$('.nav-item').forEach(n => n.insertAdjacentHTML('afterbegin', navIcon(n.dataset.icon)));
     U.$('#msgBtn').innerHTML = icon('message') + '<span class="topbar-badge" id="msgBadge" hidden>0</span>';
     initTopbar();
 

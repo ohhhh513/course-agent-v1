@@ -124,6 +124,11 @@ body {
   color: #052b34;
   box-shadow: 0 0 0 4px rgba(24, 185, 170, .1), 0 8px 22px -10px rgba(24, 185, 170, .7);
 }
+.brand-logo.brand-logo--mark {
+  background: transparent;
+  box-shadow: none;
+  border-radius: 0;
+}
 .brand-text b { color: #f3fbfd; font-weight: 680; }
 .brand-text span { color: #8ca8b8; }
 .sidebar__nav { padding: 14px 12px 20px; }
@@ -434,6 +439,7 @@ table td, table th { border-color: var(--border-soft); }
   box-shadow: 0 0 0 48px rgba(91, 218, 203, .035), 0 0 0 110px rgba(91, 218, 203, .018);
 }
 .auth-aside__brand .brand-logo { background: #18b9aa; color: #062c36; }
+.auth-aside__brand .brand-logo.brand-logo--mark { background: transparent; box-shadow: none; border-radius: 0; }
 .auth-aside__brand h1 { color: #f4fbfd; font-size: 31px; letter-spacing: -.035em; }
 .auth-aside__brand p { color: #abc3ce; line-height: 1.8; }
 .auth-aside .badge { border: 1px solid rgba(184, 225, 228, .16); }
@@ -538,6 +544,7 @@ table td, table th { border-color: var(--border-soft); }
 .login-wrap { padding-top: 64px; }
 .login-hd { max-width: 720px; margin: 0 auto 32px; text-align: center; }
 .login-hd .brand-logo { margin: 0 auto; background: var(--brand-500); }
+.login-hd .brand-logo.brand-logo--mark { background: transparent; box-shadow: none; border-radius: 0; }
 .login-hd h1 { color: #0c2b41; letter-spacing: -.05em; }
 .login-hd p { color: #577182; }
 .role-grid { max-width: 980px; gap: 22px; }
