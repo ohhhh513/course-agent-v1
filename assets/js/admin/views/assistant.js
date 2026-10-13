@@ -15,8 +15,7 @@
 const AdminChat = AgentChatView.create({
   viewKey: 'assistant',
   containerId: '#view-assistant',
-  badges: `<span class="badge badge--ok">${icon('shield')} 平台治理</span>
-           <span class="badge badge--outline">${icon('grid')} 全平台 · 写操作需确认</span>`,
+  badges: '',
   placeholder: '问平台情况，例如「系统现在什么状态」',
   welcomeTitle: '今天需要处理什么？',
   welcomeText: '可以查账号、核课程数据、看预警，重要操作仍由你确认。',
