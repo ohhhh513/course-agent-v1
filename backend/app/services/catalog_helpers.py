@@ -1,6 +1,19 @@
 """章节目录与 KP 标签公共辅助"""
 import json
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
+
+# 出题页上传的素材写在现有 source 列上，不新增字段。学生端列表、图谱和练习推荐都排除它。
+GEN_MATERIAL_SOURCE = "出题素材"
+
+
+def is_gen_material(resource) -> bool:
+    return str(getattr(resource, "source", "") or "") == GEN_MATERIAL_SOURCE
+
+
+def student_visible_source(source_column):
+    """已有资源的 source 可能为空，不能把空值一并滤掉。"""
+    return or_(source_column.is_(None), source_column != GEN_MATERIAL_SOURCE)
 
 
 def parse_kp_ids(raw) -> list[str]:

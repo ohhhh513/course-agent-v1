@@ -1374,6 +1374,20 @@ class UploadMaterialReq(BaseModel):
     name: str
 
 
+_GEN_TYPE_LABEL = {
+    "single": "单选题",
+    "multi": "多选题",
+    "blank": "填空题",
+    "judge": "判断题",
+}
+_GEN_TYPE_HINT = {
+    "single": "四个选项，答案只能是一个字母。JSON 写 type 为 single。",
+    "multi": "至少两个正确选项，答案写成连续大写字母，如 AC。JSON 写 type 为 multi。",
+    "blank": "题干用 ____ 标出空位，答案按空位顺序用中文分号连接。JSON 写 type 为 blank。",
+    "judge": "选项只有 A 正确、B 错误，答案是 A 或 B。JSON 写 type 为 judge。",
+}
+
+
 class CreatePackReq(BaseModel):
     kpIds: List[str]
     userIds: Optional[List[str]] = None
@@ -1466,8 +1480,13 @@ def ai_generate_questions(
             return example_chapter_id
         return ""
 
+    picked_types = [str(t).strip() for t in (req.types or []) if str(t).strip() in _GEN_TYPE_LABEL]
+    if not picked_types:
+        picked_types = ["single"]
+
     def _message(seq: int) -> str:
-        parts = [f"请出第 {seq}/{count} 道单选题。"]
+        qtype = picked_types[(seq - 1) % len(picked_types)]
+        parts = [f"请出第 {seq}/{count} 道{_GEN_TYPE_LABEL[qtype]}。{_GEN_TYPE_HINT[qtype]}"]
         if kp_names:
             parts.append("指定知识点：" + "、".join(kp_names) + "。")
         else:
@@ -1502,7 +1521,10 @@ def ai_generate_questions(
                 "chapterId": chapter_id,
                 "kp_ids": kp_ids,
                 "kp_names": kp_names,
+                "question_type": picked_types[i % len(picked_types)],
                 "example_question_ids": example_ids,
+                # 出题页的保存直接落草稿并推预览，不再弹出「确认执行」。
+                "autoApproveDraft": True,
             }
             try:
                 for ev in run_turn(
@@ -1600,13 +1622,15 @@ def draft_list(
             if isinstance(payload.get("kp_ids"), list) else []
         if kp_id and kp_id not in kp_ids:
             kp_ids.insert(0, kp_id)
+        chapter_id = str(payload.get("chapter_id") or "")
         items.append({
             "draftId": r.draft_id,
             "status": r.status,
             "createdAt": fmt_dt(r.created_at, "%m-%d %H:%M"),
             "errors": json.loads(r.errors_json or "[]"),
             "qId": payload.get("q_id"),
-            "chapterId": payload.get("chapter_id"),
+            "chapterId": chapter_id,
+            "chapterName": structure.chapter_name_by_id(course_id, chapter_id) if chapter_id else "",
             "kpId": kp_id,
             "kpIds": kp_ids,
             "kpName": kp_names.get(kp_id, ""),
@@ -1682,12 +1706,29 @@ def draft_publish(
     if not check["ok"]:
         return fail("草稿校验未通过：" + "；".join(check["errors"]))
 
-    # 选项：草稿 {A..D} map → Question 的 [{key,text,right}]
-    options_map = payload.get("options") or {}
-    options = [
-        {"key": k, "text": options_map.get(k, ""), "right": payload.get("answer") == k}
-        for k in ("A", "B", "C", "D")
-    ]
+    q_type = str(payload.get("type") or "single")
+    if q_type not in _GEN_TYPE_LABEL:
+        q_type = "single"
+    if q_type == "blank" or payload.get("is_blank"):
+        raw_options = payload.get("options") if isinstance(payload.get("options"), list) else None
+        try:
+            packed = pack_blank(payload.get("question") or "", str(payload.get("answer") or ""), raw_options)
+        except ValueError as exc:
+            return fail(str(exc))
+        options = packed["options"]
+        stored_answer = packed["stored_answer"]
+        q_type = "blank"
+    else:
+        options_map = payload.get("options") if isinstance(payload.get("options"), dict) else {}
+        letters = set(re.sub(r"[^A-H]", "", str(payload.get("answer") or "").upper()))
+        keys = [k for k in "ABCDEFGH" if str(options_map.get(k) or "").strip()]
+        if not keys:
+            keys = [k for k in "ABCD" if k in options_map] or list("ABCD")
+        options = [
+            {"key": k, "text": str(options_map.get(k) or ""), "right": k in letters}
+            for k in keys
+        ]
+        stored_answer = "".join(k for k in "ABCDEFGH" if k in letters) or str(payload.get("answer") or "")
 
     # 图规格 → figure_json
     figure, figure_json = {}, None
@@ -1733,13 +1774,13 @@ def draft_publish(
         chapter=chapter_name,
         kp_id=kp_id,
         kp_ids=json.dumps(kp_ids, ensure_ascii=False),
-        type="single",
+        type=q_type,
         difficulty=payload.get("difficulty") or 3,
-        score=5,
+        score=int(payload.get("score") or 5),
         status="published",
         stem=payload.get("question") or "",
         options=json.dumps(options, ensure_ascii=False),
-        answer=str(payload.get("answer") or ""),
+        answer=stored_answer,
         analysis=payload.get("analysis") or "",
         kp_path=json.dumps(kp_path, ensure_ascii=False),
         pre_kp="[]",
@@ -2746,6 +2787,7 @@ class CourseCreateBody(BaseModel):
     name: str
     term: str = ""
     code: str = ""
+    classNo: str = ""
 
 
 def _gen_course_id(db: Session) -> str:
@@ -2775,13 +2817,20 @@ def create_course(
     """
     if user.role != "teacher":
         return fail("仅教师可创建课程", 403)
+    from ..models.course import pack_course_code
     name = (body.name or "").strip()
     if not name:
         return fail("课程名称不能为空", 400)
+    code = (body.code or "").strip()
+    class_no = (body.classNo or "").strip()
+    if len(code) > 32 or len(class_no) > 32:
+        return fail("课程代码和教学班级号不能超过 32 个字", 400)
+    if "||" in code or "||" in class_no:
+        return fail("课程代码和教学班级号不能包含 ||", 400)
     course_id = _gen_course_id(db)
     invite = _gen_invite_code(db)
     db.add(Course(
-        course_id=course_id, name=name, code=(body.code or "").strip(),
+        course_id=course_id, name=name, code=pack_course_code(code, class_no),
         term=(body.term or "").strip(), teacher=user.name,
         invite_code=invite, owner_id=user.user_id,
     ))
@@ -2790,7 +2839,10 @@ def create_course(
         role_in_course="teacher", joined_at=datetime.utcnow(),
     ))
     db.commit()
-    return ok({"courseId": course_id, "inviteCode": invite, "name": name})
+    return ok({
+        "courseId": course_id, "inviteCode": invite, "name": name,
+        "code": code, "classNo": class_no,
+    })
 
 
 # ========== 资源上传后的 RAG 切片（异步 + 进度可查） ==========
@@ -2859,12 +2911,20 @@ def _next_res_id(db: Session) -> str:
 def teacher_resources(
     keyword: str = Query(None),
     chapterId: str = Query(None),
+    includeGen: int = Query(0),
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
     course_id: str = Depends(get_current_course_id),
 ):
-    """教师端：当前课程资源（含章目录与 KP 标签）"""
-    q = db.query(Resource).filter(Resource.course_id == course_id).order_by(Resource.res_id.asc())
+    """教师端：当前课程资源（含章目录与 KP 标签）。
+
+    includeGen=1 时一并返回出题页上传的素材；资源中心默认不列出，避免和给学生看的资源混在一起。
+    """
+    from ..services.catalog_helpers import student_visible_source
+    q = db.query(Resource).filter(Resource.course_id == course_id)
+    if not includeGen:
+        q = q.filter(student_visible_source(Resource.source))
+    q = q.order_by(Resource.res_id.asc())
     if keyword:
         like = f"%{keyword}%"
         q = q.filter(Resource.title.like(like) | Resource.kp.like(like) | Resource.source.like(like) | Resource.chapter.like(like))
@@ -2900,6 +2960,7 @@ async def upload_resource(
     kp_id: str = Form(""),
     kpIds: str = Form(""),
     category: str = Form(""),
+    forQuestion: str = Form(""),
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
@@ -2993,7 +3054,7 @@ async def upload_resource(
         duration=duration,
         pages=pages,
         count=0,
-        source="教师上传",
+        source="出题素材" if str(forQuestion).strip() in ("1", "true", "yes") else "教师上传",
         views=0,
         url=url,
     )
@@ -3344,7 +3405,11 @@ def structure_overview(
     kps = db.query(GraphNode).filter(
         GraphNode.graph_type == "knowledge", GraphNode.course_id == course_id
     ).order_by(GraphNode.id).all()
-    resources = db.query(Resource).filter(Resource.course_id == course_id).order_by(Resource.res_id.asc()).all()
+    from ..services.catalog_helpers import is_gen_material
+    resources = [
+        r for r in db.query(Resource).filter(Resource.course_id == course_id).order_by(Resource.res_id.asc()).all()
+        if not is_gen_material(r)
+    ]
 
     name_map = {n.id: n.name for n in kps}
     # 知识点介绍（kp_details.summary）随目录一起返回，供「知识点详情」弹窗直接回填

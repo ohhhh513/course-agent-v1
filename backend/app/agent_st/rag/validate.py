@@ -173,17 +173,43 @@ def validate_question(
     if not str(payload.get("question") or "").strip():
         errors.append("question 不能为空")
 
+    q_type = str(payload.get("type") or "").strip()
     options = payload.get("options")
-    if not isinstance(options, dict):
-        errors.append("options 必须是对象，键为 A/B/C/D")
-    else:
-        for key in OPTION_KEYS:
-            if key not in options or not isinstance(options[key], str):
-                errors.append(f"options.{key} 必须是字符串")
-
     answer = payload.get("answer")
-    if answer not in OPTION_KEYS:
-        errors.append("answer 只能是 A/B/C/D")
+    if q_type == "blank":
+        has_answer = bool(str(answer or "").strip()) or (isinstance(options, list) and bool(options))
+        if not has_answer:
+            errors.append("填空题需要答案")
+    elif q_type == "judge":
+        if not isinstance(options, dict):
+            errors.append("判断题 options 必须是对象")
+        else:
+            for key in ("A", "B"):
+                if not isinstance(options.get(key), str) or not str(options.get(key)).strip():
+                    errors.append(f"判断题 options.{key} 必须是非空字符串")
+        if str(answer or "").strip().upper() not in {"A", "B"}:
+            errors.append("判断题 answer 只能是 A 或 B")
+    elif q_type == "multi":
+        if not isinstance(options, dict):
+            errors.append("多选题 options 必须是对象")
+        else:
+            filled = [k for k in "ABCDEFGH" if isinstance(options.get(k), str) and str(options.get(k)).strip()]
+            if len(filled) < 2:
+                errors.append("多选题至少两个非空选项")
+        letters = re.sub(r"[^A-H]", "", str(answer or "").upper())
+        if not letters:
+            errors.append("多选题 answer 需要至少一个选项字母")
+        elif isinstance(options, dict) and any(ch not in options for ch in letters):
+            errors.append("多选题 answer 含有不存在的选项")
+    else:
+        if not isinstance(options, dict):
+            errors.append("options 必须是对象，键为 A/B/C/D")
+        else:
+            for key in OPTION_KEYS:
+                if key not in options or not isinstance(options[key], str):
+                    errors.append(f"options.{key} 必须是字符串")
+        if answer not in OPTION_KEYS:
+            errors.append("answer 只能是 A/B/C/D")
 
     if not isinstance(payload.get("analysis"), str):
         errors.append("analysis 必须是字符串（没有则用空串）")

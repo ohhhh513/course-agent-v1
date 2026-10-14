@@ -52,10 +52,11 @@ def resource_count_map(db: Session, course_id: str = DEFAULT_COURSE_ID) -> Dict[
     注意：同一资源对同一知识点**只计一次** —— kp_id 往往也出现在 kp_ids 里，
     直接拼接会把它重复计数（历史上章节资源数偏大就是这个原因）。
     """
-    from .catalog_helpers import resource_kp_ids
+    from .catalog_helpers import resource_kp_ids, student_visible_source
 
     rows = db.query(Resource).filter(
-        and_(Resource.course_id == course_id)
+        and_(Resource.course_id == course_id),
+        student_visible_source(Resource.source),
     ).all()
     counts: Dict[str, int] = {}
     for r in rows:

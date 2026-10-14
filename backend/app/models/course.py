@@ -11,7 +11,8 @@ class Course(Base):
 
     course_id = Column(String(32), primary_key=True)       # C2026DS001
     name = Column(String(128), nullable=False)             # 数据结构与算法
-    code = Column(String(32), default="")                   # CS20301
+    # 课程代码；若同时有教学班级号，存成「代码||班级号」（不另加列）
+    code = Column(String(32), default="")                   # CS20301 或 CS20301||计算机2601
     term = Column(String(64), default="")                   # 2026 春季学期
     teacher = Column(String(64), default="")
     credit = Column(Integer, default=0)
@@ -22,6 +23,23 @@ class Course(Base):
     # 多课程扩展（旧库由 database._migrate 补列）
     invite_code = Column(String(16), default="")            # 学生凭码入课
     owner_id = Column(String(64), default="")               # 建课教师 user_id
+
+
+def pack_course_code(code: str, class_no: str) -> str:
+    """课程代码与教学班级号共用 code 列。没有班级号时保持原来的纯代码。"""
+    code = (code or "").strip()
+    class_no = (class_no or "").strip()
+    if class_no:
+        return f"{code}||{class_no}"
+    return code
+
+
+def unpack_course_code(raw: str) -> tuple[str, str]:
+    text = raw or ""
+    if "||" in text:
+        code, class_no = text.split("||", 1)
+        return code, class_no
+    return text, ""
 
 
 class ResourceProgress(Base):

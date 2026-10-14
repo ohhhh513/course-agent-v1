@@ -60,8 +60,10 @@ def _total_study_seconds(db: Session, user_id: str, course_id: str) -> int:
 
     与 `kp_stats.kp_study_seconds` 同一口径，只是把范围从「某个知识点」放大到「整门课」。
     """
+    from .catalog_helpers import student_visible_source
     video_ids = [rid for (rid,) in db.query(Resource.res_id).filter(
-        Resource.course_id == course_id, Resource.type == "video").all()]
+        Resource.course_id == course_id, Resource.type == "video",
+        student_visible_source(Resource.source)).all()]
     watched = best_position_sum(db, user_id, video_ids)
     practiced = db.query(func.coalesce(func.sum(AnswerRecord.duration_seconds), 0)).filter(
         AnswerRecord.user_id == user_id,
@@ -94,7 +96,11 @@ def build_student_report(db: Session, user, course_id: str) -> dict:
     mastery_vals = [mastery_map[r.kp_id] for r in lp_rows if r.kp_id in mastery_map]
     mastery_avg = round(sum(mastery_vals) / len(mastery_vals), 1) if mastery_vals else 0.0
 
-    resources = db.query(Resource).filter(Resource.course_id == course_id).all()
+    from .catalog_helpers import student_visible_source
+    resources = db.query(Resource).filter(
+        Resource.course_id == course_id,
+        student_visible_source(Resource.source),
+    ).all()
     pmap = progress_map(db, uid, [r.res_id for r in resources])
     res_progress = [((pmap.get(r.res_id).progress if pmap.get(r.res_id) else 0) or 0) for r in resources]
     res_avg = round(sum(res_progress) / len(resources), 1) if resources else 0.0

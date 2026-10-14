@@ -386,7 +386,10 @@ def student_dashboard(
     # 同一资源若有多行（历史并发写入）只保留数据最优的一行，避免同一条视频刷出两条动态
     from ..services.resource_progress import progress_map as _progress_map
     _best = _progress_map(db, uid, [r.res_id for _p, r in res_rows])
+    from ..services.catalog_helpers import is_gen_material
     for r in sorted({r.res_id: r for _p, r in res_rows}.values(), key=lambda x: x.res_id):
+        if is_gen_material(r):
+            continue
         p = _best.get(r.res_id)
         if p is None or not p.updated_at:
             continue
@@ -538,7 +541,11 @@ def student_resources(
     course_id: str = Depends(get_current_course_id),
 ):
     # 课程隔离：只返回当前课程下的资源（X-Course-Id 头，缺省回退默认课程）
-    q = db.query(Resource).filter(Resource.course_id == course_id)
+    from ..services.catalog_helpers import student_visible_source
+    q = db.query(Resource).filter(
+        Resource.course_id == course_id,
+        student_visible_source(Resource.source),
+    )
     if type and type != "all":
         q = q.filter(Resource.type == type)
     if category:
@@ -592,8 +599,9 @@ def get_resource_progress(res_id: str, db: Session = Depends(get_db), user: User
     """获取某个资源的真实学习进度（视频：秒；文档：页码/百分比）"""
     from ..services.resource_progress import progress_map as _progress_map
     p = _progress_map(db, user.user_id, [res_id]).get(res_id)
+    from ..services.catalog_helpers import is_gen_material
     r = db.query(Resource).filter(Resource.res_id == res_id, Resource.course_id == course_id).first()
-    if not r:
+    if not r or is_gen_material(r):
         return fail("资源不存在", 404)
     dur_sec = _duration_to_seconds(r.duration) if r.duration else 0
     total_pages = r.pages or 0
@@ -629,8 +637,9 @@ def save_resource_progress(
     watchedDelta 仅供视频使用：本次上报周期内**真正播放**的秒数（由前端按播放
     时间轴累加，缓冲/拖动不计），服务端据此累计当日观看时长；缺省时退回位置增量。
     """
+    from ..services.catalog_helpers import is_gen_material
     r = db.query(Resource).filter(Resource.res_id == res_id, Resource.course_id == course_id).first()
-    if not r:
+    if not r or is_gen_material(r):
         return fail("资源不存在", 404)
     progress = int(body.get("progress", 0) or 0)
     position = int(body.get("position", 0) or 0)
@@ -760,8 +769,9 @@ def _add_watch_seconds(db: Session, uid: str, day: date, delta: int):
 @router.post("/resources/{res_id}/view")
 def resource_view(res_id: str, db: Session = Depends(get_db), user: User = Depends(get_current_user), course_id: str = Depends(get_current_course_id)):
     """记录一次资源查看，返回最新观看次数"""
+    from ..services.catalog_helpers import is_gen_material
     r = db.query(Resource).filter(Resource.res_id == res_id, Resource.course_id == course_id).first()
-    if not r:
+    if not r or is_gen_material(r):
         return fail("资源不存在", 404)
     r.views = (r.views or 0) + 1
     db.commit()
@@ -772,7 +782,11 @@ def resource_view(res_id: str, db: Session = Depends(get_db), user: User = Depen
 def resource_stats(db: Session = Depends(get_db), user: User = Depends(get_current_user), course_id: str = Depends(get_current_course_id)):
     """学习资源进度统计 — 从 ResourceProgress 聚合（仅统计当前课程）"""
     uid = user.user_id
-    resources = db.query(Resource).filter(Resource.course_id == course_id).all()
+    from ..services.catalog_helpers import student_visible_source
+    resources = db.query(Resource).filter(
+        Resource.course_id == course_id,
+        student_visible_source(Resource.source),
+    ).all()
     res_map = {r.res_id: r for r in resources}
     # 同一资源多行时只取最优行，避免「开始数/完成数/平均进度」被重复行失真
     from ..services.resource_progress import progress_map as _progress_map

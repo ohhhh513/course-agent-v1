@@ -784,7 +784,11 @@ def wrong_detail(
     # 推荐资源：按知识点所属章节匹配本地资源
     kp_path = loads(q.kp_path) or []
     chapter = kp_path[0] if kp_path else ""
-    res_q = db.query(Resource).filter(Resource.course_id == q.course_id)
+    from ..services.catalog_helpers import student_visible_source
+    res_q = db.query(Resource).filter(
+        Resource.course_id == q.course_id,
+        student_visible_source(Resource.source),
+    )
     if chapter:
         res_q = res_q.filter(Resource.kp == chapter)
     elif q.kp_id:

@@ -529,8 +529,8 @@ def _demo_turn(flow_id: str, message: str, ctx: ToolContext) -> Iterator[Event]:
         if payload is None:
             text = "未找到可复用的同章题目骨架。请指定章节、知识点或源题号。"
         else:
-            # 演示模式同样要过写操作闸门（P2c）：先补齐构思 / 查重的前置状态（真实调工具），
-            # 再调 save_question_draft —— 它会被排成「待批准」，等教师在卡片上点确认后才落库。
+            # 先补齐构思 / 查重，再保存草稿。出题页带 autoApproveDraft 时直接落库并出预览；
+            # 答疑里的同名工具仍排成待批准。
             ev, _ = _run_tool("submit_item_plan", _demo_plan_args(ctx, payload), ctx)
             yield from ev
             from app.agent_st.rag.novelty import question_fingerprint

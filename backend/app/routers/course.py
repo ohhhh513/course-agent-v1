@@ -8,7 +8,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from ..database import get_db
 from ..middleware.auth import get_current_user
-from ..models.course import Course
+from ..models.course import Course, unpack_course_code
 from ..models.user import User
 from ..models.user_course import UserCourse
 from ..schemas.common import ok, fail
@@ -28,18 +28,21 @@ def my_courses(db: Session = Depends(get_db), user: User = Depends(get_current_u
         .order_by(UserCourse.joined_at.asc())
         .all()
     )
-    return ok([
-        {
+    items = []
+    for uc, c in rows:
+        code, class_no = unpack_course_code(c.code)
+        items.append({
             "courseId": c.course_id,
             "name": c.name,
+            "code": code,
+            "classNo": class_no,
             "term": c.term,
             "teacher": c.teacher,
             "role": uc.role_in_course,
             # 邀请码仅对课程教师可见（管理用途：展示给学生扫码/输码加入）
             **({"inviteCode": c.invite_code} if uc.role_in_course == "teacher" else {}),
-        }
-        for uc, c in rows
-    ])
+        })
+    return ok(items)
 
 
 class JoinBody(BaseModel):
@@ -92,10 +95,12 @@ def get_course(course_id: str, db: Session = Depends(get_db)):
     ).scalar() or 0
     n_res = db.query(func.count(Resource.res_id)).filter(Resource.course_id == course_id).scalar() or 0
     n_q = db.query(func.count(Question.q_id)).filter(Question.course_id == course_id).scalar() or 0
+    code, class_no = unpack_course_code(course.code)
     return ok({
         "courseId": course.course_id,
         "name": course.name,
-        "code": course.code,
+        "code": code,
+        "classNo": class_no,
         "term": course.term,
         "teacher": course.teacher,
         "credit": course.credit,
