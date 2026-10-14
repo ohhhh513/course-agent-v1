@@ -1,122 +1,225 @@
 'use strict';
 
   /* ================================================================
-     视图 7 · 预警与提醒中心
+     视图 7 · 预警与提醒
+
+     2026-09-24：由「开发中」占位页改为真实页面，数据全部来自已实现的接口：
+       GET  /student/alerts            我的预警（含 stats / openStats）
+       PUT  /student/alerts/{id}/read  标记已读
+       GET  /student/messages          教师私信 / 系统通知
+       PUT  /student/messages/{id}/read
+
+     预警口径（backend/app/services/alert_detector.py）：
+       按知识点统计「每道题最近一次作答」的正确率（同题去重）；
+       <50% 红 / 50%~60% 黄 / ≥60% 达标（达标即自动解除并删除记录）；
+       且该知识点至少作答过 2 道不同题才参与判定，避免证据不足误报。
      ================================================================ */
   const Alerts = {
     level: 'all',
+    _renderToken: 0,
+    _isCurrent: () => true,
+    _msgs: [],
+
     render() {
       const el = U.$('#view-alerts');
+      if (!el) return;
+      if (!API.config.activeCourseId) {
+        if (window.renderStudentNoCourse) window.renderStudentNoCourse(el);
+        return;
+      }
+      const token = ++this._renderToken;
+      this._isCurrent = () => token === this._renderToken && !!API.config.activeCourseId;
+
       el.innerHTML = `
-      <div class="grid g-3" style="margin-bottom:16px" id="aStats"></div>
-      <div class="card">
-        <div class="card__head">
-          <h3>${icon('bell')} 预警列表</h3>
-          <span class="spacer"></span>
-          <div class="chips" id="aChips">
-            <button class="chip is-active" data-l="all">全部</button>
-            <button class="chip" data-l="red"><i class="dot dot--danger"></i>紧急</button>
-            <button class="chip" data-l="yellow"><i class="dot dot--warn"></i>关注</button>
-            <button class="chip" data-l="green"><i class="dot dot--ok"></i>已解除</button>
+      <div class="grid g-4" style="margin-bottom:16px" id="alStats">${U.skeleton(90)}</div>
+
+      <div class="grid g-21 al-cols">
+        <div class="card al-col">
+          <div class="card__head">
+            <h3>${icon('bell')} 我的预警</h3>
+            <span class="spacer"></span>
+            <div class="seg" id="alSeg">
+              <button data-l="all" class="is-active">全部</button>
+              <button data-l="red">红</button>
+              <button data-l="yellow">黄</button>
+            </div>
+            <button class="btn btn--sm" id="alRefresh" type="button">${icon('refresh')} 刷新</button>
           </div>
+          <div class="card__body al-scroll" id="alBody">${U.skeleton(220)}</div>
         </div>
-        <div class="card__body stack" id="aList">${U.skeleton(300)}</div>
+
+        <div class="card al-col">
+          <div class="card__head">
+            <h3>${icon('message')} 提醒与通知</h3>
+            <span class="spacer"></span>
+            <span class="badge badge--outline" id="alMsgBadge">—</span>
+          </div>
+          <div class="card__body card__body--flush al-scroll" id="alMsgList">${U.skeleton(70)}</div>
+        </div>
       </div>`;
-      U.$$('#aChips .chip', el).forEach(c => c.addEventListener('click', () => {
-        U.$$('#aChips .chip', el).forEach(x => x.classList.remove('is-active'));
-        c.classList.add('is-active'); this.level = c.dataset.l; this.load();
+
+      U.$$('#alSeg button', el).forEach(b => b.addEventListener('click', () => {
+        U.$$('#alSeg button', el).forEach(x => x.classList.toggle('is-active', x === b));
+        this.level = b.dataset.l || 'all';
+        this.loadAlerts();
       }));
+      U.$('#alRefresh', el).addEventListener('click', () => this.load());
+
       this.load();
     },
+
     load() {
+      this.loadAlerts();
+      this.loadMessages();
+    },
+
+    /** 顶部 4 张统计卡：口径 = 接口返回的 stats / openStats */
+    _paintStats(stats, openStats) {
+      const box = U.$('#alStats');
+      if (!box) return;
+      const s = stats || {}, os = openStats || {};
+      const cards = [
+        { k: '红色预警', v: s.red || 0, u: '条', c: 'var(--danger)', hint: '正确率 < 50%' },
+        { k: '黄色预警', v: s.yellow || 0, u: '条', c: 'var(--warn)', hint: '正确率 50%~60%' },
+        { k: '待处理', v: (os.red || 0) + (os.yellow || 0), u: '条', c: 'var(--brand-500)', hint: '红 + 黄中尚未处理的' },
+        { k: '已忽略', v: s.green || 0, u: '条', c: 'var(--text-3)', hint: '教师判定无需处理' },
+      ];
+      box.innerHTML = cards.map(c => `
+        <div class="stat" style="--_c:${c.c}">
+          <div class="stat__label">${c.k}</div>
+          <div class="stat__value"><span data-cnt="${c.v}">0</span><small>${c.u}</small></div>
+          <div class="stat__hint">${c.hint}</div>
+        </div>`).join('');
+      U.$$('[data-cnt]', box).forEach(x => U.countUp(x, +x.dataset.cnt, 0));
+    },
+
+    loadAlerts() {
+      const body = U.$('#alBody');
+      if (!body) return;
+      const isCurrent = this._isCurrent;
+      body.innerHTML = `<div class="fz-12 t-dim" style="padding:16px">加载中…</div>`;
       API.student.alerts({ level: this.level }).then(r => {
-        // 统计卡：用后端返回的全量 stats（不受 level 筛选影响）
-        const S = r.stats || { red: 0, yellow: 0, green: 0 };
-        U.$('#aStats').innerHTML = `
-          <div class="stat stat--link" data-l="red" style="--_c:var(--danger)"><div class="stat__label">紧急预警</div>
-            <div class="stat__value">${S.red}</div>
-            <div class="stat__hint">需立即处理</div></div>
-          <div class="stat stat--link" data-l="yellow" style="--_c:var(--warn)"><div class="stat__label">关注预警</div>
-            <div class="stat__value">${S.yellow}</div>
-            <div class="stat__hint">建议本周内处理</div></div>
-          <div class="stat stat--link" data-l="green" style="--_c:var(--ok)"><div class="stat__label">已解除</div>
-            <div class="stat__value">${S.green}</div>
-            <div class="stat__hint">补救有效，掌握率回升</div></div>`;
-
-        // 三类预警统计卡 → 点击切换到对应等级筛选
-        U.$$('#aStats .stat--link').forEach(card => {
-          card.addEventListener('click', () => {
-            const lvl = card.dataset.l;
-            U.$$('#aChips .chip').forEach(x => x.classList.toggle('is-active', x.dataset.l === lvl));
-            this.level = lvl; this.load();
-            const t = window.document.getElementById('aList');
-            if (t && t.scrollIntoView) { try { t.scrollIntoView({ behavior: 'smooth', block: 'start' }); } catch (e) {} }
-          });
-        });
-
-        const typeIcon = { mastery_low: 'target', progress_lag: 'clock', error_cluster: 'alert', resolved: 'checkCircle' };
-        U.$('#aList').innerHTML = r.list.map(a => `
-        <div class="alert-card ${U.alertCard[a.level]}">
-          <div class="alert-card__head">
-            <div class="alert-card__ico">${icon(typeIcon[a.type] || 'alert')}</div>
-            <div class="alert-card__body">
-              <div class="row" style="margin-bottom:3px">
-                <span class="badge ${U.alertBadge[a.level]}">${U.alertName[a.level]}</span>
-                <span class="badge badge--outline mono">${a.alertId}</span>
-                <span class="spacer"></span>
-                <span class="fz-11 t-dim">${a.createdAt}</span>
-              </div>
-              <h4>${U.esc(a.title)}</h4>
-              <p>${U.esc(a.desc)}</p>
-            </div>
-          </div>
-          <div class="alert-card__sug">
-            <div class="sug-box">
-              <div class="sug-box__title">${icon('bulb')} 改进建议（系统已适配你的学情）</div>
-              <ul>${a.suggestions.map(s => `<li>${U.esc(s.text)}</li>`).join('')}</ul>
-            </div>
-          </div>
-          <div class="alert-card__foot">
-            <button class="btn btn--sm" data-detail="${a.alertId}">${icon('eye')} 查看详情</button>
-            ${a.status === 'open' ? `
-              <button class="btn btn--sm btn--primary" data-fix="${a.alertId}">${icon('target')} 去补救</button>
-              <button class="btn btn--sm btn--ghost" data-read="${a.alertId}">标记已读</button>` : ''}
-            <span class="spacer"></span>
-            <span class="fz-11 t-dim">${a.status === 'open' ? '待处理' : '已关闭'}</span>
-          </div>
-        </div>`).join('') || R.empty('暂无该类型预警', '', 'checkCircle');
-
-        U.$$('[data-detail]').forEach(b => b.addEventListener('click', () => {
-          const a = r.list.find(x => x.alertId === b.dataset.detail);
-          Modal.open({
-            title: a.title, size: 'wide',
-            body: `<div class="kv" style="margin-bottom:16px">
-                ${Object.entries(a.detail).map(([k, v]) => {
-              const label = { current: '当前值', threshold: '达标阈值', classAvg: '班级平均', errorCount: '错题数', relatedQuestions: '关联题量', planned: '计划进度', actual: '实际进度', lagHours: '滞后学时', total: '作答总数', wrong: '错误数', mainErrorType: '主要错误类型', concentration: '集中度', before: '补救前', after: '补救后', days: '稳定天数' }[k] || k;
-              return `<div class="kv__row"><span>${label}</span><span>${v}</span></div>`;
-            }).join('')}
-              </div>
-              <div class="divider"></div>
-              <p class="fz-12 t-dim" style="margin-bottom:8px">推荐资源与练习</p>
-              <div class="stack" style="gap:8px">
-                ${a.suggestions.map(s => `<div class="file-item">${icon(s.type === 'video' ? 'video' : s.type === 'practice' ? 'pencil' : s.type === 'ai' ? 'bot' : 'file')}
-                  <b>${U.esc(s.text)}</b><button class="btn btn--xs btn--outline">前往</button></div>`).join('')}
-              </div>`
-          });
-        }));
-        U.$$('[data-fix]').forEach(b => b.addEventListener('click', () => {
-          Router.go('practice');
-          Toast.ok('已生成靶向补救练习', '习题已命中该预警知识点');
-        }));
-        U.$$('[data-read]').forEach(b => b.addEventListener('click', () => {
-          API.student.readAlert({ alertId: b.dataset.read }).then(() => {
-            Toast.ok('已标记为已读');
-            this.load();   // 刷新列表 + 统计卡
-            if (window.refreshAlertBadge) window.refreshAlertBadge();   // 同步侧栏徽标
-          });
-        }));
+        if (!isCurrent()) return;
+        const list = (r && r.list) || [];
+        this._paintStats(r && r.stats, r && r.openStats);
+        body.innerHTML = list.length
+          ? `<div class="stack" style="gap:12px">${list.map(a => this._card(a)).join('')}</div>`
+          : R.empty('当前没有预警', this.level === 'all'
+            ? '当你在某个知识点上的作答正确率低于 60%（且至少作答过 2 道不同题）时，这里会出现提醒'
+            : '换「全部」看看 —— 当前级别下暂时没有预警', 'checkCircle');
+        this._bindCards(body);
+      }).catch(err => {
+        if (!isCurrent()) return;
+        body.innerHTML = `<div class="empty">${icon('alert')}<b>预警加载失败</b><p>${U.esc((err && err.message) || '')}</p></div>`;
       });
-    }
+    },
+
+    _card(a) {
+      const lv = a.level || 'red';
+      const ignored = a.status === 'ignored';
+      const cardCls = ignored ? 'alert-card--ignored' : (U.alertCard[lv] || 'alert-card--red');
+      const statusText = {
+        open: '待处理', read: '已读', reviewed: '教师已复核', ignored: '教师已忽略', closed: '已解除',
+      }[a.status] || a.status || '';
+      const sugs = (a.suggestions || []).filter(s => s && s.text);
+      return `
+      <div class="alert-card ${cardCls}" data-alert="${U.esc(a.alertId)}">
+        <div class="alert-card__head">
+          <div class="alert-card__ico">${icon(lv === 'red' && !ignored ? 'alert' : ignored ? 'checkCircle' : 'info')}</div>
+          <div class="alert-card__body">
+            <div class="row">
+              <span class="badge ${ignored ? 'badge--ignored' : (U.alertBadge[lv] || 'badge--danger')}">${ignored ? '已忽略' : (U.alertName[lv] || lv)}</span>
+              ${a.kp ? `<span class="badge badge--outline">${U.esc(a.kp)}</span>` : ''}
+              <span class="spacer"></span>
+              <span class="fz-11 t-dim">${U.esc(a.createdAt || '')}</span>
+            </div>
+            <h4>${U.esc(a.title || '学习预警')}</h4>
+            <p>${U.esc(a.desc || '')}</p>
+            ${sugs.map(s => `<div class="callout callout--brand" style="margin:8px 0 0;padding:8px 10px">${icon('bulb')}<div>建议：<b>${U.esc(s.text)}</b></div></div>`).join('')}
+          </div>
+        </div>
+        <div class="alert-card__foot">
+          <span class="badge ${a.status === 'open' ? 'badge--danger' : 'badge--outline'}">${U.esc(statusText)}</span>
+          ${a.trigger ? `<span class="fz-11 t-dim" title="${U.esc(a.trigger)}" style="max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${U.esc(a.trigger)}</span>` : ''}
+          <span class="spacer"></span>
+          ${a.kpId ? `<button class="btn btn--sm btn--primary" data-practice-kp="${U.esc(a.kpId)}" data-practice-name="${U.esc(a.kp || '')}">去练习</button>` : ''}
+          ${a.status === 'open' ? `<button class="btn btn--sm btn--outline" data-read="${U.esc(a.alertId)}">标记已读</button>` : ''}
+        </div>
+      </div>`;
+    },
+
+    _bindCards(root) {
+      U.$$('[data-read]', root).forEach(b => b.addEventListener('click', () => {
+        b.disabled = true;
+        API.student.readAlert({ alertId: b.dataset.read }).then(() => {
+          Toast.ok('已标记为已读');
+          this.loadAlerts();
+          if (window.refreshAlertBadge) window.refreshAlertBadge();
+        }).catch(err => {
+          b.disabled = false;
+          Toast.err('标记失败', (err && err.message) || '');
+        });
+      }));
+      // 建议里的「去练习」：带上知识点进练习页，自动按该知识点组卷（与薄弱点下钻同一机制）
+      U.$$('[data-practice-kp]', root).forEach(b => b.addEventListener('click', () => {
+        if (typeof Practice !== 'undefined') {
+          Practice._pendingTarget = { kpId: b.dataset.practiceKp, kpName: b.dataset.practiceName || '' };
+        }
+        Router.go('practice');
+      }));
+    },
+
+    loadMessages() {
+      const box = U.$('#alMsgList');
+      if (!box) return;
+      const isCurrent = this._isCurrent;
+      API.student.messages().then(r => {
+        if (!isCurrent()) return;
+        const list = (r && r.list) || [];
+        this._msgs = list;
+        const unread = list.filter(m => !m.read).length;
+        const badge = U.$('#alMsgBadge');
+        if (badge) badge.textContent = unread ? `${unread} 条未读` : `${list.length} 条`;
+        box.innerHTML = list.length ? list.map((m, i) => `
+          <div class="list__item list__item--clickable ${m.read ? 'is-read' : ''}" data-msg="${i}">
+            <span class="list__lead">${icon(m.from === '系统' ? 'info' : 'user')}</span>
+            <div class="list__main">
+              <b>${U.esc(m.title || '通知')} ${m.read ? '' : '<span class="badge badge--danger">未读</span>'}</b>
+              <p class="clamp-2">${U.esc(m.content || '')}</p>
+              <p class="fz-11 t-dim">${U.esc(m.fromName || m.from || '系统')} · ${U.esc(m.time || '')}</p>
+            </div>
+          </div>`).join('') : R.empty('暂无提醒', '教师私信与系统通知会出现在这里', 'message');
+        U.$$('[data-msg]', box).forEach(el => el.addEventListener('click', () => {
+          const m = this._msgs[+el.dataset.msg];
+          if (!m) return;
+          Modal.open({
+            title: U.esc(m.title || '通知'),
+            body: `<div class="stack" style="gap:10px">
+              <div class="fz-12 t-dim">${U.esc(m.fromName || m.from || '系统')} · ${U.esc(m.time || '')}</div>
+              <div style="white-space:pre-wrap;line-height:1.8">${U.esc(m.content || '')}</div>
+            </div>`,
+            footer: '<button class="btn" data-close>关闭</button>',
+          });
+          if (!m.read) {
+            API.student.readMessage({ msgId: m.msgId }).then(() => {
+              m.read = true;
+              this.loadMessages();
+              if (window.refreshMsgBadge) window.refreshMsgBadge();
+            }).catch(() => {});
+          }
+        }));
+      }).catch(() => {
+        if (!isCurrent()) return;
+        box.innerHTML = R.empty('提醒加载失败', '', 'alert');
+      });
+    },
   };
 
-Router.register('alerts', { title: '预警与提醒中心', mount: () => Alerts.render() });
+  // 注册路由：注册 'alerts' 后，侧栏「预警与提醒」与驾驶舱待办「去处理」都能进真实页面
+  // （未注册时 Router.go 会静默失败，表现为点击无反应）。
+  Router.register('alerts', {
+    title: '预警与提醒',
+    mount: () => Alerts.render(),
+    update: () => Alerts.render(),
+    reset: () => { Alerts.level = 'all'; Alerts._msgs = []; },
+  });

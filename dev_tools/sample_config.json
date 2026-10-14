@@ -1,0 +1,44 @@
+{
+  "baseUrl": "http://127.0.0.1:8000",
+  "teacher": {
+    "username": "dev_teacher",
+    "password": "123456"
+  },
+  "course": {
+    "name": "开发初始化示例课",
+    "term": "2026 秋",
+    "useCourseId": null
+  },
+  "chapters": [
+    {
+      "name": "第1章 绪论",
+      "kps": ["算法与复杂度", "时间复杂度分析"]
+    },
+    {
+      "name": "第2章 线性表",
+      "kps": ["线性表定义", "顺序表", "单链表"]
+    }
+  ],
+  "resources": [
+    {
+      "file": "resources/C2026DS001/R001/PPT_Ch01_算法与复杂度.pptx",
+      "chapter": "第1章 绪论",
+      "kps": ["算法与复杂度"],
+      "title": "示例课件：算法与复杂度"
+    },
+    {
+      "file": "resources/C2026DS001/R002/VID_Ch04_BF与KMP对比.mp4",
+      "chapter": "第2章 线性表",
+      "kps": ["顺序表"],
+      "title": "示例视频（可替换为本课文件）"
+    }
+  ],
+  "graph": {
+    "edges": [
+      { "source": "算法与复杂度", "target": "时间复杂度分析", "relation": "advance" },
+      { "source": "线性表定义", "target": "顺序表", "relation": "pre" },
+      { "source": "顺序表", "target": "单链表", "relation": "parallel" }
+    ]
+  },
+  "questionsFile": null
+}

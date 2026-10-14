@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>管理员 · 课程智能体系统</title>
+  <link rel="stylesheet" href="assets/css/base.css">
+  <link rel="stylesheet" href="assets/css/app.css?v=20261014-tr1">
+  <link rel="stylesheet" href="assets/css/refresh.css?v=20261014-tr1">
+  <script src="assets/js/ui-enhancements.js" defer></script>
+</head>
+<body>
+<div class="app">
+  <aside class="sidebar">
+    <div class="sidebar__brand">
+      <div class="brand-logo">管</div>
+      <div class="brand-text"><b>系统管理</b><span>平台运维</span></div>
+    </div>
+    <nav class="sidebar__nav">
+      <div class="nav-group">
+        <div class="nav-group__label">管理</div>
+        <button class="nav-item" data-view="assistant" data-icon="bot"><span class="nav-item__text">智能助手</span></button>
+        <button class="nav-item" data-view="users" data-icon="users"><span class="nav-item__text">账号管理</span></button>
+      </div>
+    </nav>
+    <div class="sidebar__foot">
+      <button class="user-chip" type="button">
+        <span class="avatar" id="tbAvatar">管</span>
+        <span class="user-chip__info"><b id="tbUserName">管理员</b><span id="tbUid">admin</span></span>
+      </button>
+    </div>
+  </aside>
+  <div class="main">
+    <header class="topbar">
+      <div class="topbar__title"><h1 id="pageTitle">智能助手</h1></div>
+      <div class="topbar__actions">
+        <button class="btn btn--ghost btn--icon" id="logoutBtn" type="button" title="退出登录"></button>
+      </div>
+    </header>
+    <main class="content">
+
+      <!-- 账号管理（原单页逻辑整体迁入 views/users.js，行为不变） -->
+      <section class="view" id="view-users">
+        <div class="card" style="height:100%;display:flex;flex-direction:column;min-height:0">
+          <div class="card__head">
+            <h3>教师 / 学生账号</h3>
+            <span class="spacer"></span>
+            <button class="btn btn--primary btn--sm" id="btnCreate" type="button">新建账号</button>
+            <button class="btn btn--sm" id="btnImport" type="button">批量导入</button>
+            <button class="btn btn--danger btn--sm" id="btnBatchDel" type="button">批量删除</button>
+            <select class="select select--sm" id="fRole" style="width:120px">
+              <option value="">全部角色</option>
+              <option value="teacher">教师</option>
+              <option value="student">学生</option>
+            </select>
+            <div class="search" style="width:200px">
+              <input class="input" id="fKey" placeholder="搜索用户名 / 姓名">
+            </div>
+          </div>
+          <div class="card__body" style="min-height:0;overflow:auto">
+            <table class="tbl" id="userTable">
+              <thead><tr>
+                <th style="width:32px"><input type="checkbox" id="pickAll" title="全选"></th>
+                <th>用户名</th><th>姓名</th><th>角色</th><th>班级/部门</th><th>用户ID</th><th>操作</th>
+              </tr></thead>
+              <tbody><tr><td colspan="7" class="t-dim">加载中…</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- 智能助手（平台治理流，复用 shared/agent-chat.js） -->
+      <section class="view" id="view-assistant"></section>
+
+    </main>
+  </div>
+</div>
+
+<script src="assets/js/common.js?v=20261014-ico"></script>
+<script src="assets/js/api.js"></script>
+<script src="assets/js/auth.js"></script>
+<script src="assets/js/shared/agent-chat.js?v=20261014-chat1"></script>
+<script src="assets/js/shared/agent-ui.js"></script>
+<script src="assets/js/admin/views/users.js"></script>
+<script src="assets/js/admin/views/assistant.js?v=20261013-composer"></script>
+<script src="assets/js/admin/app.js?v=20261013-assistant-mark"></script>
+</body>
+</html>

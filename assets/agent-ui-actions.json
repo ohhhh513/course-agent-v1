@@ -1,0 +1,1766 @@
+{
+  "version": 1,
+  "actions": [
+    {
+      "id": "student.page.dashboard",
+      "role": "student",
+      "title": "学习驾驶舱",
+      "view": "dashboard",
+      "steps": [],
+      "fields": {},
+      "entity": "",
+      "handler": "",
+      "focus": "",
+      "file_input": ""
+    },
+    {
+      "id": "student.page.graph",
+      "role": "student",
+      "title": "课程图谱导航",
+      "view": "graph",
+      "steps": [],
+      "fields": {},
+      "entity": "",
+      "handler": "",
+      "focus": "",
+      "file_input": ""
+    },
+    {
+      "id": "student.page.resource",
+      "role": "student",
+      "title": "学习资源中心",
+      "view": "resource",
+      "steps": [],
+      "fields": {},
+      "entity": "",
+      "handler": "",
+      "focus": "",
+      "file_input": ""
+    },
+    {
+      "id": "student.page.practice",
+      "role": "student",
+      "title": "智能练习",
+      "view": "practice",
+      "steps": [],
+      "fields": {},
+      "entity": "",
+      "handler": "",
+      "focus": "",
+      "file_input": ""
+    },
+    {
+      "id": "student.page.mastery",
+      "role": "student",
+      "title": "我的学情",
+      "view": "mastery",
+      "steps": [],
+      "fields": {},
+      "entity": "",
+      "handler": "",
+      "focus": "",
+      "file_input": ""
+    },
+    {
+      "id": "student.page.report",
+      "role": "student",
+      "title": "学情报告",
+      "view": "report",
+      "steps": [],
+      "fields": {},
+      "entity": "",
+      "handler": "",
+      "focus": "",
+      "file_input": ""
+    },
+    {
+      "id": "student.page.alerts",
+      "role": "student",
+      "title": "预警与提醒",
+      "view": "alerts",
+      "steps": [],
+      "fields": {},
+      "entity": "",
+      "handler": "",
+      "focus": "",
+      "file_input": ""
+    },
+    {
+      "id": "student.page.ai",
+      "role": "student",
+      "title": "AI 智能答疑",
+      "view": "ai",
+      "steps": [],
+      "fields": {},
+      "entity": "",
+      "handler": "",
+      "focus": "",
+      "file_input": ""
+    },
+    {
+      "id": "teacher.page.dashboard",
+      "role": "teacher",
+      "title": "教学驾驶舱",
+      "view": "dashboard",
+      "steps": [],
+      "fields": {},
+      "entity": "",
+      "handler": "",
+      "focus": "",
+      "file_input": ""
+    },
+    {
+      "id": "teacher.page.monitor",
+      "role": "teacher",
+      "title": "学情监测看板",
+      "view": "monitor",
+      "steps": [],
+      "fields": {},
+      "entity": "",
+      "handler": "",
+      "focus": "",
+      "file_input": ""
+    },
+    {
+      "id": "teacher.page.analysis",
+      "role": "teacher",
+      "title": "归因与错题分析",
+      "view": "analysis",
+      "steps": [],
+      "fields": {},
+      "entity": "",
+      "handler": "",
+      "focus": "",
+      "file_input": ""
+    },
+    {
+      "id": "teacher.page.question",
+      "role": "teacher",
+      "title": "AI 出题与题库",
+      "view": "question",
+      "steps": [],
+      "fields": {},
+      "entity": "",
+      "handler": "",
+      "focus": "",
+      "file_input": ""
+    },
+    {
+      "id": "teacher.page.report",
+      "role": "teacher",
+      "title": "学情分析报告",
+      "view": "report",
+      "steps": [],
+      "fields": {},
+      "entity": "",
+      "handler": "",
+      "focus": "",
+      "file_input": ""
+    },
+    {
+      "id": "teacher.page.structure",
+      "role": "teacher",
+      "title": "课程目录与资源",
+      "view": "structure",
+      "steps": [],
+      "fields": {},
+      "entity": "",
+      "handler": "",
+      "focus": "",
+      "file_input": ""
+    },
+    {
+      "id": "teacher.page.graph-edit",
+      "role": "teacher",
+      "title": "知识图谱编排",
+      "view": "graph-edit",
+      "steps": [],
+      "fields": {},
+      "entity": "",
+      "handler": "",
+      "focus": "",
+      "file_input": ""
+    },
+    {
+      "id": "teacher.page.chat",
+      "role": "teacher",
+      "title": "智能助手",
+      "view": "chat",
+      "steps": [],
+      "fields": {},
+      "entity": "",
+      "handler": "",
+      "focus": "",
+      "file_input": ""
+    },
+    {
+      "id": "admin.page.users",
+      "role": "admin",
+      "title": "账号管理",
+      "view": "users",
+      "steps": [],
+      "fields": {},
+      "entity": "",
+      "handler": "",
+      "focus": "",
+      "file_input": ""
+    },
+    {
+      "id": "admin.page.assistant",
+      "role": "admin",
+      "title": "智能助手",
+      "view": "assistant",
+      "steps": [],
+      "fields": {},
+      "entity": "",
+      "handler": "",
+      "focus": "",
+      "file_input": ""
+    },
+    {
+      "id": "student.course.join",
+      "role": "student",
+      "title": "加入课程弹窗",
+      "view": "",
+      "steps": [
+        {
+          "selector": "#joinCourseBtn"
+        }
+      ],
+      "fields": {
+        "inviteCode": {
+          "selector": "#jcCode",
+          "type": "string",
+          "maxLength": 32
+        }
+      },
+      "entity": "",
+      "handler": "",
+      "focus": "",
+      "file_input": ""
+    },
+    {
+      "id": "student.messages",
+      "role": "student",
+      "title": "消息与通知私信列表",
+      "view": "",
+      "steps": [
+        {
+          "selector": "#msgBtn"
+        }
+      ],
+      "fields": {},
+      "entity": "",
+      "handler": "",
+      "focus": ".modal",
+      "file_input": ""
+    },
+    {
+      "id": "teacher.course.create",
+      "role": "teacher",
+      "title": "新建课程弹窗",
+      "view": "",
+      "steps": [
+        {
+          "selector": "#newCourseBtn"
+        }
+      ],
+      "fields": {
+        "name": {
+          "selector": "#ncName",
+          "type": "string"
+        },
+        "term": {
+          "selector": "#ncTerm",
+          "type": "string"
+        }
+      },
+      "entity": "",
+      "handler": "",
+      "focus": "",
+      "file_input": ""
+    },
+    {
+      "id": "teacher.course.invite",
+      "role": "teacher",
+      "title": "查看课程邀请码",
+      "view": "",
+      "steps": [
+        {
+          "selector": "#inviteCodeBtn"
+        }
+      ],
+      "fields": {},
+      "entity": "",
+      "handler": "",
+      "focus": "",
+      "file_input": ""
+    },
+    {
+      "id": "student.course.switch",
+      "role": "student",
+      "title": "切换课程",
+      "view": "",
+      "steps": [],
+      "fields": {},
+      "entity": "course",
+      "handler": "course-switch",
+      "focus": "",
+      "file_input": ""
+    },
+    {
+      "id": "teacher.course.switch",
+      "role": "teacher",
+      "title": "切换课程",
+      "view": "",
+      "steps": [],
+      "fields": {},
+      "entity": "course",
+      "handler": "course-switch",
+      "focus": "",
+      "file_input": ""
+    },
+    {
+      "id": "student.practice.quiz",
+      "role": "student",
+      "title": "做题模式",
+      "view": "practice",
+      "steps": [
+        {
+          "selector": "#pTabs [data-t=\"quiz\"]"
+        }
+      ],
+      "fields": {},
+      "entity": "",
+      "handler": "",
+      "focus": "",
+      "file_input": ""
+    },
+    {
+      "id": "student.practice.wrong",
+      "role": "student",
+      "title": "查看错题本列表（不是开始重练）",
+      "view": "practice",
+      "steps": [
+        {
+          "selector": "#pTabs [data-t=\"wrong\"]"
+        }
+      ],
+      "fields": {},
+      "entity": "",
+      "handler": "",
+      "focus": "",
+      "file_input": ""
+    },
+    {
+      "id": "student.practice.mode.order",
+      "role": "student",
+      "title": "顺序练习选章",
+      "view": "practice",
+      "steps": [],
+      "fields": {
+        "mode": {
+          "selector": "",
+          "type": "string",
+          "enum": [
+            "order"
+          ]
+        }
+      },
+      "entity": "",
+      "handler": "practice-mode",
+      "focus": "",
+      "file_input": ""
+    },
+    {
+      "id": "student.practice.mode.weak",
+      "role": "student",
+      "title": "薄弱点强化",
+      "view": "practice",
+      "steps": [],
+      "fields": {
+        "mode": {
+          "selector": "",
+          "type": "string",
+          "enum": [
+            "weak"
+          ]
+        }
+      },
+      "entity": "",
+      "handler": "practice-mode",
+      "focus": "",
+      "file_input": ""
+    },
+    {
+      "id": "student.practice.mode.random",
+      "role": "student",
+      "title": "随机练习",
+      "view": "practice",
+      "steps": [],
+      "fields": {
+        "mode": {
+          "selector": "",
+          "type": "string",
+          "enum": [
+            "random"
+          ]
+        }
+      },
+      "entity": "",
+      "handler": "practice-mode",
+      "focus": "",
+      "file_input": ""
+    },
+    {
+      "id": "student.practice.mode.wrong",
+      "role": "student",
+      "title": "开始错题重练，打开题目供本人作答",
+      "view": "practice",
+      "steps": [],
+      "fields": {
+        "mode": {
+          "selector": "",
+          "type": "string",
+          "enum": [
+            "wrong"
+          ]
+        }
+      },
+      "entity": "",
+      "handler": "practice-mode",
+      "focus": "",
+      "file_input": ""
+    },
+    {
+      "id": "student.practice.resume",
+      "role": "student",
+      "title": "继续未完成练习",
+      "view": "practice",
+      "steps": [],
+      "fields": {
+        "mode": {
+          "selector": "",
+          "type": "string",
+          "enum": [
+            "order",
+            "weak",
+            "random",
+            "wrong"
+          ]
+        }
+      },
+      "entity": "",
+      "handler": "practice-resume",
+      "focus": "",
+      "file_input": ""
+    },
+    {
+      "id": "student.practice.wrong.filter",
+      "role": "student",
+      "title": "错题筛选",
+      "view": "practice",
+      "steps": [
+        {
+          "selector": "#pTabs [data-t=\"wrong\"]"
+        }
+      ],
+      "fields": {
+        "filter": {
+          "selector": "",
+          "type": "string",
+          "enum": [
+            "false",
+            "true",
+            "all"
+          ]
+        }
+      },
+      "entity": "",
+      "handler": "wrong-filter",
+      "focus": "",
+      "file_input": ""
+    },
+    {
+      "id": "student.practice.wrong.detail",
+      "role": "student",
+      "title": "错题详情",
+      "view": "practice",
+      "steps": [
+        {
+          "selector": "#pTabs [data-t=\"wrong\"]"
+        }
+      ],
+      "fields": {},
+      "entity": "question",
+      "handler": "wrong-detail",
+      "focus": "",
+      "file_input": ""
+    },
+    {
+      "id": "student.graph.detail",
+      "role": "student",
+      "title": "知识图谱知识点详情",
+      "view": "graph",
+      "steps": [],
+      "fields": {},
+      "entity": "kp",
+      "handler": "graph-detail",
+      "focus": "",
+      "file_input": ""
+    },
+    {
+      "id": "student.graph.resources",
+      "role": "student",
+      "title": "知识点关联资源",
+      "view": "graph",
+      "steps": [],
+      "fields": {},
+      "entity": "kp",
+      "handler": "graph-resources",
+      "focus": "",
+      "file_input": ""
+    },
+    {
+      "id": "student.resource.search",
+      "role": "student",
+      "title": "搜索学习资源",
+      "view": "resource",
+      "steps": [],
+      "fields": {
+        "keyword": {
+          "selector": "#resSearch",
+          "type": "string"
+        }
+      },
+      "entity": "",
+      "handler": "",
+      "focus": "",
+      "file_input": ""
+    },
+    {
+      "id": "student.resource.detail",
+      "role": "student",
+      "title": "打开学习资源",
+      "view": "resource",
+      "steps": [],
+      "fields": {},
+      "entity": "resource",
+      "handler": "student-resource",
+      "focus": "",
+      "file_input": ""
+    },
+    {
+      "id": "student.mastery.resources",
+      "role": "student",
+      "title": "学情资源进度面板",
+      "view": "mastery",
+      "steps": [],
+      "fields": {},
+      "entity": "",
+      "handler": "",
+      "focus": "#rsBody",
+      "file_input": ""
+    },
+    {
+      "id": "student.report.detail",
+      "role": "student",
+      "title": "查看学情报告归档",
+      "view": "report",
+      "steps": [],
+      "fields": {},
+      "entity": "report",
+      "handler": "student-report",
+      "focus": "",
+      "file_input": ""
+    },
+    {
+      "id": "student.report.generate",
+      "role": "student",
+      "title": "生成个人报告入口",
+      "view": "report",
+      "steps": [],
+      "fields": {},
+      "entity": "",
+      "handler": "",
+      "focus": "#genMyReport",
+      "file_input": ""
+    },
+    {
+      "id": "student.alerts.filter",
+      "role": "student",
+      "title": "预警筛选",
+      "view": "alerts",
+      "steps": [],
+      "fields": {
+        "level": {
+          "selector": "",
+          "type": "string",
+          "enum": [
+            "red",
+            "yellow",
+            "all"
+          ]
+        }
+      },
+      "entity": "",
+      "handler": "student-alert-filter",
+      "focus": "",
+      "file_input": ""
+    },
+    {
+      "id": "teacher.question.bank",
+      "role": "teacher",
+      "title": "题库管理页签",
+      "view": "question",
+      "steps": [
+        {
+          "selector": "#qTabs [data-t=\"bank\"]"
+        }
+      ],
+      "fields": {},
+      "entity": "",
+      "handler": "",
+      "focus": "",
+      "file_input": ""
+    },
+    {
+      "id": "teacher.question.drafts",
+      "role": "teacher",
+      "title": "草稿箱页签",
+      "view": "question",
+      "steps": [
+        {
+          "selector": "#qTabs [data-t=\"draft\"]"
+        }
+      ],
+      "fields": {},
+      "entity": "",
+      "handler": "",
+      "focus": "",
+      "file_input": ""
+    },
+    {
+      "id": "teacher.question.generate",
+      "role": "teacher",
+      "title": "AI 出题配置",
+      "view": "question",
+      "steps": [
+        {
+          "selector": "#qTabs [data-t=\"gen\"]"
+        }
+      ],
+      "fields": {
+        "difficulty": {
+          "selector": "#genDiff",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 5
+        },
+        "count": {
+          "selector": "#genCountRange",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10
+        },
+        "kpIds": {
+          "selector": "",
+          "type": "array"
+        }
+      },
+      "entity": "",
+      "handler": "question-config",
+      "focus": "",
+      "file_input": ""
+    },
+    {
+      "id": "teacher.question.search",
+      "role": "teacher",
+      "title": "搜索题库",
+      "view": "question",
+      "steps": [
+        {
+          "selector": "#qTabs [data-t=\"bank\"]"
+        }
+      ],
+      "fields": {
+        "keyword": {
+          "selector": "#bankSearch",
+          "type": "string"
+        }
+      },
+      "entity": "",
+      "handler": "",
+      "focus": "",
+      "file_input": ""
+    },
+    {
+      "id": "teacher.question.new",
+      "role": "teacher",
+      "title": "新建题目弹窗",
+      "view": "question",
+      "steps": [
+        {
+          "selector": "#qTabs [data-t=\"bank\"]"
+        },
+        {
+          "selector": "#bankNew"
+        }
+      ],
+      "fields": {
+        "stem": {
+          "selector": "#nqStem",
+          "type": "string",
+          "maxLength": 20000
+        },
+        "analysis": {
+          "selector": "#nqAnalysis",
+          "type": "string",
+          "maxLength": 20000
+        },
+        "difficulty": {
+          "selector": "#nqDiff",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 5
+        },
+        "score": {
+          "selector": "#nqScore",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100
+        },
+        "chapterId": {
+          "selector": "#nqChapter",
+          "type": "string"
+        },
+        "kpIds": {
+          "selector": "",
+          "type": "array"
+        },
+        "options": {
+          "selector": "",
+          "type": "array"
+        },
+        "answer": {
+          "selector": "",
+          "type": "string"
+        }
+      },
+      "entity": "",
+      "handler": "question-new",
+      "focus": "",
+      "file_input": ""
+    },
+    {
+      "id": "teacher.question.import",
+      "role": "teacher",
+      "title": "导入题目预览与核对",
+      "view": "question",
+      "steps": [
+        {
+          "selector": "#qTabs [data-t=\"bank\"]"
+        }
+      ],
+      "fields": {
+        "text": {
+          "selector": "",
+          "type": "string",
+          "maxLength": 80000
+        },
+        "questions": {
+          "selector": "",
+          "type": "array"
+        },
+        "chapterId": {
+          "selector": "",
+          "type": "string"
+        },
+        "kpIds": {
+          "selector": "",
+          "type": "array"
+        }
+      },
+      "entity": "",
+      "handler": "question-import",
+      "focus": "",
+      "file_input": ""
+    },
+    {
+      "id": "teacher.question.edit",
+      "role": "teacher",
+      "title": "编辑指定题目",
+      "view": "question",
+      "steps": [
+        {
+          "selector": "#qTabs [data-t=\"bank\"]"
+        }
+      ],
+      "fields": {
+        "stem": {
+          "selector": "#eqStem",
+          "type": "string",
+          "maxLength": 20000
+        },
+        "analysis": {
+          "selector": "#eqAnalysis",
+          "type": "string",
+          "maxLength": 20000
+        },
+        "difficulty": {
+          "selector": "#eqDiff",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 5
+        },
+        "score": {
+          "selector": "#eqScore",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100
+        },
+        "chapterId": {
+          "selector": "#eqChapter",
+          "type": "string"
+        },
+        "options": {
+          "selector": "",
+          "type": "array"
+        },
+        "kpIds": {
+          "selector": "",
+          "type": "array"
+        },
+        "type": {
+          "selector": "#eqType",
+          "type": "string",
+          "enum": [
+            "single",
+            "multiple",
+            "blank",
+            "judge",
+            "essay"
+          ]
+        },
+        "isKey": {
+          "selector": "#eqKey",
+          "type": "boolean"
+        }
+      },
+      "entity": "question",
+      "handler": "question-edit",
+      "focus": "",
+      "file_input": ""
+    },
+    {
+      "id": "teacher.question.draft.edit",
+      "role": "teacher",
+      "title": "编辑出题草稿",
+      "view": "question",
+      "steps": [
+        {
+          "selector": "#qTabs [data-t=\"draft\"]"
+        }
+      ],
+      "fields": {
+        "stem": {
+          "selector": "#dqStem",
+          "type": "string"
+        },
+        "answer": {
+          "selector": "#dqAns",
+          "type": "string"
+        },
+        "analysis": {
+          "selector": "#dqAnalysis",
+          "type": "string"
+        }
+      },
+      "entity": "draft",
+      "handler": "draft-edit",
+      "focus": "",
+      "file_input": ""
+    },
+    {
+      "id": "teacher.structure.chapter.new",
+      "role": "teacher",
+      "title": "新建章节",
+      "view": "structure",
+      "steps": [
+        {
+          "selector": "#stNewCh"
+        }
+      ],
+      "fields": {
+        "name": {
+          "selector": "#chName",
+          "type": "string"
+        },
+        "hours": {
+          "selector": "#chHours",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000
+        }
+      },
+      "entity": "",
+      "handler": "",
+      "focus": "",
+      "file_input": ""
+    },
+    {
+      "id": "teacher.structure.chapter.edit",
+      "role": "teacher",
+      "title": "章节详情与编辑",
+      "view": "structure",
+      "steps": [],
+      "fields": {
+        "name": {
+          "selector": "#cdName",
+          "type": "string"
+        },
+        "hours": {
+          "selector": "#cdHours",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000
+        }
+      },
+      "entity": "chapter",
+      "handler": "chapter-edit",
+      "focus": "",
+      "file_input": ""
+    },
+    {
+      "id": "teacher.structure.kp.new",
+      "role": "teacher",
+      "title": "新增知识点",
+      "view": "structure",
+      "steps": [],
+      "fields": {
+        "name": {
+          "selector": "#kpNewName",
+          "type": "string"
+        },
+        "isKey": {
+          "selector": "#kpNewKey",
+          "type": "boolean"
+        }
+      },
+      "entity": "chapter",
+      "handler": "kp-new",
+      "focus": "",
+      "file_input": ""
+    },
+    {
+      "id": "teacher.structure.kp.edit",
+      "role": "teacher",
+      "title": "知识点详情与编辑",
+      "view": "structure",
+      "steps": [],
+      "fields": {
+        "name": {
+          "selector": "#kdName",
+          "type": "string"
+        },
+        "chapterId": {
+          "selector": "#kdChapter",
+          "type": "string"
+        },
+        "hours": {
+          "selector": "#kdHours",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000
+        },
+        "isKey": {
+          "selector": "#kdKey",
+          "type": "boolean"
+        },
+        "summary": {
+          "selector": "#kdSummary",
+          "type": "string",
+          "maxLength": 20000
+        }
+      },
+      "entity": "kp",
+      "handler": "kp-edit",
+      "focus": "",
+      "file_input": ""
+    },
+    {
+      "id": "teacher.structure.upload",
+      "role": "teacher",
+      "title": "上传资源到目录",
+      "view": "structure",
+      "steps": [
+        {
+          "selector": "#stUpload"
+        }
+      ],
+      "fields": {
+        "title": {
+          "selector": "#trTitle",
+          "type": "string"
+        },
+        "chapterId": {
+          "selector": "#trChapter",
+          "type": "string"
+        },
+        "kpIds": {
+          "selector": "",
+          "type": "array"
+        }
+      },
+      "entity": "",
+      "handler": "resource-upload",
+      "focus": "",
+      "file_input": "#trFile"
+    },
+    {
+      "id": "teacher.structure.resource.edit",
+      "role": "teacher",
+      "title": "编辑资源标题和归属",
+      "view": "structure",
+      "steps": [],
+      "fields": {
+        "title": {
+          "selector": "#erTitle",
+          "type": "string"
+        },
+        "chapterId": {
+          "selector": "#erChapter",
+          "type": "string"
+        },
+        "kpIds": {
+          "selector": "",
+          "type": "array"
+        }
+      },
+      "entity": "resource",
+      "handler": "resource-edit",
+      "focus": "",
+      "file_input": ""
+    },
+    {
+      "id": "teacher.monitor.student",
+      "role": "teacher",
+      "title": "学生学情详情",
+      "view": "monitor",
+      "steps": [],
+      "fields": {},
+      "entity": "student",
+      "handler": "student-profile",
+      "focus": "",
+      "file_input": ""
+    },
+    {
+      "id": "teacher.monitor.message",
+      "role": "teacher",
+      "title": "向指定学生发送私信",
+      "view": "monitor",
+      "steps": [],
+      "fields": {
+        "content": {
+          "selector": "#msgBody",
+          "type": "string",
+          "maxLength": 10000
+        }
+      },
+      "entity": "student",
+      "handler": "student-message",
+      "focus": "",
+      "file_input": ""
+    },
+    {
+      "id": "teacher.monitor.search",
+      "role": "teacher",
+      "title": "搜索班级学生",
+      "view": "monitor",
+      "steps": [],
+      "fields": {
+        "keyword": {
+          "selector": "#stuSearch",
+          "type": "string"
+        }
+      },
+      "entity": "",
+      "handler": "",
+      "focus": "",
+      "file_input": ""
+    },
+    {
+      "id": "teacher.monitor.heatmap",
+      "role": "teacher",
+      "title": "切换班级热力图",
+      "view": "monitor",
+      "steps": [],
+      "fields": {
+        "type": {
+          "selector": "#heatType",
+          "type": "string",
+          "enum": [
+            "mastery",
+            "completion"
+          ]
+        }
+      },
+      "entity": "",
+      "handler": "",
+      "focus": "",
+      "file_input": ""
+    },
+    {
+      "id": "teacher.monitor.alert.review",
+      "role": "teacher",
+      "title": "预警复核弹窗",
+      "view": "monitor",
+      "steps": [],
+      "fields": {
+        "note": {
+          "selector": "#rvNote",
+          "type": "string"
+        }
+      },
+      "entity": "alert",
+      "handler": "alert-review",
+      "focus": "",
+      "file_input": ""
+    },
+    {
+      "id": "teacher.analysis.student",
+      "role": "teacher",
+      "title": "归因分析学生详情",
+      "view": "analysis",
+      "steps": [],
+      "fields": {},
+      "entity": "student",
+      "handler": "analysis-student",
+      "focus": "",
+      "file_input": ""
+    },
+    {
+      "id": "teacher.report.new",
+      "role": "teacher",
+      "title": "生成学情报告配置",
+      "view": "report",
+      "steps": [
+        {
+          "selector": "#genReport"
+        }
+      ],
+      "fields": {
+        "startDate": {
+          "selector": "#rgStart",
+          "type": "string"
+        },
+        "endDate": {
+          "selector": "#rgEnd",
+          "type": "string"
+        },
+        "chapterIds": {
+          "selector": "",
+          "type": "array"
+        },
+        "sections": {
+          "selector": "",
+          "type": "array"
+        }
+      },
+      "entity": "",
+      "handler": "report-config",
+      "focus": "",
+      "file_input": ""
+    },
+    {
+      "id": "teacher.report.detail",
+      "role": "teacher",
+      "title": "查看历史学情报告",
+      "view": "report",
+      "steps": [],
+      "fields": {},
+      "entity": "report",
+      "handler": "teacher-report",
+      "focus": "",
+      "file_input": ""
+    },
+    {
+      "id": "teacher.graph.node",
+      "role": "teacher",
+      "title": "图谱节点详情",
+      "view": "graph-edit",
+      "steps": [],
+      "fields": {
+        "name": {
+          "selector": "#geDName_i",
+          "type": "string"
+        },
+        "hours": {
+          "selector": "#geDHours_i",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000
+        },
+        "isKey": {
+          "selector": "#geDKey_i",
+          "type": "boolean"
+        },
+        "summary": {
+          "selector": "#geDSum_i",
+          "type": "string",
+          "maxLength": 20000
+        }
+      },
+      "entity": "kp",
+      "handler": "graph-node",
+      "focus": "",
+      "file_input": ""
+    },
+    {
+      "id": "teacher.graph.bank",
+      "role": "teacher",
+      "title": "知识图谱知识点目录",
+      "view": "graph-edit",
+      "steps": [
+        {
+          "selector": ".ge-tabs [data-tab=\"bank\"]"
+        }
+      ],
+      "fields": {},
+      "entity": "",
+      "handler": "",
+      "focus": "#geLeft",
+      "file_input": ""
+    },
+    {
+      "id": "teacher.graph.fit",
+      "role": "teacher",
+      "title": "图谱适配视图",
+      "view": "graph-edit",
+      "steps": [
+        {
+          "selector": "#geFit"
+        }
+      ],
+      "fields": {},
+      "entity": "",
+      "handler": "",
+      "focus": "",
+      "file_input": ""
+    },
+    {
+      "id": "admin.users.search",
+      "role": "admin",
+      "title": "搜索账号",
+      "view": "users",
+      "steps": [],
+      "fields": {
+        "keyword": {
+          "selector": "#fKey",
+          "type": "string"
+        },
+        "role": {
+          "selector": "#fRole",
+          "type": "string",
+          "enum": [
+            "",
+            "student",
+            "teacher"
+          ]
+        }
+      },
+      "entity": "",
+      "handler": "",
+      "focus": "",
+      "file_input": ""
+    },
+    {
+      "id": "admin.users.new",
+      "role": "admin",
+      "title": "新建账号弹窗",
+      "view": "users",
+      "steps": [
+        {
+          "selector": "#btnCreate"
+        }
+      ],
+      "fields": {
+        "role": {
+          "selector": "#cuRole",
+          "type": "string",
+          "enum": [
+            "student",
+            "teacher"
+          ]
+        },
+        "username": {
+          "selector": "#cuUser",
+          "type": "string"
+        },
+        "name": {
+          "selector": "#cuName",
+          "type": "string"
+        },
+        "password": {
+          "selector": "#cuPwd",
+          "type": "string",
+          "minLength": 6
+        },
+        "className": {
+          "selector": "#cuClass",
+          "type": "string"
+        },
+        "dept": {
+          "selector": "#cuDept",
+          "type": "string"
+        }
+      },
+      "entity": "",
+      "handler": "",
+      "focus": "",
+      "file_input": ""
+    },
+    {
+      "id": "admin.users.edit",
+      "role": "admin",
+      "title": "编辑账号或重置密码",
+      "view": "users",
+      "steps": [],
+      "fields": {
+        "username": {
+          "selector": "#euUser",
+          "type": "string"
+        },
+        "name": {
+          "selector": "#euName",
+          "type": "string"
+        },
+        "password": {
+          "selector": "#euPwd",
+          "type": "string",
+          "minLength": 6
+        },
+        "className": {
+          "selector": "#euClass",
+          "type": "string"
+        },
+        "studentNo": {
+          "selector": "#euNo",
+          "type": "string"
+        },
+        "dept": {
+          "selector": "#euDept",
+          "type": "string"
+        },
+        "title": {
+          "selector": "#euTitle",
+          "type": "string"
+        }
+      },
+      "entity": "user",
+      "handler": "user-edit",
+      "focus": "",
+      "file_input": ""
+    },
+    {
+      "id": "admin.users.import",
+      "role": "admin",
+      "title": "批量导入账号预览",
+      "view": "users",
+      "steps": [
+        {
+          "selector": "#btnImport"
+        }
+      ],
+      "fields": {
+        "role": {
+          "selector": "",
+          "type": "string",
+          "enum": [
+            "student",
+            "teacher"
+          ]
+        },
+        "defaultPassword": {
+          "selector": "",
+          "type": "string",
+          "minLength": 6
+        },
+        "text": {
+          "selector": "",
+          "type": "string",
+          "maxLength": 80000
+        }
+      },
+      "entity": "",
+      "handler": "account-import",
+      "focus": "",
+      "file_input": ""
+    },
+    {
+      "id": "student.chat.compose",
+      "role": "student",
+      "title": "准备智能体输入框",
+      "view": "ai",
+      "steps": [],
+      "fields": {
+        "text": {
+          "selector": "#chatInput",
+          "type": "string",
+          "maxLength": 80000
+        }
+      },
+      "entity": "",
+      "handler": "",
+      "focus": "",
+      "file_input": ""
+    },
+    {
+      "id": "student.chat.history",
+      "role": "student",
+      "title": "查看智能体历史会话",
+      "view": "ai",
+      "steps": [],
+      "fields": {},
+      "entity": "",
+      "handler": "",
+      "focus": "#sessBox",
+      "file_input": ""
+    },
+    {
+      "id": "teacher.chat.compose",
+      "role": "teacher",
+      "title": "准备智能体输入框",
+      "view": "chat",
+      "steps": [],
+      "fields": {
+        "text": {
+          "selector": "#chatInput",
+          "type": "string",
+          "maxLength": 80000
+        }
+      },
+      "entity": "",
+      "handler": "",
+      "focus": "",
+      "file_input": ""
+    },
+    {
+      "id": "teacher.chat.history",
+      "role": "teacher",
+      "title": "查看智能体历史会话",
+      "view": "chat",
+      "steps": [],
+      "fields": {},
+      "entity": "",
+      "handler": "",
+      "focus": "#sessBox",
+      "file_input": ""
+    },
+    {
+      "id": "admin.chat.compose",
+      "role": "admin",
+      "title": "准备智能体输入框",
+      "view": "assistant",
+      "steps": [],
+      "fields": {
+        "text": {
+          "selector": "#chatInput",
+          "type": "string",
+          "maxLength": 80000
+        }
+      },
+      "entity": "",
+      "handler": "",
+      "focus": "",
+      "file_input": ""
+    },
+    {
+      "id": "admin.chat.history",
+      "role": "admin",
+      "title": "查看智能体历史会话",
+      "view": "assistant",
+      "steps": [],
+      "fields": {},
+      "entity": "",
+      "handler": "",
+      "focus": "#sessBox",
+      "file_input": ""
+    },
+    {
+      "id": "student.graph.reset",
+      "role": "student",
+      "title": "重置图谱视图",
+      "view": "graph",
+      "steps": [
+        {
+          "selector": "#graphReset"
+        }
+      ],
+      "fields": {},
+      "entity": "",
+      "handler": "",
+      "focus": "",
+      "file_input": ""
+    },
+    {
+      "id": "student.resource.path",
+      "role": "student",
+      "title": "推荐学习路径面板",
+      "view": "resource",
+      "steps": [],
+      "fields": {},
+      "entity": "",
+      "handler": "",
+      "focus": "#pathList",
+      "file_input": ""
+    },
+    {
+      "id": "student.mastery.matrix",
+      "role": "student",
+      "title": "知识点学习完成矩阵",
+      "view": "mastery",
+      "steps": [],
+      "fields": {},
+      "entity": "",
+      "handler": "",
+      "focus": "#matrixBox",
+      "file_input": ""
+    },
+    {
+      "id": "student.mastery.growth",
+      "role": "student",
+      "title": "成长轨迹",
+      "view": "mastery",
+      "steps": [],
+      "fields": {},
+      "entity": "",
+      "handler": "",
+      "focus": "#growthChart",
+      "file_input": ""
+    },
+    {
+      "id": "student.mastery.compare",
+      "role": "student",
+      "title": "班级对比定位",
+      "view": "mastery",
+      "steps": [],
+      "fields": {},
+      "entity": "",
+      "handler": "",
+      "focus": "#compareChart",
+      "file_input": ""
+    },
+    {
+      "id": "student.alerts.messages",
+      "role": "student",
+      "title": "提醒与通知面板",
+      "view": "alerts",
+      "steps": [],
+      "fields": {},
+      "entity": "",
+      "handler": "",
+      "focus": "#alMsgList",
+      "file_input": ""
+    },
+    {
+      "id": "student.report.export",
+      "role": "student",
+      "title": "个人报告导出入口",
+      "view": "report",
+      "steps": [],
+      "fields": {},
+      "entity": "report",
+      "handler": "student-report",
+      "focus": "#myExPdf",
+      "file_input": ""
+    },
+    {
+      "id": "teacher.report.export",
+      "role": "teacher",
+      "title": "教师报告导出入口",
+      "view": "report",
+      "steps": [],
+      "fields": {},
+      "entity": "report",
+      "handler": "teacher-report",
+      "focus": "#exPdf",
+      "file_input": ""
+    },
+    {
+      "id": "teacher.monitor.student.filter",
+      "role": "teacher",
+      "title": "按预警等级筛选学生",
+      "view": "monitor",
+      "steps": [],
+      "fields": {
+        "level": {
+          "selector": "",
+          "type": "string",
+          "enum": [
+            "all",
+            "red",
+            "yellow",
+            "green"
+          ]
+        }
+      },
+      "entity": "",
+      "handler": "monitor-student-filter",
+      "focus": "",
+      "file_input": ""
+    },
+    {
+      "id": "teacher.monitor.alert.filter",
+      "role": "teacher",
+      "title": "按预警等级筛选异常预警",
+      "view": "monitor",
+      "steps": [],
+      "fields": {
+        "level": {
+          "selector": "",
+          "type": "string",
+          "enum": [
+            "all",
+            "red",
+            "yellow"
+          ]
+        }
+      },
+      "entity": "",
+      "handler": "monitor-alert-filter",
+      "focus": "",
+      "file_input": ""
+    },
+    {
+      "id": "teacher.question.sort",
+      "role": "teacher",
+      "title": "题库排序与方向",
+      "view": "question",
+      "steps": [
+        {
+          "selector": "#qTabs [data-t=\"bank\"]"
+        }
+      ],
+      "fields": {
+        "sort": {
+          "selector": "",
+          "type": "string",
+          "enum": [
+            "default",
+            "kp",
+            "correctRate",
+            "difficulty"
+          ]
+        },
+        "descending": {
+          "selector": "",
+          "type": "boolean"
+        }
+      },
+      "entity": "",
+      "handler": "bank-sort",
+      "focus": "",
+      "file_input": ""
+    },
+    {
+      "id": "teacher.graph.pending",
+      "role": "teacher",
+      "title": "图谱待更新目录",
+      "view": "graph-edit",
+      "steps": [
+        {
+          "selector": ".ge-tabs [data-tab=\"pending\"]"
+        }
+      ],
+      "fields": {},
+      "entity": "",
+      "handler": "",
+      "focus": "#geLeft",
+      "file_input": ""
+    },
+    {
+      "id": "admin.users.delete",
+      "role": "admin",
+      "title": "打开账号删除确认弹窗",
+      "view": "users",
+      "steps": [],
+      "fields": {},
+      "entity": "user",
+      "handler": "user-delete",
+      "focus": "#delConfirmUser",
+      "file_input": ""
+    },
+    {
+      "id": "student.report.create",
+      "role": "student",
+      "title": "直接生成个人学情报告并打开详情",
+      "view": "report",
+      "steps": [],
+      "fields": {},
+      "entity": "",
+      "handler": "",
+      "focus": "",
+      "file_input": "",
+      "execute": "student-report-create"
+    },
+    {
+      "id": "teacher.report.create",
+      "role": "teacher",
+      "title": "直接生成当前课程学情报告并打开详情",
+      "view": "report",
+      "steps": [
+        {
+          "selector": "#genReport"
+        }
+      ],
+      "fields": {
+        "startDate": {
+          "selector": "#rgStart",
+          "type": "string"
+        },
+        "endDate": {
+          "selector": "#rgEnd",
+          "type": "string"
+        },
+        "chapterIds": {
+          "selector": "",
+          "type": "array"
+        },
+        "sections": {
+          "selector": "",
+          "type": "array"
+        }
+      },
+      "entity": "",
+      "handler": "report-config",
+      "focus": "",
+      "file_input": "",
+      "execute": "teacher-report-create"
+    },
+    {
+      "id": "student.practice.chapter",
+      "role": "student",
+      "title": "打开指定章节的顺序练习题目",
+      "view": "practice",
+      "steps": [],
+      "fields": {},
+      "entity": "chapter",
+      "handler": "practice-chapter",
+      "focus": "",
+      "file_input": ""
+    },
+    {
+      "id": "student.practice.kp",
+      "role": "student",
+      "title": "打开指定知识点的顺序练习题目",
+      "view": "practice",
+      "steps": [],
+      "fields": {},
+      "entity": "kp",
+      "handler": "practice-kp",
+      "focus": "",
+      "file_input": ""
+    }
+  ]
+}

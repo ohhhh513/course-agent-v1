@@ -3,10 +3,25 @@
   /* ================================================================
      视图 2 · 学情监测看板（热力图 / 个体详情 / 预警复核）
      ================================================================ */
+  /** 时长统一按 分'秒'' 展示（如 3'22''；实现集中在 U.dur） */
+  function formatAnswerDuration(value) {
+    return U.dur(value);
+  }
+
   const Monitor = {
     stuLevel: 'all', stuKeyword: '', level: 'all', heatType: 'completion',
     render() {
       const el = U.$('#view-monitor');
+      if (!API.config.activeCourseId) {
+        el.innerHTML = `
+        <div class="card"><div class="card__body">
+          <div class="empty" style="padding:48px 20px;text-align:center">
+            <b>尚未创建或选择课程</b>
+            <p class="fz-12 t-dim" style="margin-top:8px">学情监测按当前课程成员实时计算。请先创建课程并让学生加入。</p>
+          </div>
+        </div></div>`;
+        return;
+      }
       el.innerHTML = `
       <div class="card" style="margin-bottom:16px">
         <div class="card__head">
@@ -32,16 +47,27 @@
             <div class="search" style="width:160px">${icon('search2')}<input class="input" id="stuSearch" placeholder="姓名 / 学号"></div>
             <div class="seg" id="stuSeg"><button data-l="all" class="is-active">全部</button><button data-l="red">红</button><button data-l="yellow">黄</button><button data-l="green">绿</button></div>
           </div>
-          <div class="card__body card__body--flush"><div class="list" id="stuList" style="max-height:580px;overflow:auto">${U.skeleton(300)}</div></div>
+          <div class="card__body card__body--flush"><div class="list" id="stuList" style="max-height:min(52vh,560px);overflow:auto">${U.skeleton(300)}</div></div>
         </div>
 
-        <div class="card">
+        <div class="card card--alerts">
           <div class="card__head"><h3>${icon('bell')} 异常预警列表</h3><span class="spacer"></span>
+            <span class="badge badge--outline" id="alCount"></span>
             <div class="seg" id="alSeg"><button data-l="all" class="is-active">全部</button><button data-l="red">红</button><button data-l="yellow">黄</button></div>
           </div>
-          <div class="card__body stack" id="alList" style="max-height:calc(100vh - 220px);overflow:auto;min-height:240px">${U.skeleton(300)}</div>
+          <div class="card__body stack" id="alList" style="min-height:0;overflow:auto">${U.skeleton(300)}</div>
         </div>
       </div>`;
+
+      /* 重绘时把筛选状态回写到 DOM：
+         模板里的 is-active 与搜索框是写死的「全部 / 空」，而 stuLevel / level /
+         stuKeyword 是跨重绘保留的。视图一旦因课程切换或首屏课程上下文就绪而二次渲染
+         （见 teacher/app.js 的 Router.mount 只跑一次 + __courseReady 补渲染），
+         就会出现「高亮回到全部、列表却仍是上次的筛选结果」的错位，
+         表现就是切换分类后选项框自己跳回去。这里统一按状态回写。 */
+      U.$$('#stuSeg button', el).forEach(b => b.classList.toggle('is-active', b.dataset.l === this.stuLevel));
+      U.$$('#alSeg button', el).forEach(b => b.classList.toggle('is-active', b.dataset.l === this.level));
+      U.$('#stuSearch').value = this.stuKeyword || '';
 
       U.$$('#stuSeg button', el).forEach(b => b.addEventListener('click', () => {
         U.$$('#stuSeg button', el).forEach(x => x.classList.remove('is-active')); b.classList.add('is-active');
@@ -76,7 +102,7 @@
     },
 
     loadHeat() {
-      API.teacher.heatmap({ classId: state.classId, type: this.heatType }).then(h => {
+      API.teacher.heatmap({ type: this.heatType }).then(h => {
         Charts.heatmap('#heatChart', h, (val, data) => {
           if (val[2] == null) return; // 灰色格子不可点
           const stu = data.studentAxis[val[1]];
@@ -90,13 +116,13 @@
     },
 
     loadStudents() {
-      API.teacher.students({ classId: state.classId, alertLevel: this.stuLevel, keyword: this.stuKeyword }).then(r => {
+      API.teacher.students({ alertLevel: this.stuLevel, keyword: this.stuKeyword }).then(r => {
         const box = U.$('#stuList'); if (!box) return;
         box.innerHTML = r.list.map(s => `
           <div class="list__item list__item--clickable" data-uid="${s.userId}">
             <div class="stu-row" style="flex:1;min-width:0">
-              <span class="avatar" style="width:34px;height:34px;flex:0 0 34px;font-size:13px">${s.avatar}</span>
-              <div class="stu-row__info"><b>${U.esc(s.name)}</b><span>${s.no} · ${s.lastActive}</span></div>
+              <span class="avatar" style="width:34px;height:34px;flex:0 0 34px;font-size:14px">${s.avatar}</span>
+              <div class="stu-row__info"><b>${U.esc(s.name)}</b></div>
             </div>
             <div style="width:140px">
               <div class="row fz-11 t-dim" style="margin-bottom:2px"><span>完成率</span><span class="spacer"></span><span class="mono">${Math.round(s.completion || 0)}%</span></div>
@@ -117,14 +143,14 @@
           <div class="node-detail__hero">
             <div class="row" style="gap:9px;margin-bottom:8px">
               <span class="badge badge--brand">${p.className}</span>
-              <span class="badge badge--outline mono">${p.no}</span>
-              <span class="badge badge--outline">班级第 ${p.metrics.rank}/${p.metrics.totalStudents} 名</span>
+             
+              <span class="badge badge--outline">课程第 ${p.metrics.rank}/${p.metrics.totalStudents} 名</span>
             </div>
             <div class="grid g-4" style="gap:10px;margin:4px 0 0">
-              <div class="card card--flat card--pad" style="text-align:center"><b class="mono" style="font-size:20px;display:block">${p.metrics.completion}%</b><span class="fz-11 t-dim">完成率</span></div>
-              <div class="card card--flat card--pad" style="text-align:center"><b class="mono" style="font-size:20px;display:block;color:var(--brand-400)">${p.metrics.mastery}%</b><span class="fz-11 t-dim">学习完成率</span></div>
-              <div class="card card--flat card--pad" style="text-align:center"><b class="mono" style="font-size:20px;display:block;color:var(--accent-500)">${p.metrics.goal}%</b><span class="fz-11 t-dim">目标达成</span></div>
-              <div class="card card--flat card--pad" style="text-align:center"><b class="mono" style="font-size:20px;display:block;color:var(--ok)">${p.metrics.accuracy}%</b><span class="fz-11 t-dim">练习正确率</span></div>
+              <div class="card card--flat card--pad" style="text-align:center"><b class="mono" style="font-size:21px;display:block">${p.metrics.completion}%</b><span class="fz-11 t-dim">完成率</span></div>
+              <div class="card card--flat card--pad" style="text-align:center"><b class="mono" style="font-size:21px;display:block;color:var(--brand-400)">${p.metrics.mastery}%</b><span class="fz-11 t-dim">学习完成率</span></div>
+              <div class="card card--flat card--pad" style="text-align:center"><b class="mono" style="font-size:21px;display:block;color:var(--accent-500)">${p.metrics.goal}%</b><span class="fz-11 t-dim">目标达成</span></div>
+              <div class="card card--flat card--pad" style="text-align:center"><b class="mono" style="font-size:21px;display:block;color:var(--ok)">${p.metrics.accuracy}%</b><span class="fz-11 t-dim">练习正确率</span></div>
             </div>
           </div>
           <div style="padding:18px">
@@ -137,19 +163,36 @@
             <p class="fz-12 t-dim" style="margin:14px 0 8px">高频错题</p>
             <div class="stack" style="gap:8px">${(p.wrongDetail || []).map(w => `
               <div class="file-item">${icon('alert')}<b>${U.esc(w.kp)}</b>
-                <span class="fz-11 t-dim nowrap">${w.qId} · 错 ${w.count} 次</span>
-                <span class="badge badge--warn">${w.errorType}</span></div>`).join('') || '<span class="fz-12 t-dim">暂无高频错题</span>'}</div>
+                <span class="fz-11 t-dim nowrap">错 ${w.count} 次</span></div>`).join('') || '<span class="fz-12 t-dim">暂无高频错题</span>'}</div>
           </div>`,
           footer: `<button class="btn" data-close>关闭</button>
             <button class="btn btn--outline" id="prMsg">${icon('message')} 发送私信</button>
             <button class="btn btn--primary" id="prReport">${icon('file')} 学情报告</button>`,
           onMount(ov, close) {
             Charts.bar('#stuTimeChart', p.studyTimeDist.data.map((v, i) => ({ name: p.studyTimeDist.xAxis[i], value: v })), { color: Charts.tokens().brand });
+            const studyMinutes = (p.activityTrend.minutes || []).map(v => Number(v) || 0);
+            const minutePeak = Math.max(...studyMinutes, 0);
+            let minuteInterval = 20;
+            while (minutePeak > minuteInterval * 4) minuteInterval *= 2;
+            const minuteMax = minuteInterval * 4;
+
+            const aiQuestions = (p.activityTrend.questions || []).map(v => Number(v) || 0);
+            const aiPeak = Math.max(...aiQuestions, 0);
+            let aiInterval = 1;
+            while (aiPeak > aiInterval * 4) aiInterval *= 2;
+            const aiMax = aiInterval * 4;
             Charts.line('#stuTrendChart', {
               xAxis: p.activityTrend.xAxis,
               series: [
-                { name: '学习时长', data: p.activityTrend.minutes, color: Charts.tokens().brand },
-                { name: 'AI 提问', data: p.activityTrend.questions, color: Charts.tokens().warn }
+                // 学习时长：接口单位为分钟，提示框按 分'秒'' 展示（与表格口径一致）
+                { name: '学习时长', data: studyMinutes, color: Charts.tokens().brand, yAxisIndex: 0,
+                  valueFormatter: (v) => U.durMin(v) },
+                { name: 'AI 提问', data: aiQuestions, color: Charts.tokens().warn, yAxisIndex: 1 }
+              ]
+            }, {
+              yAxes: [
+                { name: '分钟', min: 0, max: minuteMax, interval: minuteInterval, color: Charts.tokens().brand },
+                { name: '次', min: 0, max: aiMax, interval: aiInterval, color: Charts.tokens().warn }
               ]
             });
             U.$('#stuKpTbl').innerHTML = `
@@ -159,7 +202,7 @@
                   <td class="t-right num" style="color:${U.levelColor[k.level]}">${k.mastery}%</td>
                   <td class="t-right num t-dim">${k.questions}</td>
                   <td class="t-right num t-danger">${k.wrong}</td>
-                  <td class="t-right num t-dim">${k.minutes}'</td></tr>`).join('')}</tbody>`;
+                  <td class="t-right num t-dim">${formatAnswerDuration(k.durationSeconds != null ? k.durationSeconds : (Number(k.minutes) || 0) * 60)}</td></tr>`).join('')}</tbody>`;
             U.$('#prMsg', ov).addEventListener('click', () => {
               Modal.open({
                 title: '向学生发送私信',
@@ -184,18 +227,41 @@
       });
     },
 
+    /**
+     * 异常预警卡内滚动：可见高度固定为 4 张卡片，其余靠容器自身滚动条查看。
+     * 高度不写死像素 —— 按首张卡片的真实高度 + 列表 gap + 容器上下内边距算出来，
+     * 这样卡片内容（标题行数、描述换行）变化时仍然正好是 4 条。
+     * 不足 4 条时把高度交还给内容，避免卡片底部留一大片空白。
+     */
+    _clampAlertList(box) {
+      if (!box) return;
+      const cards = U.$$('.alert-card', box);
+      if (cards.length <= 4) {
+        box.style.height = 'auto';
+        box.style.maxHeight = '';
+        box.classList.remove('alert-list--scroll');
+        return;
+      }
+      const cs = getComputedStyle(box);
+      const cardH = cards[0].getBoundingClientRect().height;
+      const gap = parseFloat(cs.rowGap) || 16;
+      const pad = (parseFloat(cs.paddingTop) || 0) + (parseFloat(cs.paddingBottom) || 0);
+      box.style.height = 'auto';
+      box.style.maxHeight = Math.ceil(cardH * 4 + gap * 3 + pad + 2) + 'px';
+      box.classList.add('alert-list--scroll');
+    },
+
     loadAlerts() {
       const self = this;
-      API.teacher.alerts({ classId: state.classId, level: this.level }).then(r => {
+      API.teacher.alerts({ level: this.level }).then(r => {
         const box = U.$('#alList'); if (!box) return;
         box.innerHTML = r.list.map(a => `
-          <div class="alert-card ${U.alertCard[a.level]}">
+          <div class="alert-card ${a.status === 'ignored' ? 'alert-card--ignored' : U.alertCard[a.level]}">
             <div class="alert-card__head">
               <div class="alert-card__ico">${icon(a.level === 'red' ? 'alert' : 'info')}</div>
               <div class="alert-card__body">
                 <div class="row" style="margin-bottom:3px">
-                  <span class="badge ${U.alertBadge[a.level]}">${U.alertName[a.level]}</span>
-                  <span class="badge badge--outline mono">${a.alertId}</span>
+                  <span class="badge ${a.status === 'ignored' ? 'badge--ignored' : U.alertBadge[a.level]}">${a.status === 'ignored' ? '已忽视' : U.alertName[a.level]}</span>
                   <span class="spacer"></span><span class="fz-11 t-dim">${a.createdAt}</span>
                 </div>
                 <h4>${U.esc(a.student)} · ${U.esc(a.typeLabel || a.type)}</h4>
@@ -203,28 +269,71 @@
               </div>
             </div>
             <div class="alert-card__foot">
-              <span class="badge ${a.status === 'open' ? 'badge--danger' : a.status === 'reviewed' ? 'badge--warn' : 'badge--outline'}">
-                ${a.status === 'open' ? '待处理' : a.status === 'reviewed' ? '已复核' : '已忽略'}</span>
+              <span class="badge ${a.status === 'ignored' ? 'badge--ignored' : a.status === 'reviewed' ? U.alertBadge[a.level] : a.status === 'open' ? 'badge--danger' : 'badge--outline'}">
+                ${a.status === 'open' ? '待处理' : a.status === 'reviewed' ? '已复核' : a.status === 'ignored' ? '已忽视' : '已解除'}</span>
               <span class="spacer"></span>
               <button class="btn btn--sm" data-detail="${a.alertId}">查看</button>
-              <button class="btn btn--sm btn--primary" data-review="${a.alertId}">复核</button>
+              ${a.status === 'open' || a.status === 'reviewed' || a.status === 'ignored' ? `<button class="btn btn--sm btn--primary" data-review="${a.alertId}">${a.status === 'open' ? '复核' : '重新复核'}</button>` : ''}
             </div>
           </div>`).join('') || R.empty('暂无该级别预警', '', 'checkCircle');
 
+        // 列表只展示 4 条，其余在卡内滚动（2026-09-24 需求）。
+        const cnt = U.$('#alCount');
+        if (cnt) cnt.textContent = (r.total || r.list.length) ? `共 ${r.total || r.list.length} 条` : '';
+        this._clampAlertList(box);
+
         U.$$('#alList [data-detail]').forEach(b => b.addEventListener('click', () => {
           const a = r.list.find(x => x.alertId === b.dataset.detail);
+          // 历史正确率（按天累计）：后端给的 trendData 是近 14 天「截至当天」的累计正确率，
+          // 当天没做题则沿用前一天的值；第一次作答之前的日期为 null（图上留空）。
+          const series = a.trendData || [];
+          const known = series.filter(v => v !== null && v !== undefined);
+          const lastAcc = known.length ? known[known.length - 1] : null;
+          // 最后两个有值的点：用于显示"较上一天 ±x.xpp"
+          const lastIdx = series.reduce((acc, v, i) => (v !== null && v !== undefined ? i : acc), -1);
+          const prevAcc = known.length > 1 ? known[known.length - 2] : null;
+          const diffAcc = (lastAcc !== null && prevAcc !== null) ? Math.round((lastAcc - prevAcc) * 10) / 10 : null;
+          const diffText = diffAcc === null ? '' : (diffAcc > 0 ? `较上一天 +${diffAcc}pp` : diffAcc < 0 ? `较上一天 ${diffAcc}pp` : '与上一天持平');
+          const labels = a.trendXAxis || [];
+          const mainColor = a.level === 'red' ? Charts.tokens().danger : (a.level === 'yellow' ? Charts.tokens().warn : Charts.tokens().ok);
           Modal.open({
             title: '预警详情 · ' + a.student, size: 'wide',
             body: `<p class="fz-12 t-dim" style="margin-bottom:10px">触发规则：<b>${U.esc(a.trigger)}</b></p>
-              <div class="chart chart--sm" id="alTrend"></div>
-              <div class="divider"></div>
-              <div class="callout callout--brand">${icon('bulb')}
-                <div>建议：${a.level === 'red' ? '立即人工介入 / 推送补救资源' : '持续监控并安排一次靶向练习'}</div></div>`,
-            footer: `<button class="btn" data-close>关闭</button>
-              <button class="btn btn--outline" id="aIv">${icon('route')} 生成干预</button>`,
-            onMount(ov, close) {
-              Charts.line('#alTrend', { xAxis: ['4步前', '3步前', '2步前', '前次', '当前'], series: [{ name: '学习完成率', data: a.trendData, color: a.level === 'red' ? Charts.tokens().danger : Charts.tokens().warn }] }, { max: 100, fmt: '{value}%' });
-              U.$('#aIv', ov).addEventListener('click', () => { close(); Router.go('intervention'); });
+              <div class="row" style="gap:10px;align-items:baseline;flex-wrap:wrap;margin:0 0 4px">
+                <span class="fz-13">「${U.esc(a.kp || a.kpId || '该知识点')}」历史正确率</span>
+                <b class="mono" style="font-size:23px;color:${lastAcc === null ? 'var(--text-3)' : mainColor}">${lastAcc === null ? '—' : lastAcc + '%'}</b>
+                <span class="fz-11 t-dim">今日为止（近 ${a.trendDays || 14} 天累计）</span>
+                ${diffText ? `<span class="badge ${diffAcc > 0 ? 'badge--ok' : diffAcc < 0 ? 'badge--danger' : 'badge--outline'}">${diffText}</span>` : ''}
+              </div>
+              <div class="chart chart--sm" id="alTrend"></div>`,
+            footer: `<button class="btn" data-close>关闭</button>`,
+            onMount(ov) {
+              Charts.line('#alTrend', {
+                xAxis: labels,
+                series: [
+                  {
+                    name: '累计正确率', data: series, color: mainColor,
+                    // 把"今天/最新"的取值直接标在图上，避免右端数据点看不出数值
+                    markPoint: (lastIdx < 0) ? undefined : {
+                      symbol: 'circle', symbolSize: 9,
+                      itemStyle: { color: mainColor, borderColor: '#fff', borderWidth: 2 },
+                      data: [{
+                        coord: [labels[lastIdx], series[lastIdx]],
+                        value: series[lastIdx] + '%',
+                        label: {
+                          // 取值接近顶部时把标签放到点下方，避免压到图例
+                          show: true, position: series[lastIdx] >= 80 ? 'bottom' : 'top', distance: 8,
+                          formatter: p => (lastIdx === labels.length - 1 ? '今天 ' : '最新 ') + p.value,
+                          color: mainColor, fontSize: 11.5, fontWeight: 600,
+                          backgroundColor: 'rgba(255,255,255,.92)', padding: [2, 5], borderRadius: 4,
+                          borderColor: mainColor, borderWidth: 1,
+                        },
+                      }],
+                    },
+                  },
+                  { name: '达标线 60%', data: labels.map(() => 60), color: Charts.tokens().dim, dashed: true },
+                ],
+              }, { max: 100, fmt: '{value}%', right: 46, top: 44 });
             }
           });
         }));
@@ -239,13 +348,12 @@
                 <div class="kv__row"><span>触发规则</span><span>${U.esc(a.trigger)}</span></div>
               </div>
               <label class="fz-12 t-dim" style="display:block;margin-bottom:6px">复核意见（可选）</label>
-              <textarea class="code-edit" id="rvNote" placeholder="补充教师判断，将随复核记录留存…"></textarea>`,
-            footer: `<button class="btn btn--ghost" id="ig">忽略</button><button class="btn btn--outline" id="an">标注</button><button class="btn btn--primary" id="cf">确认预警</button>`,
+              <textarea class="code-edit" id="rvNote" placeholder="补充教师判断，将随复核记录留存…">${U.esc(a.note || '')}</textarea>`,
+            footer: `<button class="btn btn--ghost" id="ig">忽略</button><button class="btn btn--primary" id="cf">确认预警</button>`,
             onMount(ov, close) {
               const note = () => U.$('#rvNote', ov).value.trim();
               const after = (msg) => { Toast.ok(msg); close(); self.loadAlerts(); };
               U.$('#cf', ov).addEventListener('click', () => API.teacher.reviewAlert({ alertId: a.alertId, action: 'confirm', note: note() }).then(() => after('已确认预警，进入处理流程')));
-              U.$('#an', ov).addEventListener('click', () => API.teacher.reviewAlert({ alertId: a.alertId, action: 'annotate', note: note() }).then(() => after('已标注复核意见')));
               U.$('#ig', ov).addEventListener('click', () => API.teacher.reviewAlert({ alertId: a.alertId, action: 'ignore', note: note() }).then(() => after('已忽略该预警')));
             }
           });

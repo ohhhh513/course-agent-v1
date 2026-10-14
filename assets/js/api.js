@@ -11,16 +11,31 @@ window.API = (function () {
     mode: 'http',                 // 'mock' | 'http'
     baseURL: '/api/v1',
     token: 'Bearer <JWT>',
+    activeCourseId: '', // 当前课程上下文；空=未选课（不发 X-Course-Id，后端取用户第一门课或报错）
     latency: [120, 380]           // mock 模拟网络延迟区间(ms)
   };
 
-  /* 从 localStorage 恢复 token（页面刷新后保持登录） */
+  /* 从 localStorage 恢复 token 与当前课程（页面刷新后保持） */
   try {
     const s = JSON.parse(localStorage.getItem('ca_session') || 'null');
     if (s && s.token) {
       config.token = s.token.startsWith('Bearer ') ? s.token : ('Bearer ' + s.token);
     }
+    if (s && s.activeCourseId) config.activeCourseId = s.activeCourseId;
   } catch (e) {}
+
+  /**
+   * 切换当前课程上下文（多课程）。
+   * 只更新请求头来源并持久化；调用方负责在切换后刷新当前视图数据。
+   */
+  function setActiveCourse(courseId) {
+    config.activeCourseId = courseId || '';
+    try {
+      const s = JSON.parse(localStorage.getItem('ca_session') || 'null') || {};
+      s.activeCourseId = config.activeCourseId;
+      localStorage.setItem('ca_session', JSON.stringify(s));
+    } catch (e) {}
+  }
 
   /* ---------- 底层请求 ---------- */
   function delay() {
@@ -50,14 +65,29 @@ window.API = (function () {
         if (qs) url += '?' + qs;
       }
       const isFormData = payload instanceof FormData;
+      const headers = isFormData
+        ? { Authorization: config.token }
+        : { 'Content-Type': 'application/json', Authorization: config.token };
+      if (config.activeCourseId) headers['X-Course-Id'] = config.activeCourseId;
       return fetch(url, {
         method,
-        headers: isFormData ? { Authorization: config.token } : { 'Content-Type': 'application/json', Authorization: config.token },
+        headers,
         body: isGet ? undefined : (isFormData ? payload : JSON.stringify(payload || {}))
       })
-        .then(r => r.json())
+        .then(async r => {
+          let res;
+          try { res = await r.json(); } catch (e) { res = { code: r.status, message: r.statusText }; }
+          // FastAPI HTTPException 只有 detail，没有信封
+          if (!r.ok || (res && res.detail && res.code === undefined)) {
+            const msg = (res && (res.detail || res.message)) || ('HTTP ' + r.status);
+            const err = new Error(typeof msg === 'string' ? msg : '接口异常');
+            err.status = r.status;
+            throw err;
+          }
+          if (res.code !== 0) throw new Error(res.message || res.detail || '接口异常');
+          return res;
+        })
         .then(res => {
-          if (res.code !== 0) throw new Error(res.message || '接口异常');
           // 登录等接口返回 token，自动存进 config + localStorage
           if (res.data && res.data.token) {
             const bearer = res.data.token.startsWith('Bearer ') ? res.data.token : ('Bearer ' + res.data.token);
@@ -93,7 +123,10 @@ window.API = (function () {
       }
       return fetch(url, {
         method,
-        headers: { 'Content-Type': 'application/json', Authorization: config.token },
+        headers: Object.assign(
+          { 'Content-Type': 'application/json', Authorization: config.token },
+          config.activeCourseId ? { 'X-Course-Id': config.activeCourseId } : {}
+        ),
         body: isGet ? undefined : JSON.stringify(payload || {})
       }).then(async res => {
         const contentType = res.headers.get('content-type') || '';
@@ -126,23 +159,65 @@ window.API = (function () {
 
   const M = () => window.MOCK;
 
+  function fetchBinary(path) {
+    if (config.mode !== 'http') {
+      return Promise.reject(new Error('Mock 模式下无法读取已保存的附件'));
+    }
+    const headers = { Authorization: config.token };
+    if (config.activeCourseId) headers['X-Course-Id'] = config.activeCourseId;
+    return fetch(config.baseURL + path, { method: 'GET', headers }).then(async res => {
+      if (!res.ok) {
+        let message = '附件读取失败';
+        try {
+          const data = await res.json();
+          message = data.message || data.detail || message;
+        } catch (e) {}
+        const error = new Error(message);
+        error.status = res.status;
+        throw error;
+      }
+      const disposition = res.headers.get('content-disposition') || '';
+      if (!disposition) {
+        let message = '附件读取失败';
+        try {
+          const data = await res.clone().json();
+          message = data.message || data.detail || message;
+        } catch (e) {}
+        throw new Error(message);
+      }
+      const encoded = disposition.match(/filename\*=UTF-8''([^;]+)/i);
+      const plain = disposition.match(/filename="?([^";]+)"?/i);
+      let filename = encoded ? encoded[1] : (plain ? plain[1] : '');
+      if (encoded) {
+        try { filename = decodeURIComponent(filename); } catch (e) {}
+      }
+      return { blob: await res.blob(), filename };
+    });
+  }
+
   /**
    * SSE 流式请求（fetch + getReader 手动解析，可携带 JWT 头）
    * @param {string} method   一般为 'POST'
    * @param {string} path     形如 '/ai/chat/stream'
    * @param {object} payload  请求体
-   * @param {object} handlers 事件回调：{ onMeta, onToolStart, onToolEnd, onContent,
-   *                                   onCitations, onDraft, onLog, onDone, onError }
+ * @param {object} handlers 事件回调：{ onMeta, onToolStart, onToolEnd, onContent, onThink,
+ *                                   onCitations, onDraft, onAction, onLog, onDone, onError }
    *                           各回调接收解析后的 data 对象
    * @returns {Promise<void>} 流结束后 resolve；HTTP 非 200 时 reject
    */
-  function streamRequest(method, path, payload, handlers) {
+  function streamRequest(method, path, payload, handlers, opts) {
     const h = handlers || {};
     let url = config.baseURL + path;
+    // FormData（带附件上传）：Content-Type 必须交给浏览器自动生成（含 multipart boundary）
+    const isForm = (typeof FormData !== 'undefined') && (payload instanceof FormData);
+    const headers = { Authorization: config.token, 'X-Course-Id': config.activeCourseId };
+    if (!isForm) headers['Content-Type'] = 'application/json';
     return fetch(url, {
       method: method || 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: config.token },
-      body: JSON.stringify(payload || {})
+      headers: headers,
+      body: isForm ? payload : JSON.stringify(payload || {}),
+      // 「停止生成」：调用方传入 AbortSignal，中止时本 Promise 以 AbortError 拒绝
+      signal: (opts && opts.signal) || undefined
     }).then(res => {
       if (!res.ok || !res.body) return res.json().then(r => { throw new Error(r.message || ('HTTP ' + res.status)); });
       const reader = res.body.getReader();
@@ -159,6 +234,7 @@ window.API = (function () {
           case 'think':       h.onThink && h.onThink(data); break;
           case 'citations':   h.onCitations && h.onCitations(data); break;
           case 'draft':       h.onDraft && h.onDraft(data); break;
+          case 'action':      h.onAction && h.onAction(data); break;
           case 'log':         h.onLog && h.onLog(data); break;
           case 'error':       h.onError && h.onError(data); break;
           case 'done':        h.onDone && h.onDone(data); break;
@@ -212,6 +288,66 @@ window.API = (function () {
   /* ======================================================================
      一、认证与公共
      ====================================================================== */
+  const admin = {
+    /** GET /admin/users  管理员列表账号 params: { role, keyword } */
+    listUsers: (p) => request('GET', '/admin/users', p),
+    /** POST /admin/users  创建教师/学生账号 */
+    createUser: (p) => request('POST', '/admin/users', p),
+    /** PUT /admin/users/{userId}  编辑账号（name/username/密码/班级/部门等，角色不可改） */
+    updateUser: (userId, p) => request('PUT', `/admin/users/${userId}`, p),
+    /** DELETE /admin/users/{userId}  删除账号（级联清理个人数据） */
+    deleteUser: (userId, p) => request('DELETE', `/admin/users/${userId}`, p || {}),
+    /** POST /admin/users/batch-delete  批量删除账号 {userIds:[]}；逐行结果（成功/被拒/失败） */
+    batchDeleteUsers: (p) => request('POST', '/admin/users/batch-delete', p || {}),
+    /** GET /admin/users/import/template  下载导入模板（role=student/teacher, format=xlsx/docx） */
+    importTemplate: (p) => download('GET', '/admin/users/import/template', p),
+    /** POST /admin/users/import/preview  解析校验预览（FormData: file, role, defaultPassword） */
+    importPreview: (fd) => request('POST', '/admin/users/import/preview', fd),
+    /** POST /admin/users/import/commit  真正落库（FormData: file, role, defaultPassword, rowIndexes?） */
+    importCommit: (fd) => request('POST', '/admin/users/import/commit', fd),
+  };
+
+  // ---- 管理员智能体（平台治理流）：/admin/agent/* ----
+  // 与 /ai 的答疑同一套 SSE 事件协议，差异：仅管理员可用、不依赖课程上下文、flow=admin_ops。
+  const adminAgent = {
+    /**
+     * POST /admin/agent/chat/stream  平台治理流式答疑（事件与 ai.chatStream 一致）
+     * 带附件时改发 multipart/form-data（question / sessionId / files[]）；
+     * 无附件仍是 JSON —— 后端两种形态都收。
+     */
+    chatStream: (p, handlers, opts) => {
+      const files = (p && p.files) || [];
+      if (files.length) {
+        const fd = new FormData();
+        fd.append('question', p.question || '');
+        fd.append('sessionId', p.sessionId || 'new');
+        files.forEach(f => fd.append('files', f, f.name));
+        return streamRequest('POST', '/admin/agent/chat/stream', fd, handlers, opts);
+      }
+      return streamRequest('POST', '/admin/agent/chat/stream', p, handlers, opts);
+    },
+    /** POST /admin/agent/chat/stop  停止平台治理会话正在进行的生成（协作式「停止思考」） */
+    stopChat: (p) => request('POST', '/admin/agent/chat/stop', p || {}, () => ({ stopped: true })),
+    /** GET /admin/agent/recommendation-context  只返回管理员个性化推荐所需的平台汇总数据 */
+    recommendationContext: () => request('GET', '/admin/agent/recommendation-context'),
+    /** GET /admin/agent/sessions  当前管理员的治理会话列表（不含课程会话） */
+    sessions: () => request('GET', '/admin/agent/sessions'),
+    /** GET /admin/agent/sessions/{sessionId}/messages  治理会话消息（含 toolLog） */
+    messages: (p) => request('GET', `/admin/agent/sessions/${p.sessionId || 'new'}/messages`),
+    fetchAttachment: (p) => fetchBinary(`/admin/agent/sessions/${encodeURIComponent(p.sessionId)}/attachments/${encodeURIComponent(p.attachmentId)}`),
+    /** DELETE /admin/agent/sessions/{sessionId}  删除自己的治理会话 */
+    deleteSession: (p) => request('DELETE', `/admin/agent/sessions/${p.sessionId}`),
+    /**
+     * POST /admin/agent/actions/{actionId}/approve  确认执行治理写操作（如账号批量录入；P2c）
+     * 参数以服务端落库的那份为准，前端只传 actionId。
+     */
+    approveAction: (p) => request('POST', `/admin/agent/actions/${p.actionId}/approve`, {},
+      () => ({ actionId: p.actionId, status: 'executed', idempotent: false, result: { created: 0 } })),
+    /** POST /admin/agent/actions/{actionId}/reject  拒绝治理写操作：只改状态，无副作用 */
+    rejectAction: (p) => request('POST', `/admin/agent/actions/${p.actionId}/reject`, {},
+      () => ({ actionId: p.actionId, status: 'rejected', idempotent: false })),
+  };
+
   const auth = {
     /** POST /auth/login  账号密码登录，返回 token 与用户信息（mock 模式校验本地账号表） */
     login: (p) => request('POST', '/auth/login', p, (q) => {
@@ -254,7 +390,7 @@ window.API = (function () {
     }),
 
     /** GET /course/{courseId}  获取课程基本信息 */
-    course: (p) => request('GET', '/course/' + (p && p.courseId || 'C2026DS001'), p, () => M().course)
+    course: (p) => request('GET', '/course/' + (p && p.courseId), p, () => M().course)
   };
 
   /* ======================================================================
@@ -267,9 +403,8 @@ window.API = (function () {
       return map[q.type || 'knowledge'];
     }),
 
-    /** GET /graph/kp/{kpId}  知识点详情（含前后置、资源、习题统计） */
-    kpDetail: (p) => request('GET', '/graph/kp/' + p.kpId, p, (q) =>
-      M().kpDetail[q.kpId] || M().kpDetail.KP52),
+    /** GET /graph/kp/{kpId}  知识点详情（含前后置、资源、习题统计、真实学情与课程均值） */
+    kpDetail: (p) => request('GET', '/graph/kp/' + p.kpId, p),
 
     /** GET /graph/path  基于知识图谱前后置关系生成的推荐学习路径 */
     learningPath: (p) => request('GET', '/graph/path', p, () => M().learningPath)
@@ -281,6 +416,13 @@ window.API = (function () {
   const stu = {
     /** GET /student/dashboard  学习驾驶舱聚合数据 */
     dashboard: (p) => request('GET', '/student/dashboard', p, () => M().studentDashboard),
+
+    /**
+     * GET /student/study-duration  当天累计学习时长
+     * 返回 { todaySeconds, todayMinutes, practiceSeconds, resourceSeconds }
+     * 供驾驶舱「今日累计学习时长」轻量轮询刷新（不触发预警重算）
+     */
+    studyDuration: () => request('GET', '/student/study-duration'),
 
     /** GET /student/resources  资源中心列表  params: { type, kpId, keyword, page, size } */
     resources: (p) => request('GET', '/student/resources', p, (q) => {
@@ -332,7 +474,26 @@ window.API = (function () {
     messages: (p) => request('GET', '/student/messages', p, () => ({ total: M().messages.length, list: M().messages })),
 
     /** PUT /student/messages/{msgId}/read  标记消息已读 */
-    readMessage: (p) => request('PUT', `/student/messages/${p.msgId}/read`, p, () => ({ msgId: p.msgId, read: true }))
+    readMessage: (p) => request('PUT', `/student/messages/${p.msgId}/read`, p, () => ({ msgId: p.msgId, read: true })),
+
+    /**
+     * 学生自助报告（/student/reports/*）
+     * 生成 / 列表 / 详情 / 导出都只作用于**当前登录学生自己**的报告；
+     * 与教师端的 report.* 不是同一组接口（教师前缀学生一律 403）。
+     */
+    report: {
+      /** POST /student/reports/generate  按真实学情统计生成自己的报告 */
+      generate: () => request('POST', '/student/reports/generate', {}),
+
+      /** GET /student/reports/list  本人 + 当前课程的报告归档 */
+      list: (p) => request('GET', '/student/reports/list', p, () => ({ total: 0, list: [] })),
+
+      /** GET /student/reports/{reportId}  报告详情（不是自己的报告返回 403） */
+      detail: (p) => request('GET', '/student/reports/' + p.reportId, p),
+
+      /** POST /student/reports/{reportId}/export  导出 pdf | html */
+      exportReport: (p) => download('POST', `/student/reports/${p.reportId}/export`, p)
+    }
   };
 
   /* ======================================================================
@@ -344,12 +505,12 @@ window.API = (function () {
 
     /** GET /ai/sessions/{sessionId}/messages  会话消息（含溯源引用） */
     messages: (p) => request('GET', `/ai/sessions/${p.sessionId || 'new'}/messages`, p, () => M().chatMessages),
+    fetchAttachment: (p) => fetchBinary(`/ai/sessions/${encodeURIComponent(p.sessionId)}/attachments/${encodeURIComponent(p.attachmentId)}`),
 
     /** DELETE /ai/sessions/{sessionId}  删除会话（仅本人会话，含全部消息） */
     deleteSession: (p) => request('DELETE', `/ai/sessions/${p.sessionId}`, p, () => ({ deleted: true })),
 
-    /** GET /ai/suggest-questions  猜你想问（基于薄弱点 + 高频问题） */
-    suggestQuestions: (p) => request('GET', '/ai/suggest-questions', p, () => M().studentDashboard.suggestedQuestions),
+    // 「猜你想问」已下线：原 /ai/suggest-questions 接口随该功能一并废弃，API 不再暴露包装方法。
 
     /**
      * POST /ai/chat  发起提问（真实环境建议用 SSE 流式：POST /ai/chat/stream）
@@ -363,10 +524,39 @@ window.API = (function () {
      * handlers: onMeta({sessionId,messageId}) / onToolStart / onToolEnd /
      *           onContent({delta}) / onCitations({items}) / onDone({outOfScope,demo})
      */
-    chatStream: (p, handlers) => streamRequest('POST', '/ai/chat/stream', p, handlers),
+    /**
+     * POST /ai/chat/stream  答疑流式（学生 / 教师）
+     * 带附件时改发 multipart/form-data（question / sessionId / files[]）；
+     * 无附件仍是 JSON —— 后端两种形态都收。
+     */
+    chatStream: (p, handlers, opts) => {
+      const files = (p && p.files) || [];
+      if (files.length) {
+        const fd = new FormData();
+        fd.append('question', p.question || '');
+        fd.append('sessionId', p.sessionId || 'new');
+        files.forEach(f => fd.append('files', f, f.name));
+        return streamRequest('POST', '/ai/chat/stream', fd, handlers, opts);
+      }
+      return streamRequest('POST', '/ai/chat/stream', p, handlers, opts);
+    },
+
+    /** POST /ai/chat/stop  停止当前会话正在进行的生成（协作式「停止思考」） */
+    stopChat: (p) => request('POST', '/ai/chat/stop', p || {}, () => ({ stopped: true })),
 
     /** GET /agent/status  智能体运行状态（live/demo 与模型信息） */
     agentStatus: (p) => request('GET', '/agent/status', p, () => ({ mode: 'demo' })),
+
+    /**
+     * POST /agent/actions/{actionId}/approve  确认执行 Agent 提出的写操作（P2c）
+     * 参数以服务端落库的那份为准，前端只传 actionId。
+     */
+    approveAction: (p) => request('POST', `/agent/actions/${p.actionId}/approve`, {},
+      () => ({ actionId: p.actionId, status: 'executed', idempotent: false, result: { draft_id: 'QD-MOCK' } })),
+
+    /** POST /agent/actions/{actionId}/reject  拒绝待批准动作（P2c）：只改状态，无副作用 */
+    rejectAction: (p) => request('POST', `/agent/actions/${p.actionId}/reject`, {},
+      () => ({ actionId: p.actionId, status: 'rejected', idempotent: false })),
 
     /** POST /ai/feedback  对回答点赞/点踩，用于知识库迭代 */
     feedback: (p) => request('POST', '/ai/feedback', p, () => ({ accepted: true }))
@@ -446,7 +636,6 @@ window.API = (function () {
         <p>你可以：</p>
         <ol>
           <li>换一个更贴近课程知识点的问法（例如指定章节或知识点名称）；</li>
-          <li>点击下方「转人工」，我会把这个问题连同你的学情一起提交给李文博老师；</li>
           <li>或者从这些和你薄弱点相关的问题开始：<strong>Dijkstra 为什么不能处理负权边</strong>、<strong>循环队列为什么少用一个单元</strong>。</li>
         </ol>`,
       citations: [], outOfScope: true, sourceCount: 0
@@ -461,6 +650,12 @@ window.API = (function () {
     modes: (p) => request('GET', '/practice/modes', p, () => M().practiceModes),
 
     /**
+     * GET /practice/kp-pool  各知识点的已发布题量（顺序练习选章节用）
+     * 返回 { counts: { kpId: 题数 }, total }；无题的知识点不在 counts 里。
+     */
+    kpPool: (p) => request('GET', '/practice/kp-pool', p, () => ({ counts: {}, total: 0 })),
+
+    /**
      * POST /practice/sessions  创建练习会话（组卷）
      * body: { mode: weak|order|random|wrong, kpIds?, count, difficulty? }
      */
@@ -468,6 +663,9 @@ window.API = (function () {
       sessionId: 'PS' + Date.now(), mode: q.mode, total: q.count || 10,
       questions: M().practiceQuestions
     })),
+
+    /** GET /practice/sessions/current  当前进行中的练习存档（无则 null）  params: { mode } */
+    current: (p) => request('GET', '/practice/sessions/current', p, () => null),
 
     /** GET /practice/sessions/{sessionId}/questions  取题 */
     questions: (p) => request('GET', `/practice/sessions/${p.sessionId}/questions`, p, () => M().practiceQuestions),
@@ -483,19 +681,18 @@ window.API = (function () {
         qId: question.qId, correct, rightAnswer: question.answer,
         analysis: question.analysis, kpPath: question.kpPath,
         classCorrectRate: question.classCorrectRate, avgSeconds: question.avgSeconds,
-        masteryDelta: correct ? +2.1 : -1.4, errorType: correct ? null : question.errorType
+        masteryDelta: correct ? +2.1 : -1.4
       };
     }),
 
     /** POST /practice/sessions/{sessionId}/finish  结束练习，返回练习报告 */
     finish: (p) => request('POST', `/practice/sessions/${p.sessionId}/finish`, p, () => M().practiceReport),
 
-    /** GET /practice/wrong-book  错题本  params: { kpId, errorType, mastered, page } */
+    /** GET /practice/wrong-book  错题本  params: { kpId, mastered, page } */
     wrongBook: (p) => request('GET', '/practice/wrong-book', p, (q) => {
       let list = M().wrongBook.slice();
       if (q.mastered === 'false') list = list.filter(w => !w.mastered);
       if (q.mastered === 'true') list = list.filter(w => w.mastered);
-      if (q.errorType && q.errorType !== 'all') list = list.filter(w => w.errorType === q.errorType);
       return { total: list.length, list };
     }),
 
@@ -562,11 +759,59 @@ window.API = (function () {
     /** GET /teacher/resources/kps  上传时可选择的知识点（按章节分组） */
     resourceKps: () => request('GET', '/teacher/resources/kps'),
 
-    /** POST /teacher/resources/upload  上传资源  body: FormData { file, title, kp, category } */
+    /** POST /teacher/resources/upload  上传资源  body: FormData { file, title, kp, category, tagIds? } */
     uploadResource: (formData) => request('POST', '/teacher/resources/upload', formData),
 
+    /** PUT /teacher/resources/{res_id}  编辑资源（标题/知识点/标签） */
+    updateResource: (resId, p) => request('PUT', `/teacher/resources/${resId}`, p),
+
     /** DELETE /teacher/resources/{res_id}  删除资源 */
-    deleteResource: (resId) => request('DELETE', `/teacher/resources/${resId}`)
+    deleteResource: (resId) => request('DELETE', `/teacher/resources/${resId}`),
+
+    /** GET /teacher/tags  当前课程标签列表 */
+    tags: () => request('GET', '/teacher/tags'),
+    /** POST /teacher/tags  新建（或复用）标签 */
+    createTag: (p) => request('POST', '/teacher/tags', p),
+    /** DELETE /teacher/tags/{tagId}  删除标签 */
+    deleteTag: (tagId) => request('DELETE', `/teacher/tags/${tagId}`),
+
+    /** GET /teacher/resources/{res_id}/rag-status  查询上传后的 RAG 切片进度 */
+    resourceRagStatus: (resId) => request('GET', `/teacher/resources/${resId}/rag-status`),
+
+    /** POST /teacher/courses  新建课程（生成邀请码，教师自动成为成员） */
+    createCourse: (p) => request('POST', '/teacher/courses', p),
+
+    /** GET /teacher/structure  课程结构（章节树 + 知识点 + 统计） */
+    structure: () => request('GET', '/teacher/structure'),
+    /** POST /teacher/structure/chapters  新建章节 */
+    createChapter: (p) => request('POST', '/teacher/structure/chapters', p),
+    /** PUT /teacher/structure/chapters/{id}  改章节（重命名同步章下知识点） */
+    updateChapter: (id, p) => request('PUT', `/teacher/structure/chapters/${id}`, p),
+    /** DELETE /teacher/structure/chapters/{id}  删空章节 */
+    deleteChapter: (id) => request('DELETE', `/teacher/structure/chapters/${id}`),
+    /** GET /teacher/graph/kp-detail  知识点详情（结构 + 图谱关系 + 课程学情，全部真实表计算） */
+    kpDetail: (p) => request('GET', '/teacher/graph/kp-detail', p),
+    /** GET /teacher/graph/kp-topology  知识图谱拓扑（节点=课程KP，边=关系） */
+    kpTopology: () => request('GET', '/teacher/graph/kp-topology'),
+    /** PUT /teacher/graph/kp-topology  保存坐标与边 */
+    saveKpTopology: (p) => request('PUT', '/teacher/graph/kp-topology', p),
+
+    /** POST /teacher/structure/kps  新建知识点（自动重建全员学习路径） */
+    createKp: (p) => request('POST', '/teacher/structure/kps', p),
+    /** PUT /teacher/structure/kps/{id}  改知识点 */
+    updateKp: (id, p) => request('PUT', `/teacher/structure/kps/${id}`, p),
+    /** DELETE /teacher/structure/kps/{id}  删知识点（有资源/题目时 400 拒绝） */
+    deleteKp: (id) => request('DELETE', `/teacher/structure/kps/${id}`),
+    /** GET /teacher/structure/kps/{id}/relations  前置列表 + 候选 */
+    kpRelations: (id) => request('GET', `/teacher/structure/kps/${id}/relations`),
+    /** PUT /teacher/structure/kps/{id}/relations  覆盖保存前置（环检测） */
+    saveKpRelations: (id, p) => request('PUT', `/teacher/structure/kps/${id}/relations`, p),
+
+    /** POST /question/import  批量导入题目（含单题；支持 figure_json 图结构） */
+    importQuestionPreview: (fd) => request('POST', '/question/import/preview', fd),
+    importQuestions: (p) => request('POST', '/question/import', p),
+    /** POST /question/figure  上传题目配图，返回本系统可访问的地址 */
+    uploadQuestionFigure: (fd) => request('POST', '/question/figure', fd)
   };
 
   /* ======================================================================
@@ -613,7 +858,7 @@ window.API = (function () {
     /** GET /agent/ingest/stats  RAG 知识库切片统计（教师） */
     ingestStats: (p) => request('GET', '/agent/ingest/stats', p, () => ({ chunks: 0 })),
 
-    /** GET /question/drafts  我的出题草稿箱  params: { status: all|draft|invalid|published } */
+    /** GET /question/drafts  我的出题草稿箱  params: { status: draft|published }（2026-09-24 移除 all/invalid） */
     drafts: (p) => request('GET', '/question/drafts', p, () => ({ total: 0, list: [] })),
 
     /** PUT /question/drafts/{draftId}  编辑草稿（保存时后端重新校验） */
@@ -625,23 +870,22 @@ window.API = (function () {
     /** POST /question/drafts/{draftId}/publish  发布草稿 → 正式题库 */
     draftPublish: (p) => request('POST', '/question/drafts/' + p.draftId + '/publish', p, () => ({ published: true })),
 
-    /** GET /question/bank  题库列表  params: { kpId, type, status, difficulty, keyword, page } */
-    bank: (p) => request('GET', '/question/bank', p, (q) => {
-      let list = M().questionBank.slice();
-      if (q.status && q.status !== 'all') list = list.filter(x => x.status === q.status);
-      if (q.keyword) list = list.filter(x => (x.stem + x.kp + x.qId).includes(q.keyword));
-      return { total: list.length, list };
-    }),
+    /** GET /question/bank  题库列表  params: { kpId, type, difficulty, keyword, page, sort, dir }
+     *  2026-09-24：去掉 status 维度，改为按正确率/难度/知识点/默认 排序（sort=correctRate|difficulty|kp|default, dir=asc|desc）。
+     *  mock 数据不可用（questionBank 为空数组），仅保留兜底空结果。 */
+    bank: (p) => request('GET', '/question/bank', p, () => ({ total: 0, list: [] })),
 
-    /** PUT /question/{qId}  编辑习题（人工校验后修正） */
+    /** PUT /question/{qId}  编辑习题（含 figureJson/hasImage/tagIds） */
     update: (p) => request('PUT', '/question/' + p.qId, p, (q) => ({ qId: q.qId, updated: true })),
 
     /** POST /question/review  批量审核发布  body: { qIds[], action: approve|reject|publish } */
     review: (p) => request('POST', '/question/review', p, (q) =>
       ({ affected: (q.qIds || []).length, action: q.action })),
 
-    /** DELETE /question/{qId}  删除习题 */
+    /** DELETE /question/{qId}  下架到回收站，7 天内可恢复 */
     remove: (p) => request('DELETE', '/question/' + p.qId, p, () => ({ qId: p.qId, removed: true })),
+    recycle: () => request('GET', '/question/recycle', null, () => ({ total: 0, list: [] })),
+    restore: (p) => request('POST', '/question/' + p.qId + '/restore', {}, () => ({ qId: p.qId, restored: true })),
 
     /** POST /question/import  批量导入题目（JSON 数组） */
     importBatch: (p) => request('POST', '/question/import', p, (q) => ({ taskId: 'IMP' + Date.now(), total: (q.questions || []).length, success: (q.questions || []).length, failed: 0 })),
@@ -710,5 +954,14 @@ window.API = (function () {
 
 
 
-  return { config, request, download, auth, graph, student: stu, ai, practice, teacher: tea, analysis, question, intervention, report };
+  /* ---------- 课程（多课程上下文） ---------- */
+  const course = {
+    /** GET /course/my  当前用户的课程列表（含 role，课程教师另带 inviteCode） */
+    my: () => request('GET', '/course/my'),
+
+    /** POST /course/join  凭邀请码加入课程  body: { inviteCode } */
+    join: (p) => request('POST', '/course/join', p),
+  };
+
+  return { config, request, download, setActiveCourse, course, auth, admin, adminAgent, graph, student: stu, ai, practice, teacher: tea, analysis, question, intervention, report };
 })();

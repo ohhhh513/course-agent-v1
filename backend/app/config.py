@@ -15,7 +15,8 @@ class Settings(BaseSettings):
     FRONTEND_DIR: Path = Path(__file__).resolve().parent.parent.parent
 
     # 数据库（SQLite，零配置）
-    DATABASE_URL: str = f"sqlite:///{BASE_DIR}/data/course_agent.db"
+    # Windows 下必须用正斜杠绝对路径，否则引擎可能解析到错误目录，导致「启动建了 admin 但登录找不到」
+    DATABASE_URL: str = "sqlite:///" + (BASE_DIR / "data" / "course_agent.db").as_posix()
 
     # JWT（生产环境务必通过环境变量 JWT_SECRET 设置强随机密钥）
     # 若未显式设置，则每次启动生成一个随机密钥（fail-secure，避免已知占位符被伪造令牌），
@@ -31,6 +32,10 @@ class Settings(BaseSettings):
     PORT: int = 8000
     DEBUG: bool = False  # 生产环境关闭调试（关闭 SQL 日志与报错栈外泄）
 
+    # 课件在线预览：只需在后端机器安装 LibreOffice；空路径时自动查找。
+    LIBREOFFICE_PATH: str = ""
+    PRESENTATION_CONVERT_TIMEOUT: int = 120
+
     # CORS（生产环境通过环境变量 CORS_ORIGINS 设置，默认仅允许同源 127.0.0.1:8000）
     CORS_ORIGINS: str = os.getenv("CORS_ORIGINS", "http://127.0.0.1:8000,http://localhost:8000")
 
@@ -39,6 +44,9 @@ class Settings(BaseSettings):
     LLM_BASE_URL: str = os.getenv("LLM_BASE_URL", "https://api.deepseek.com")
     LLM_API_KEY: str = os.getenv("LLM_API_KEY", "")
     LLM_MODEL: str = os.getenv("LLM_MODEL", "deepseek-chat")
+    # 对话运行层：legacy（现有手写工具循环）| sdk（OpenAI Agents SDK）
+    # 默认沿用现有实现，切换成 sdk 后 /ai/chat/stream 的事件契约与前端完全不变。
+    AGENT_RUNTIME: str = os.getenv("AGENT_RUNTIME", "legacy")
     # Embeddings；留空 KEY 时用本地哈希向量（local-hash-256）
     EMBEDDING_BASE_URL: str = os.getenv("EMBEDDING_BASE_URL", "")
     EMBEDDING_API_KEY: str = os.getenv("EMBEDDING_API_KEY", "")
@@ -46,9 +54,7 @@ class Settings(BaseSettings):
 
     # 数据目录（全部相对项目根推导，禁止硬编码绝对路径）
     AGENT_DATA_DIR: Path = BASE_DIR / "data" / "st"
-    ST_BANK_PATH: Path = AGENT_DATA_DIR / "st_bank" / "after_class.json"
     RAG_DB_PATH: Path = AGENT_DATA_DIR / "rag.db"
-    ST_DRAFTS_DIR: Path = AGENT_DATA_DIR / "drafts"
 
     # 检索与编排参数
     MIN_RETRIEVE_SCORE: float = 0.12

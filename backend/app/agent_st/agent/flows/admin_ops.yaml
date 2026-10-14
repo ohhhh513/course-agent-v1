@@ -1,0 +1,32 @@
+id: admin_ops
+name: 平台治理
+# 只有管理员可用此流：业务治理工具 admin-only，另含按服务端角色过滤的只读操作帮助和页面导航。
+# 教师 / 学生拿到这条流会直接 error + done（runtime 的流级角色校验）。
+roles: [admin]
+persona: platform_admin
+skills:
+  - admin_ops.md
+  - system_guide.md
+tools:
+  - get_system_guide
+  - prepare_ui_action
+  - suggest_action
+  - system_overview
+  - account_overview
+  - course_overview
+  - kb_status
+  - data_check
+  - preview_account_import
+  - import_accounts
+  - preview_account_delete
+  - delete_accounts
+max_steps: 5
+steps:
+  - 按本轮语义和最近对话承接唯一账号或操作对象；界面位置与操作先 get_system_guide 核实，目标明确且有入口必须 prepare_ui_action，询问 auto=false 给真实按钮，明确操作 auto=true 打开；多个对象先澄清，纯数据查询不强制导航；保存和正式导入仍需确认，不跳转师生页面
+  - 先判断问题属于哪一类：平台总体 → system_overview；账号 → account_overview；课程规模 → course_overview；知识库索引 → kb_status；数据有没有问题 → data_check
+  - 上传了学生/教师信息文件且要「录入系统 / 导入账号」→ 先 preview_account_import 看解析与校验结果，再把 validAccounts 原样传给 import_accounts（写操作会进「待批准」卡片，提示管理员去点确认）
+  - 要「删除 / 移除账号」（上传名单要删，或点名用户名）→ 先 preview_account_delete 核对可删清单，再把 deletableAccounts 原样传给 delete_accounts（同样是写操作，进「待批准」卡片；被拒的行不要提交）
+  - 数字要来自工具返回，不要估算；需要某门课的明细时把 course_id 传给 course_overview / kb_status
+  - 「要不要重建索引」看 kb_status 的 staleChunkCount / needRebuildCourses，不要凭切片总数下结论
+  - 「数据有没有问题」只报 data_check 实际查出来的项，不要自己臆测其它问题
+  - 结论 + 关键数字，按 admin_ops.md 的结构作答（口径默认不写，管理员问起才用一句话说明）

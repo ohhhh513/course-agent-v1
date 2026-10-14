@@ -1,56 +1,50 @@
 <!DOCTYPE html>
-<html lang="zh-CN" data-theme="light">
+<html lang="zh-CN" data-theme="light" class="auth-skin">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>找回密码 · 课程智能体系统</title>
+<title>找回密码 · 课程智能体</title>
 <link rel="stylesheet" href="assets/css/base.css">
-<link rel="stylesheet" href="assets/css/app.css">
+<link rel="stylesheet" href="assets/css/app.css?v=20261014-login3">
+<link rel="stylesheet" href="assets/css/refresh.css?v=20261014-login3">
+<script src="assets/js/ui-enhancements.js" defer></script>
 </head>
 <body>
 
+<div class="auth-bg" aria-hidden="true">
+  <div class="auth-bg__slide is-on" style="background-image:url('assets/img/login/sanxia.jpg')"></div>
+  <div class="auth-bg__slide" style="background-image:url('assets/img/login/wulong.jpg')"></div>
+  <div class="auth-bg__slide" style="background-image:url('assets/img/login/ciqikou.jpg')"></div>
+  <div class="auth-bg__slide" style="background-image:url('assets/img/login/jinfo.jpg')"></div>
+</div>
+
 <div class="auth-page">
-  <!-- 左侧品牌展示 -->
-  <aside class="auth-aside">
-    <div class="auth-aside__brand">
-      <div class="brand-logo">智</div>
-      <h1>课程智能体系统</h1>
-      <p>三大图谱驱动 · 学情全周期监测与动态管理 · AI 赋能精准教学</p>
-    </div>
-    <div class="row" style="gap:8px;flex-wrap:wrap">
-      <span class="badge badge--brand">知识图谱</span>
-      <span class="badge badge--info">问题图谱</span>
-      <span class="badge badge--accent">目标图谱</span>
-    </div>
-    <ul class="auth-aside__feats" id="authFeats"></ul>
-    <div class="auth-aside__copy">前端原型 v1.0 · 演示数据 · 后端就绪即直连</div>
-  </aside>
+  <header class="auth-welcome">
+    <img class="auth-welcome__logo" src="assets/img/course-assistant.svg" alt="" draggable="false">
+    <h1>欢迎使用「课程智能体」</h1>
+  </header>
 
-  <!-- 右侧找回密码表单 -->
-  <main class="auth-main">
-    <div class="auth-card">
-      <h2>找回密码</h2>
-      <p class="auth-sub">验证账号后重置您的登录密码</p>
+  <main class="auth-card">
+    <div class="auth-card__mode">找回密码</div>
 
-      <form id="resetForm" novalidate>
-        <div class="field">
-          <label>账号 <span class="req">*</span></label>
-          <input class="input" id="username" placeholder="请输入注册时使用的用户名" autocomplete="username">
-        </div>
-        <div class="field">
-          <label>新密码 <span class="req">*</span></label>
-          <input class="input" id="password" type="password" placeholder="至少 6 位" autocomplete="new-password">
-        </div>
-        <div class="field">
-          <label>确认新密码 <span class="req">*</span></label>
-          <input class="input" id="confirm" type="password" placeholder="再次输入新密码" autocomplete="new-password">
-        </div>
-        <div class="auth-error" id="resetErr"></div>
-        <button class="btn btn--primary btn--block" id="resetBtn" type="submit">重置密码</button>
-      </form>
+    <form id="resetForm" novalidate>
+      <div class="field">
+        <label>账号</label>
+        <input class="input" id="username" placeholder="请输入账号" autocomplete="username">
+      </div>
+      <div class="field">
+        <label>新密码</label>
+        <input class="input" id="password" type="password" placeholder="至少 6 位" autocomplete="new-password">
+      </div>
+      <div class="field">
+        <label>确认新密码</label>
+        <input class="input" id="confirm" type="password" placeholder="再次输入新密码" autocomplete="new-password">
+      </div>
+      <div class="auth-error" id="resetErr"></div>
+      <button class="btn btn--primary btn--block is-ready" id="resetBtn" type="submit">重置密码</button>
+    </form>
 
-      <div class="auth-foot">记起密码了？<a href="index.html">返回登录</a></div>
-    </div>
+    <div class="auth-foot"><a href="index.html">返回登录</a></div>
   </main>
 </div>
 
@@ -60,13 +54,17 @@
 <script>
   Theme.init();
   Auth.init();
-  // 左侧特性列表（图中 SVG 需 JS 渲染）
-  U.$('#authFeats').innerHTML = [
-    ['book',  '沉浸式学习导航与可追溯 AI 答疑'],
-    ['grid',  '班级学情热力图与共性薄弱点定位'],
-    ['route', 'AI 自动归因与干预策略推荐'],
-    ['file',  '一键生成可分享的学情分析报告']
-  ].map(([n, t]) => '<li>' + icon(n) + t + '</li>').join('');
+
+  (function () {
+    const slides = U.$$('.auth-bg__slide');
+    if (slides.length < 2) return;
+    let i = 0;
+    setInterval(() => {
+      slides[i].classList.remove('is-on');
+      i = (i + 1) % slides.length;
+      slides[i].classList.add('is-on');
+    }, 8000);
+  })();
 
   const form = U.$('#resetForm');
   const errEl = U.$('#resetErr');

@@ -32,21 +32,8 @@
 
       <div class="grid g-2" style="margin-bottom:16px">
         <div class="card">
-          <div class="card__head card__head--col"><h3>${icon('target')} 能力目标达成度</h3>
-            <span class="badge badge--outline">目标图谱驱动</span></div>
-          <div class="card__body"><div class="chart" id="radarChart"></div></div>
-        </div>
-        <div class="card">
-          <div class="card__head"><h3>${icon('trend')} 成长轨迹（周）</h3><span class="spacer"></span></div>
+          <div class="card__head"><h3>${icon('trend')} 成长轨迹</h3><span class="spacer"></span><span class="fz-12 t-dim">只显示有练习的日期</span></div>
           <div class="card__body"><div class="chart" id="growthChart"></div></div>
-        </div>
-      </div>
-
-      <div class="grid g-2">
-        <div class="card">
-          <div class="card__head"><h3>${icon('alert')} 薄弱点清单</h3><span class="spacer"></span>
-            <button class="btn btn--sm btn--outline" data-goto="practice">一键靶向练习</button></div>
-          <div class="card__body card__body--flush"><div class="list" id="weakList"></div></div>
         </div>
         <div class="card">
           <div class="card__head"><h3>${icon('users')} 班级对比定位</h3><span class="spacer"></span>
@@ -78,7 +65,8 @@
 
         // 资源学习进度
         API.student.resourceStats().then(rs => {
-          const typeName = { video: '视频', ppt: 'PPT', doc: '文档', quiz: '题库' };
+          const typeName = { video: '教学视频', ppt: '教学课件', doc: '教材文献', quiz: '题库' };
+          const recent = (Array.isArray(rs.recent) ? rs.recent : []).slice(0, 5);
           U.$('#rsAvgBadge').textContent = `平均 ${rs.avgProgress}%`;
           U.$('#rsBody').innerHTML = `
             <div class="grid g-4" style="margin-bottom:14px">
@@ -92,46 +80,41 @@
               </div>
               <div class="stat stat--sm" style="--_c:var(--accent-500)">
                 <div class="stat__label">累计观看</div>
-                <div class="stat__value"><span>${rs.watchMinutes}</span><small>分钟</small></div>
+                <div class="stat__value"><span>${U.durMin(rs.watchMinutes)}</span><small>时长</small></div>
               </div>
               <div class="stat stat--sm" style="--_c:var(--warn)">
                 <div class="stat__label">累计阅读</div>
                 <div class="stat__value"><span>${rs.readPages}</span><small>页</small></div>
               </div>
             </div>
-            <p class="fz-12 t-dim" style="margin-bottom:8px">最近学习</p>
-            <div class="stack" style="gap:8px">
-              ${rs.recent.length ? rs.recent.map(r => `
-                <div class="row rs-recent" data-res="${r.resId}">
+            <p class="fz-12 t-dim" style="margin-bottom:4px">最近学习</p>
+            <div class="rs-recent-list">
+              ${recent.length ? recent.map(r => `
+                <div class="rs-recent" data-res="${U.esc(r.resId)}" role="button" tabindex="0" title="打开资源">
                   <span class="badge badge--outline">${typeName[r.type] || r.type}</span>
-                  <span class="fz-12 clamp-1" style="flex:1;margin:0 8px">${U.esc(r.title)}</span>
-                  <span class="mono fz-12" style="min-width:50px;text-align:right">${r.progress}%</span>
+                  <span class="fz-13 clamp-1 rs-recent__title">${U.esc(r.title)}</span>
+                  <span class="rs-recent__bar">${U.bar(Number(r.progress) || 0, (Number(r.progress) || 0) >= 100 ? 'excellent' : 'fair', 'sm')}</span>
+                  <span class="mono fz-12" style="min-width:42px;text-align:right">${Number(r.progress) || 0}%</span>
                 </div>`).join('')
                 : `<div class="empty empty--sm">${icon('play')}<b>暂无学习记录</b><p class="fz-12">去资源中心开始学习，进度会在这里汇总</p></div>`}
             </div>`;
           U.$$('[data-cnt]', U.$('#rsBody')).forEach(s => U.countUp(s, +s.dataset.cnt, 1));
           U.$$('.rs-recent', U.$('#rsBody')).forEach(row => {
-            row.style.cursor = 'pointer';
-            row.addEventListener('click', () => Router.go('resource'));
+            const go = () => {
+              ResourceView._pendingResId = row.dataset.res;
+              Router.go('resource');
+            };
+            row.addEventListener('click', go);
+            row.addEventListener('keydown', e => {
+              if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); go(); }
+            });
           });
         }).catch(() => {
           U.$('#rsBody').innerHTML = `<div class="empty empty--sm">${icon('alert')}<b>加载失败</b></div>`;
         });
 
-        U.$('#weakList').innerHTML = d.weakPoints.map(w => `
-          <div class="list__item list__item--lv-${w.level}">
-            <div class="list__main">
-              <div class="row"><b>${U.esc(w.name)}</b><span class="badge ${U.levelBadge[U.level(w.masteryRate)]}">${w.masteryRate}%</span></div>
-              <p>${U.esc(w.chapter)} · 累计错 ${w.errorCount} 题 · 近7日 ${w.trend > 0 ? '+' : ''}${w.trend}pp</p>
-              <div style="margin-top:6px;max-width:280px">${U.bar(w.masteryRate)}</div>
-            </div>
-            <div class="list__trail">
-              <button class="btn btn--xs btn--outline" data-goto="practice">去练习</button>
-              <button class="btn btn--xs btn--ghost" data-ask2="请帮我讲解「${U.esc(w.name)}」">问 AI</button>
-            </div>
-          </div>`).join('');
-        U.$$('[data-goto]', el).forEach(b => b.addEventListener('click', () => Router.go(b.dataset.goto)));
-        U.$$('[data-ask2]', el).forEach(b => b.addEventListener('click', () => { Router.go('ai'); setTimeout(() => Chat.ask(b.dataset.ask2), 260); }));
+        // 「薄弱点清单」卡片已于 2026-09-24 移除：同一批薄弱点在练习页（横幅 + 靶向强化建议）
+        // 与预警页都已呈现，此处是重复的第三处入口。
       });
 
       // 矩阵（按章节可折叠）
@@ -207,9 +190,17 @@
         });
       });
 
-      // 雷达 / 成长
-      API.student.abilityRadar().then(d => Charts.radar('#radarChart', d));
-      API.student.growth().then(d => Charts.line('#growthChart', d, { area: true, max: 100, fmt: '{value}%' }));
+      // 成长轨迹（「能力目标达成度」雷达卡已于 2026-09-24 移除：目标图谱未实现，
+      // 6 个维度恒为 0，只剩硬编码的「目标基线」有值）
+      API.student.growth().then(d => {
+        const box = U.$('#growthChart');
+        if (!box) return;
+        if (!d || !d.xAxis || !d.xAxis.length) {
+          box.innerHTML = '<div class="t-dim fz-13" style="padding:28px 8px">还没有练习记录。完成练习后，这里只显示有作答的日期。</div>';
+          return;
+        }
+        Charts.line('#growthChart', d, { area: true, max: 100, fmt: '{value}%' });
+      });
 
       // 对比
       API.student.compare().then(c => {

@@ -1,0 +1,684 @@
+# 界面事实目录。新增/改名按钮时同步更新步骤与 anchors，并运行 check_system_guide.py。
+# 这里描述如何由用户操作，不授予智能体业务写权限。
+roles:
+  student:
+    chat_view: ai
+    pages:
+      dashboard:
+        title: 学习驾驶舱
+        source: assets/js/student/views/dashboard.js
+        features:
+          - id: student.course.switch
+            title: 切换课程
+            source: assets/js/student/app.js
+            navigation: false
+            location: 学生端任意页面顶部课程下拉框
+            steps: [点击顶部课程下拉框，选择已经加入的课程；页面和智能体随所选课程切换。]
+            anchors: [courseSel, change]
+          - id: student.course.join
+            title: 用邀请码加入新课程
+            aliases: [加入新课程, 邀请码, 学生加入课程]
+            source: assets/js/student/app.js
+            navigation: false
+            location: 学生端顶部课程选择框旁的小「＋」
+            steps: [点击顶部课程选择框旁的小「＋」（提示「加入新课程」）。, 在弹窗输入教师提供的邀请码，点「加入」。]
+            anchors: [joinCourseBtn, 加入新课程, 邀请码]
+          - id: student.messages.topbar
+            title: 从顶栏查看教师私信和系统通知
+            aliases: [消息与通知, 消息详情, 消息图标]
+            source: assets/js/student/app.js
+            navigation: false
+            location: 学生端顶部右侧消息图标
+            steps: [点击顶部消息图标打开「消息与通知」，点击消息条目查看「消息详情」。]
+            anchors: [msgBtn, 消息与通知, 消息详情]
+          - id: student.dashboard
+            title: 学习总览与驾驶舱面板
+            aliases: [课程进度, 待办与提醒, 学情速览, 最近学习动态, 薄弱点提示]
+            location: 学习驾驶舱的顶部指标与下方卡片
+            steps: [从左侧打开「学习驾驶舱」；顶部看当前学习节点和课程总进度。, 下方「待办与提醒」「学情速览」「薄弱点提示」「最近学习动态」分别查看对应信息；薄弱点条目可点「去练习」。]
+            anchors: [当前学习节点, 待办与提醒, 学情速览, 薄弱点提示, 最近学习动态, data-practice-kp]
+          - id: student.dashboard.ask
+            title: 从驾驶舱发起 AI 提问
+            aliases: [AI 助教, 一键发起提问]
+            location: 学习驾驶舱的「AI 助教」卡片
+            steps: [点击「AI 助教」卡片的「一键发起提问」打开答疑页面；也可点击卡片中推荐的问题发起对应提问。]
+            anchors: [一键发起提问, data-ask]
+      graph:
+        title: 课程图谱导航
+        source: assets/js/student/views/graph.js
+        features:
+          - id: student.graph.details
+            title: 查看知识点详情和关联资源
+            aliases: [图谱节点, 前置关系, 重难点清单, 概览, 关联资源]
+            location: 课程图谱导航的左侧画布、右侧知识点详情和下方重难点清单
+            steps: [点击图谱节点，右侧显示知识点详情。, 在右侧「概览」查看简介和关系；点「关联资源」查看并打开对应资源。, 下方「重难点清单」可点击条目定位知识点；简介过长时点「展开」。]
+            anchors: [kpPanel, 重难点清单, 概览, 关联资源, kpMore]
+          - id: student.graph.canvas
+            title: 缩放、拖动和重置图谱
+            aliases: [图谱放大, 取消选中, 重置视图]
+            location: 课程图谱导航的画布与顶部工具栏
+            steps: [在画布滚轮缩放，长按拖动；双击空白画布取消选中。, 点顶部「重置视图」恢复视图和教师编排的位置。]
+            anchors: [滚轮缩放, graphReset, 双击画布取消选中]
+          - id: student.graph.actions
+            title: 从知识点详情提问或开始练习
+            aliases: [AI 提问, 开始练习]
+            location: 课程图谱导航右侧知识点详情底部
+            steps: [先点击一个知识点，在右侧详情底部点「AI 提问」或「开始练习」进入对应页面。]
+            anchors: [dAsk, dPractice]
+      resource:
+        title: 学习资源中心
+        source: assets/js/student/views/resource.js
+        features:
+          - id: student.resource.find
+            title: 查找和筛选学习资源
+            aliases: [资源聚合, 搜索资源, 教材, 课外教材, 知识点标签]
+            location: 学习资源中心右侧「资源聚合」卡片
+            steps: [在「资源聚合」右上方搜索框输入资源标题或知识点。, 点「全部」、章节标签、章节展开后的知识点标签或「课外教材」筛选；弹出标签区域的小「✕」可收起。, 点资源卡片打开资源；筛选无结果时可点「查看全部资源」。]
+            anchors: [资源聚合, resSearch, 课外教材, chips-popup__close, 查看全部资源]
+          - id: student.resource.path
+            title: 查看推荐学习路径
+            aliases: [学习顺序, 章节折叠, 推荐学习路径]
+            location: 学习资源中心左侧「推荐学习路径」
+            steps: [按章节查看推荐路径及每个知识点的学习状态。, 点击章节标题折叠或展开；右上角「全部折叠」可统一收起，再次点击统一展开；点击路径条目筛选关联资源。]
+            anchors: [推荐学习路径, pathExpandAll, path__chapter]
+          - id: student.resource.video
+            title: 视频播放、续看和下载
+            aliases: [下载视频, 视频卡住, 网络较慢, 视频进度]
+            location: 学习资源中心的视频资源弹窗
+            steps: [点击视频资源，加载后播放；未看完的视频按已保存记录点续看。, 可用播放控件及进度条调整位置，弹窗底部「下载视频」下载原文件。, 网络较慢时，若出现「网络较慢，直接播放」按钮可点击继续。]
+            notes: [拖动播放位置不等同于真实观看时长，学习进度由实际播放上报。]
+            anchors: [下载视频, rvForce, 续看自, watchedDelta]
+          - id: student.resource.document
+            title: 文档课件阅读、页码跳转和进度保存
+            aliases: [PDF 阅读, 保存进度, 下载文件, 在新窗口打开, 页码]
+            location: 学习资源中心的文档或课件弹窗
+            steps: [点击文档或课件资源打开阅读弹窗。, PDF 在「跳转页码」输入页码点「跳转」，底部可「在新窗口打开」。, 其他课件在「已读到第」填写页码后点「保存进度」；底部「在线查看」打开原文件，「下载课件」下载；「关闭」返回。]
+            notes: [资源没有文件时会提示「资源不可用」，需要联系教师上传；不同资源类型的控件不同。]
+            anchors: [rdJump, rdSave, 在线查看, 下载课件, 在新窗口打开, 资源不可用]
+      practice:
+        title: 智能练习
+        source: assets/js/student/views/practice.js
+        features:
+          - id: student.practice.start
+            title: 选择练习模式并开始做题
+            aliases: [靶向练习, 薄弱点强化, 顺序练习, 随机练习, 错题重练, 出题, 整章练习]
+            location: 智能练习的「智能练习」页签和模式卡片
+            steps: [打开「智能练习」，在模式卡片中选择练习方式；靶向强化建议条目可直接点「出题」。, 顺序练习会进入「选择章节 / 知识点」，点击知识点或「整章练习」。]
+            anchors: [modeGrid, 靶向强化建议, 出题, 选择章节 / 知识点, 整章练习]
+          - id: student.practice.modes
+            title: 四种练习模式的用途和出题范围
+            aliases: [薄弱点强化, 顺序练习, 随机练习, 错题重练]
+            source: backend/app/routers/practice.py
+            location: 智能练习页「智能练习」页签的四种模式卡片
+            steps: [「薄弱点强化」按薄弱知识点组卷；「顺序练习」按章节和知识点顺序练习。, 「随机练习」只在学过且做错过的知识点中抽题；「错题重练」重做历史错题。]
+            notes: [没有对应答题记录或题目时可能没有可用题目，不代表按钮已完成出题。]
+            anchors: [薄弱点强化, 顺序练习, 随机练习, 错题重练, 学过且做错过]
+          - id: student.practice.resume
+            title: 恢复未完成的练习或重新开始
+            aliases: [继续挑战, 开始新练习, 退出练习]
+            location: 智能练习的「发现未完成的练习」面板
+            steps: [若出现「发现未完成的练习」，点「继续挑战」恢复，或点「开始新练习」重新出题；「返回」回到选择界面。, 做题界面左上方「退出」可退出当前练习。]
+            anchors: [发现未完成的练习, rsContinue, rsNew, qBack]
+          - id: student.practice.answer
+            title: 提交答案、查看解析和练习结果
+            aliases: [提交答案, 再练一组, 练习报告, 下一题]
+            location: 智能练习的做题界面及结束后的结果页
+            steps: [选择答案后点击下方「提交答案」，查看判题反馈与解析，再按页面按钮继续。, 结束后查看「薄弱点变化对比」「错题知识点分布」「下一步建议」；可点「再练一组」「查看错题本」「查看我的学情」或「返回练习首页」。]
+            anchors: [qSubmit, 薄弱点变化对比, 错题知识点分布, againBtn, backSelect]
+          - id: student.practice.wrong
+            title: 错题本筛选、重练和标记已掌握
+            aliases: [错题本, 待攻克, 已掌握, 一键重练, 清除筛选]
+            location: 智能练习顶部「错题本」页签
+            steps: [点顶部「错题本」，可按「待攻克」「已掌握」「全部」切换。, 「按章节知识点归纳」可点击章节或知识点筛选，点「清除筛选」恢复，点「展开 / 收起」调整显示。, 点「一键重练」重练错题，条目上的「重做」「标记已掌握」处理单题。]
+            anchors: [错题本, wFilter, wPractice, wClearKp, wSumToggle, data-mastered]
+          - id: student.practice.wrong.details
+            title: 查看错题详情、相似题和推荐资源
+            aliases: [错题详情, 重做本题, 相似题]
+            location: 错题本中的错题条目与详情弹窗
+            steps: [点击错题条目打开「错题详情」，查看题干、作答及解析。, 详情内可点击相似题和关联资源；底部点「重做本题」或「标记已掌握」，点「关闭」返回。]
+            anchors: [错题详情, data-similar, wdRedo, wdMastered, data-res-id]
+          - id: student.practice.wrong.mastered
+            title: 把错题标记为已掌握
+            aliases: [标记已掌握, 错题掌握标记]
+            location: 智能练习 → 顶部「错题本」页签 → 错题条目或详情底部
+            steps: [在「智能练习」顶部点击「错题本」，找到目标错题。, 点击条目上的「标记已掌握」；也可点击条目打开「错题详情」，点弹窗底部「标记已掌握」。]
+            anchors: [data-mastered, wdMastered, 标记已掌握]
+      mastery:
+        title: 我的学情
+        source: assets/js/student/views/mastery.js
+        features:
+          - id: student.permissions
+            title: 学生能否编辑课程或查看全班热力图、他人学情
+            aliases: [教师页面权限, 全班热力图, 编辑课程, 他人成绩]
+            navigation: false
+            location: 学生端角色权限边界
+            steps: [学生端不能编辑课程内容、打开教师课程管理页面或查看全班学生热力图；这些由任课教师操作。, 自己的学情在「我的学情」查看；页面下方「班级对比定位」只提供个人定位汇总，不提供其他学生详细学情。]
+            anchors: [班级对比定位, compareChart, matrixBox]
+          - id: student.mastery.panels
+            title: 查看个人掌握率、资源进度和班级对比
+            aliases: [资源学习进度, 知识点学习完成矩阵, 成长轨迹, 班级对比定位]
+            location: 我的学情顶部指标及下方四个面板
+            steps: [打开「我的学情」，顶部查看个人指标，下方「资源学习进度」查看资源学习情况。, 在「知识点学习完成矩阵」查看资源完成率、知识掌握率、练习情况与等级。, 页面下方「成长轨迹（周）」和「班级对比定位」查看趋势及自己的班级定位。]
+            notes: [班级对比是页面提供的个人定位汇总，学生助手没有查看他人详细学情的权限。]
+            anchors: [资源学习进度, 知识点学习完成矩阵, 成长轨迹（周）, 班级对比定位]
+          - id: student.mastery.matrix
+            title: 学情矩阵折叠和下钻学习
+            aliases: [全部折叠, 矩阵点击, 学情知识点]
+            location: 我的学情的「知识点学习完成矩阵」
+            steps: [点击章节标题折叠或展开，右上角「全部折叠」统一收起或展开。, 点击知识点行可进入该知识点的学习资源。]
+            anchors: [mxToggleAll, mx-toggle, _pendingKp]
+      report:
+        title: 学情报告
+        source: assets/js/student/views/report.js
+        features:
+          - id: student.report.generate
+            title: 生成个人学情报告和查看历史
+            aliases: [个人学情报告, 历史归档, 生成报告]
+            location: 学情报告顶部「个人学情报告」与下方「历史归档」
+            steps: [在「个人学情报告」右上角点击「生成报告」。, 报告生成后打开查看；旧报告在「历史归档」中点击相应条目查看。]
+            anchors: [个人学情报告, genMyReport, 历史归档]
+          - id: student.report.export
+            title: 导出个人报告 PDF 或网页
+            aliases: [导出 PDF, 导出网页, 下载报告]
+            location: 已打开的个人报告弹窗底部
+            steps: [先打开一份报告，点击弹窗底部「导出 PDF」或「导出网页」；「关闭」返回报告列表。]
+            anchors: [myExPdf, myExHtml]
+      alerts:
+        title: 预警与提醒
+        source: assets/js/student/views/alerts.js
+        features:
+          - id: student.alerts.list
+            title: 筛选预警、刷新和标记已读
+            aliases: [我的预警, 红色预警, 黄色预警, 标记已读]
+            location: 预警与提醒的「我的预警」卡片
+            steps: [在「我的预警」右上方点「全部」「红」「黄」筛选，点「刷新」重新加载。, 未处理预警可点「标记已读」；关联了知识点的预警可点「去练习」。]
+            anchors: [我的预警, alRefresh, 标记已读, data-practice-kp]
+          - id: student.alerts.messages
+            title: 查看提醒与通知详情
+            aliases: [教师私信, 提醒与通知]
+            location: 预警与提醒的「提醒与通知」卡片
+            steps: [在「提醒与通知」中点击消息打开详情，阅读后点「关闭」。]
+            anchors: [提醒与通知, Modal.open]
+      ai:
+        title: AI 智能答疑
+        source: assets/js/student/views/chat.js
+        features: []
+  teacher:
+    chat_view: chat
+    pages:
+      dashboard:
+        title: 教学驾驶舱
+        source: assets/js/teacher/views/dash.js
+        prerequisites: [先在顶部课程选择框选择自己的课程；没有课程时先新建课程。]
+        features:
+          - id: teacher.course.switch
+            title: 切换教师课程
+            aliases: [选择课程, 当前课程]
+            source: assets/js/teacher/app.js
+            navigation: false
+            location: 教师端任意页面顶部课程下拉框
+            prerequisites: []
+            steps: [点击顶部课程选择框切换自己任教的课程；各教学页面和智能助手按当前课程显示。]
+            anchors: [courseSel, change]
+          - id: teacher.course.new
+            title: 新建课程并取得邀请码
+            aliases: [创建课程, 新建课程, 课程名称, 学期]
+            source: assets/js/teacher/app.js
+            navigation: false
+            prerequisites: []
+            location: 教师端顶部课程选择框旁小「＋」（提示「新建课程」）
+            steps: [点击顶部课程选择框旁的小「＋」打开「新建课程」。, 填写课程名称及可选学期，点「创建」；创建成功的弹窗会展示邀请码。]
+            notes: [当前没有课程名称或学期编辑入口；新建课程不等于编辑已有课程。]
+            anchors: [newCourseBtn, ncName, ncTerm, 创建]
+          - id: teacher.course.metadata
+            title: 已有课程的名称与学期是否能修改
+            aliases: [修改课程名称, 改课程名字, 修改学期, 改课程学期]
+            source: assets/js/teacher/app.js
+            navigation: false
+            prerequisites: []
+            location: 当前教师端课程管理能力限制
+            steps: [目前没有修改已有课程名称或学期的入口；这两个字段只在新建课程时填写。]
+            notes: [不要把新建课程当作已有课程修改，也不要提供不存在的「编辑课程信息」按钮。]
+            anchors: [newCourseBtn, ncName, ncTerm]
+          - id: teacher.course.invite
+            title: 查看当前课程邀请码
+            aliases: [邀请码, 邀请学生, 课程邀请码]
+            source: assets/js/teacher/app.js
+            navigation: false
+            location: 教师端顶部课程选择框旁「邀请码」
+            steps: [顶部先选择课程，再点击「邀请码」，在「课程邀请码」弹窗查看；将邀请码提供给学生加入课程。]
+            anchors: [inviteCodeBtn, 课程邀请码]
+          - id: teacher.dashboard.panels
+            title: 查看班级总览与薄弱知识点排行
+            aliases: [平均完成率, 目标达成度, 班级学情总览, 班级共性薄弱知识点排行]
+            location: 教学驾驶舱顶部指标与下方统计面板
+            steps: [打开「教学驾驶舱」，顶部看当前课程、学生数和三个指标环。, 下方「班级共性薄弱知识点排行」看薄弱项，「班级学情总览」看预警学生占比。]
+            anchors: [目标达成度, 班级共性薄弱知识点排行, 班级学情总览]
+          - id: teacher.dashboard.todos
+            title: 处理待办或暂时忽略
+            aliases: [待办事项, 忽略, 发消息]
+            location: 教学驾驶舱左侧「待办事项」
+            steps: [点击待办条目进入对应页面；条目提供「发消息」时点击可打开发送私信弹窗。, 点击条目右侧「忽略」仅在今天隐藏该待办，次日恢复。]
+            notes: [忽略驾驶舱待办不改变预警或学情状态；预警复核要在学情监测看板操作。]
+            anchors: [待办事项, dash-todo-ignore, 仅今日生效, 发送私信]
+          - id: teacher.dashboard.live
+            title: 按学生筛选当天实时动态
+            aliases: [实时动态, 全部学生, 今日动态]
+            location: 教学驾驶舱右侧「实时动态」标题栏
+            steps: [点击「实时动态」右上角「全部学生」打开学生选择列表，选择学生查看其当天动态。, 再选择「全部学生」恢复全班；再次点击选择按钮可收起列表。]
+            notes: [此面板仅显示今天的动态。]
+            anchors: [实时动态, dashLiveStudentPicker, data-live-student-id, 仅今天]
+      monitor:
+        title: 学情监测看板
+        source: assets/js/teacher/views/monitor.js
+        prerequisites: [顶部选择要查看的课程。]
+        features:
+          - id: teacher.monitor.heatmap
+            title: 查看学习完成或知识掌握热力图
+            aliases: [班级热力图, 知识点 × 学生, 知识点掌握热力图]
+            location: 学情监测看板顶部「知识点 × 学生」热力图
+            steps: [在顶部热力图右上角下拉框切换「学习完成热力图」或「知识点掌握热力图」。, 把鼠标移到单元上查看提示，点击有数据的格子可打开对应学生学情；灰色无数据格子不可点。, 图下方「共性薄弱识别」展示薄弱知识点；这些标签仅展示，不是操作按钮。]
+            anchors: [heatType, 学习完成热力图, 知识点掌握热力图, 共性薄弱识别, weakChips, 'if (val[2] == null)']
+          - id: teacher.monitor.students
+            title: 搜索学生、筛选预警等级和查看个人学情
+            aliases: [学生学情列表, 姓名搜索, 学号搜索, 个体学情详情]
+            location: 学情监测看板的「学生学情列表」
+            steps: [在「学生学情列表」标题栏搜索姓名或学号，点「全部」「红」「黄」「绿」按预警等级筛选。, 点击学生行打开右侧「个体学情详情」抽屉，查看指标、知识点和近期情况。]
+            anchors: [stuSearch, stuSeg, data-uid, 个体学情详情]
+          - id: teacher.monitor.message
+            title: 给学生发送私信
+            aliases: [发送私信, 消息提醒, 向学生发送私信]
+            location: 学情监测看板 → 学生行 → 个体学情详情底部
+            steps: [点击目标学生打开「个体学情详情」，在底部点击「发送私信」。, 在「向学生发送私信」弹窗输入内容，点「发送」；消息会出现在学生的通知中。]
+            anchors: [prMsg, 向学生发送私信, msgBody, msgSend]
+          - id: teacher.monitor.report
+            title: 从学生详情进入学情报告
+            aliases: [学生详情报告按钮, 个体报告入口]
+            location: 学情监测看板的个体学情详情抽屉底部
+            steps: [点击学生行打开「个体学情详情」，点底部「学情报告」进入报告页面。]
+            notes: [这是报告页面入口，不能声称点击后自动生成了该学生的个人报告。]
+            anchors: [prReport, Router.go('report')]
+          - id: teacher.monitor.alerts
+            title: 查看和筛选异常预警
+            aliases: [异常预警列表, 预警详情, 触发规则]
+            location: 学情监测看板的「异常预警列表」
+            steps: [在「异常预警列表」标题栏按「全部」「红」「黄」筛选。, 点预警条目的「查看」打开详情，查看触发规则与具体情况。]
+            anchors: [异常预警列表, alSeg, data-detail, 触发规则]
+          - id: teacher.monitor.review
+            title: 复核、忽略或确认预警
+            aliases: [重新复核, 确认预警, 复核预警]
+            location: 学情监测看板的预警条目右侧
+            steps: [在预警条目右侧点击「复核」或「重新复核」打开复核弹窗。, 核对信息并填写备注后，点「忽略」或「确认预警」提交判断。]
+            anchors: [data-review, 复核预警, 确认预警, id="ig", id="cf"]
+      analysis:
+        title: 归因与错题分析
+        source: assets/js/teacher/views/analysis.js
+        prerequisites: [顶部选择要查看的课程。]
+        features:
+          - id: teacher.analysis.panels
+            title: 查看高频错题、共性薄弱和个性异常
+            aliases: [高频错题 Top 5, 共性薄弱, 个性异常, 错题排行]
+            location: 归因与错题分析的范围条、概览指标和下方三个面板
+            steps: [打开「归因与错题分析」，先确认范围条的课程和统计范围。, 查看「高频错题 Top 5」以及下方「共性薄弱（班级层面）」「个性异常（个体层面）」。, 个体条目上点「查看学情」进入对应学生的学情详情。]
+            notes: [当前没有「知识点关联薄弱链路」或「AI 归因建议」面板，不要编造这些入口。]
+            anchors: [高频错题 Top 5, 共性薄弱（班级层面）, 个性异常（个体层面）, 查看学情]
+      question:
+        title: AI 出题与题库
+        source: assets/js/teacher/views/question.js
+        prerequisites: [顶部选择自己的课程；题目挂载需要已有章节和知识点。]
+        features:
+          - id: teacher.question.generate
+            title: AI 出题配置、生成预览和批准草稿
+            aliases: [AI 智能出题, 生成习题, 出题配置, 生成题目]
+            location: AI 出题与题库 → 顶部「AI 智能出题」页签
+            steps: [在「出题配置」选择知识点，可多选；用滑块设置难度和题量。, 点「生成习题」，在右侧查看生成预览和进度。, 若出现待批准卡片，点击「确认执行」后才写入草稿箱；再到「草稿箱」编辑并发布。]
+            notes: [生成期间不要声称已直接发布正式题库；待批准卡片未确认时草稿也尚未写入。]
+            anchors: [AI 智能出题, 出题配置, genKp, genDiff, genCountRange, genBtn, genConfirms]
+          - id: teacher.question.material
+            title: 出题素材库上传入口的限制
+            aliases: [素材库, 上传出题素材, 模拟上传]
+            location: AI 出题与题库 → AI 智能出题 → 左侧「素材库」
+            steps: [点击「素材库」上传区域会打开「上传出题素材」弹窗。]
+            notes: [当前弹窗是演示入口，只提供「模拟上传」，没有真实选择本地文件的控件。真实课程资源上传请到「课程目录与资源」点「上传到目录」；聊天附件上传在智能助手输入框旁。]
+            anchors: [素材库, 上传出题素材, 选择文件（演示）, 模拟上传]
+          - id: teacher.question.drafts
+            title: 草稿箱筛选、刷新、编辑、删除和发布
+            aliases: [出题草稿箱, 待处理, 发布进题库, 保存草稿]
+            location: AI 出题与题库 → 顶部「草稿箱」页签
+            steps: [点「草稿箱」，通过「待处理」「已发布」切换，右上方「刷新」更新列表。, 未发布草稿可点「编辑」，修改题干、选项、答案和解析，点「保存草稿」。, 可发布的条目点「发布进题库」；未发布条目可点「删除」。]
+            notes: [草稿仅本人可见；草稿编辑的章节与知识点不可改，含图草稿的图结构不支持在此编辑。]
+            anchors: [出题草稿箱, draftSeg, draftRefresh, data-dedit, data-dpub, data-ddel, dqSave]
+          - id: teacher.question.bank.find
+            title: 题库搜索、排序和翻页
+            aliases: [题库管理, 正确率排序, 反转排序, 输入页码, 升序降序]
+            location: AI 出题与题库 →「题库管理」页签 → 表格标题栏和底部页码
+            steps: [点「题库管理」，在标题栏搜索题干或知识点。, 用「默认」「知识点」「正确率」「难度」切换排序；旁边方向按钮反转升降序。, 底部点页码或左右箭头翻页；出现省略号时点击它，输入页码后点「确认」。]
+            anchors: [bankSearch, bankSeg, bankDirBtn, data-page-action, bankJumpOk]
+          - id: teacher.question.bank.edit
+            title: 编辑正式题库的题目
+            aliases: [修改题目, 编辑习题, 保存修订, 修改答案]
+            location: AI 出题与题库 → 题库管理 → 题目行最右侧「编辑」
+            steps: [在「题库管理」找到题目，点击该行最右侧「编辑」。, 在「编辑习题」弹窗调整题干、选项、解析，以及知识点、难度、题型、分值、重点标记、归属章节或标签。勾选选项旁的「正确答案」。, 底部点击「保存修订」；点击「取消」放弃。]
+            anchors: [data-edit, 编辑习题, eqStem, eq-opt-right, eqAnalysis, eqSave]
+          - id: teacher.question.bank.options
+            title: 在题目编辑弹窗增加选项或设置正确答案
+            aliases: [添加选项, 删除选项, 正确答案勾选]
+            location: 题库管理的「编辑习题」弹窗 →「选项设置」
+            steps: [「选项设置」右上角点「＋ 添加选项」，每行可选字母、输入内容、勾选正确答案或点「删除」。, 勾选完成后点底部「保存修订」。从题库删除的题目进入「回收站」，7 天内可恢复。]
+            anchors: [选项设置, eqAddOpt, eq-opt-del, eq-opt-right, 保存修订]
+          - id: teacher.question.bank.figure
+            title: 编辑题目中的图像结构与预览
+            aliases: [含图像, 二叉树图, 邻接矩阵, 一般图, 实时预览]
+            location: 编辑习题弹窗 →「图像结构」区域
+            steps: [勾选「含图像」，在「图型」选择二叉树、邻接矩阵或一般图。, 按对应控件填写根节点、节点列表和边或矩阵值，查看下方预览；完成后「保存修订」。]
+            notes: [这里编辑的是结构化题图，不是上传图片附件。]
+            anchors: [图像结构, eqHasFig, eqFigType, eqFigRoot, eqFigNodesInput, eqFigEdgesGraphInput]
+          - id: teacher.question.bank.new
+            title: 手动新建题目并保存进题库
+            aliases: [新建题目, 保存进题库, 手动出题]
+            location: 题库管理标题栏右上角「新建题目」
+            steps: [点「新建题目」，选择章节、知识点标签、难度和分值，填写题干、选项和解析。, 此弹窗按单选题填写，点击选项旁圆点设为正确答案；可添加或删除选项。, 需要题图时勾选「本题含图像」填写图型结构，最后点「保存进题库」。]
+            anchors: [bankNew, nqChapter, nqKpTags, nqAddOpt, nqHasFig, nqSubmit]
+          - id: teacher.question.bank.delete
+            title: 删除题库题目
+            aliases: [删除题目, 移除习题]
+            location: 题库管理的题目行最右侧
+            steps: [先核对目标题目，点击该行「删除」会直接提交删除并刷新列表。]
+            notes: [此入口没有二次确认弹窗，不要指导用户等待确认按钮。]
+            anchors: [data-del, API.question.remove]
+      report:
+        title: 学情分析报告
+        source: assets/js/teacher/views/report.js
+        prerequisites: [先选择自己的课程。]
+        features:
+          - id: teacher.report.generate
+            title: 按课程章节和日期生成学情分析报告
+            aliases: [一键生成报告, 统计范围, 开始日期, 结束日期, 报告部分]
+            location: 学情分析报告标题栏「一键生成报告」及生成弹窗
+            steps: [点击「一键生成报告」，在弹窗选择课程与统计范围；章节复选框可多选，至少选一个。, 选择开始、结束日期；范围只能是最近一年内且不能是未来，开始日期不得晚于结束日期。, 在「包含章节」区域点「整体掌握度」「共性短板归因」「个体预警」「目标达成度」切换报告部分，至少保留一个；点底部「生成」。]
+            anchors: [genReport, rgCourse, rgScope, rgStart, rgEnd, rgSec, rgGo]
+          - id: teacher.report.history
+            title: 查看报告历史归档
+            aliases: [历史归档, 已生成报告]
+            location: 学情分析报告的报告列表与「历史归档」面板
+            steps: [在报告列表或「历史归档」点击目标报告，打开详情查看。]
+            anchors: [历史归档, openDetail, data-rid]
+          - id: teacher.report.export
+            title: 导出教师报告 PDF 或网页
+            aliases: [导出 PDF, 导出网页, 下载班级报告]
+            location: 教师报告详情弹窗底部
+            steps: [先打开一份报告，点击底部「导出 PDF」或「导出网页」；点「关闭」返回。]
+            anchors: [exPdf, exHtml]
+      structure:
+        title: 课程目录与资源
+        source: assets/js/teacher/views/structure.js
+        prerequisites: [顶部课程选择框先选中要操作的课程；只操作自己任教的课程。]
+        features:
+          - id: teacher.structure.overview
+            title: 编辑课程内容与查看章节目录
+            aliases: [编辑课程, 修改课程, 课程管理, 课程内容, 课程目录]
+            location: 课程目录与资源的章节列表及每章右侧操作区
+            steps: [打开「课程目录与资源」，找到要修改的章节，点击该章节右侧「详情 / 管理」。, 章节名称、学时在章节详情中修改；资源在资源行点「编辑」；知识点点击标签打开详情。, 如果要调整知识点关系或布局，打开「知识图谱编排」。]
+            notes: [目前没有统一的「编辑课程」按钮，也没有已实现的课程名称、学期修改入口；用户只说编辑课程时先说明上述选项，必要时问要改哪部分。]
+            anchors: [课程目录与资源, 详情 / 管理, data-act="editres"]
+          - id: teacher.structure.chapter.new
+            title: 新建章节
+            aliases: [添加章节, 章节学时]
+            location: 课程目录与资源顶部右侧「新建章节」
+            steps: [点击「新建章节」，填写「章节名称」和「学时」，点击弹窗底部「保存」。]
+            anchors: [stNewCh, 新建章节, 章节名称, 学时]
+          - id: teacher.structure.chapter.edit
+            title: 修改章节名称与学时
+            aliases: [改章节名字, 章节详情, 详情 / 管理, 保存修改]
+            location: 课程目录与资源 → 章节右侧「详情 / 管理」→「章节详情」弹窗
+            steps: [找到章节，点击该章节右侧「详情 / 管理」打开「章节详情」。, 修改「章节名称」或「学时」，点击弹窗底部「保存修改」。]
+            anchors: [详情 / 管理, 章节详情, cdSave, 章节名称, 学时]
+          - id: teacher.structure.chapter.delete
+            title: 删除章节并核对影响
+            aliases: [删除章节, 章节移除]
+            location: 章节详情弹窗底部「删除章节」
+            steps: [点击章节的「详情 / 管理」，在详情底部点「删除章节」。, 核对确认提示及关联内容影响，再决定是否确认删除。]
+            notes: [章节下还有知识点时删除会被拒绝。]
+            anchors: [cdDel, 删除章节, confirm]
+          - id: teacher.structure.upload
+            title: 上传文件到章节目录并设置知识点标签
+            aliases: [上传资源, 上传到目录, 开始上传, 资源标题, 课程课件]
+            location: 课程目录与资源顶部「上传到目录」或章节详情底部「上传资源」
+            steps: [点顶部「上传到目录」，或在章节详情底部点「上传资源」。, 在「上传资源到章节目录」选择目录（章）、文件和资源标题。, 在「KP 标签（可多选）」选择主知识点及涉及知识点，点底部「开始上传」。]
+            notes: [此上传入口接受 MP4 / PDF / PPT / PPTX / DOC / DOCX；聊天附件格式另有规则。]
+            anchors: [stUpload, cdUpload, 上传资源到章节目录, 开始上传, 主知识点, 涉及知识点]
+          - id: teacher.structure.resource.edit
+            title: 修改资源标题、所属章节和知识点标签
+            aliases: [编辑资源, 改资源名称, 删除标签]
+            location: 课程目录与资源中对应资源行右侧「编辑」
+            steps: [在章节下找到资源，点击资源行右侧「编辑」。, 在「编辑资源」弹窗修改标题、章节和知识点标签；已选标签的小「✕」可移除。, 点击底部「保存」。]
+            anchors: [data-act="editres", 编辑资源, data-off, 保存]
+          - id: teacher.structure.resource.delete
+            title: 删除课程资源
+            aliases: [删除资源, 删课件]
+            location: 课程目录与资源的资源行最右侧小「删」按钮
+            steps: [找到资源，在行右侧点击小「删」，核对确认提示后确认。]
+            notes: [删除后学生端不再可见，并清理对应检索切片。]
+            anchors: [data-act="delres", '>删</button>', confirm]
+          - id: teacher.structure.kp.new
+            title: 在章节中新建知识点
+            aliases: [新增知识点, 添加知识点]
+            location: 章节详情弹窗底部「新增知识点」
+            steps: [点击章节右侧「详情 / 管理」，在详情底部点「新增知识点」。, 填写「知识点名称」，需要时勾选「标记为重点」，点击「添加」；所属章节由打开的章节决定且不可在此修改。]
+            anchors: [cdNewKp, 新增知识点, kpNewName, kpNewKey, kpNewSave]
+          - id: teacher.structure.kp.edit
+            title: 修改知识点名称、简介和所属章节
+            aliases: [知识点详情, 编辑知识点, 删除知识点, 重难点标记]
+            location: 课程目录与资源中的知识点标签，或章节详情中的知识点标签
+            steps: [点击知识点标签打开「知识点详情」。, 修改「知识点名称」「所属章节」「学时」「知识点介绍」或「标记为重点」，点击底部「保存修改」。, 若要删除，点同一弹窗底部「删除知识点」，核对提示后确认。]
+            notes: [知识点仍挂有资源或题目时无法删除。]
+            anchors: [知识点详情, kdSave, kdDel, 所属章节, kdHours, kdKey, kdSummary]
+      graph-edit:
+        title: 知识图谱编排
+        source: assets/js/teacher/views/graph-edit.js
+        prerequisites: [先在课程目录与资源建立章节和知识点，再选择对应课程编排。]
+        features:
+          - id: teacher.graph.nodes
+            title: 知识点目录、待更新与节点布点
+            aliases: [待更新, 添加图谱节点, 从目录刷新, 节点详情]
+            location: 知识图谱编排的左侧页签与中间画布
+            steps: [左侧「知识点目录」查看课程知识点；「待更新」查看尚未布点的新增知识点。, 点击左侧知识点在画布定位或布点，拖拽节点调整位置。, 点击画布节点显示右侧「知识点详情」，右上角「×」关闭；修改课程知识点后可点顶部「从目录刷新」。]
+            notes: [图谱节点来自课程知识点，新增知识点要在「课程目录与资源」操作；「从目录刷新」会重新载入，先保存想保留的改动。]
+            anchors: [知识点目录, 待更新, geRefresh, geDClose, _openDetail]
+          - id: teacher.graph.kp.edit
+            title: 在图谱右侧详情修改或删除课程知识点
+            aliases: [图谱知识点名称, 图谱重点标记, 图谱知识点介绍, 详情保存修改]
+            location: 知识图谱编排 → 点击画布节点 → 右侧「知识点详情」
+            steps: [点击画布节点，在右侧「知识点详情」修改知识点名称、学时、重点或知识点介绍。, 点右侧面板底部「保存修改」立即保存知识点信息；该面板所属章节只读，换章请到课程目录与资源。, 点面板底部「删除知识点」并确认会删除课程知识点。]
+            notes: [此处「保存修改」保存知识点资料；页面顶部「保存图谱」保存位置和关系。, 详情中的「删除知识点」与工具栏「删除选中」作用不同，不要混淆。]
+            anchors: [geDName_i, geDChap_i, geDHours_i, geDKey_i, geDSum_i, geDSave, geDDel]
+          - id: teacher.graph.link
+            title: 用节点上的加号连接知识点关系
+            aliases: [连线, 前置, 进阶, 并列, 节点加号, 加关系]
+            location: 知识图谱编排画布的知识点节点悬停小「＋」
+            steps: [把鼠标移到起点知识点，点击节点上出现的小「＋」。, 在关系菜单选「前置」「进阶」或「并列」，再点击目标知识点完成连线。, 菜单「取消」或按 Esc 可取消连线；完成后点顶部「保存图谱」。]
+            anchors: [悬停节点点「+」连线, data-rel, 前置, 进阶, 并列, Escape]
+          - id: teacher.graph.delete
+            title: 删除选中节点或连线
+            aliases: [删除选中, 删除关系]
+            location: 知识图谱编排画布上方工具栏
+            steps: [在画布点击节点或连线选中它，再点工具栏「删除选中」。, 确认布局正确后点击顶部「保存图谱」。]
+            notes: [删除画布节点不等同于删除课程知识点；删除课程知识点需在课程目录中操作。]
+            anchors: [geDel, 删除选中, geSave]
+          - id: teacher.graph.undo
+            title: 撤回图谱修改、适配视图和保存
+            aliases: [撤回上一步, Ctrl+Z, 适配视图, 保存图谱, 图谱缩放]
+            location: 知识图谱编排画布上方工具栏和页面右上角
+            steps: [点「撤回」或按 Ctrl / Command + Z 撤回上一步；点「适配视图」让图谱适应画布。, 画布可平移和滚轮缩放，节点可拖拽；调整完成点页面右上角「保存图谱」。]
+            anchors: [geUndo, geFit, geSave, wheel]
+      chat:
+        title: 智能助手
+        source: assets/js/teacher/views/chat.js
+        features: []
+  admin:
+    chat_view: assistant
+    pages:
+      users:
+        title: 账号管理
+        source: assets/js/admin/views/users.js
+        features:
+          - id: admin.users.list
+            title: 查找教师学生账号并选择账号
+            aliases: [教师学生账号, 账号搜索, 角色筛选, 全选]
+            location: 账号管理的教师 / 学生账号列表
+            steps: [打开「账号管理」，按页面的角色筛选和搜索框查找账号。, 使用行首复选框勾选目标账号，表头复选框可选择当前列表，用于批量删除。]
+            anchors: [fKey, fRole, pickAll, type="checkbox"]
+          - id: admin.users.create
+            title: 新建教师或学生账号
+            aliases: [新建账号, 创建用户]
+            location: 账号管理顶部「新建账号」
+            steps: [点「新建账号」，选择教师或学生角色，填写用户名、姓名和密码。, 按角色填写班级或部门等信息，点击弹窗底部「创建」。]
+            anchors: [新建账号, cuGo]
+          - id: admin.users.edit
+            title: 修改账号资料或重置密码
+            aliases: [编辑账号, 重置密码, 修改姓名, 学号, 部门, 职称]
+            location: 账号管理 → 账号行右侧「编辑」→ 编辑账号弹窗
+            steps: [找到账号，点该行「编辑」。, 可修改用户名、姓名及学生班级、学号或教师部门、职称；要重置密码，在「重置密码」填写至少 6 位新密码，留空则保持原密码。, 点击底部「保存」。]
+            notes: [编辑弹窗不提供修改角色；不要声称可以改成管理员。]
+            anchors: [data-edit, 编辑账号, 重置密码, euGo]
+          - id: admin.users.password
+            title: 在账号管理中手动重置密码
+            aliases: [重置学生密码, 重置教师密码, 修改账号密码]
+            location: 账号管理 → 目标账号行右侧「编辑」→「编辑账号」弹窗
+            steps: [找到目标账号，点击该行右侧「编辑」。, 在弹窗「重置密码」填写至少 6 位新密码，点击底部「保存」。]
+            notes: [重置密码留空则不修改密码。]
+            anchors: [data-edit, 编辑账号, euPwd, 至少 6 位, euGo]
+          - id: admin.users.import.template
+            title: 批量导入账号并下载模板
+            aliases: [批量导入, Excel 模板, Word 模板, 导入角色]
+            location: 账号管理顶部「批量导入」→ 导入向导第 1 步
+            steps: [点击「批量导入」，第 1 步选择学生或教师。, 点击「下载 Excel 模板」或「下载 Word 模板」，按模板填写；点「下一步」进入上传。]
+            anchors: [第 1 步, dlXlsx, dlDocx, next1]
+          - id: admin.users.import.file
+            title: 导入账号文件、设置初始密码和解析预览
+            aliases: [统一初始密码, 解析预览, 选择文件, xlsx, docx]
+            location: 批量导入向导第 2 步与第 3 步
+            steps: [第 2 步「选择文件」上传 .xlsx 或 .docx；可填写统一初始密码，至少 6 位，填写后覆盖文件密码列。, 点「解析预览」，在第 3 步核对有效记录与错误记录；需调整时点「上一步」。, 核对后点「导入…条」，完成后点「返回账号列表」。]
+            anchors: [第 2 步, 统一初始密码, id="parse", 第 3 步, id="go", 返回账号列表]
+          - id: admin.users.delete
+            title: 删除单个账号
+            aliases: [删除账号, 确认删除, 输入用户名]
+            location: 账号管理的账号行右侧「删除」
+            steps: [点目标账号行「删除」，核对账号及影响。, 在确认输入框填写该账号用户名，再点「确认删除」；不删除则点「取消」。]
+            notes: [不能删除当前登录账号、管理员账号或拥有课程的教师；以页面实际校验和拒绝原因作准。]
+            anchors: [data-del, 删除账号, delGo]
+          - id: admin.users.batch.delete
+            title: 勾选并批量删除账号
+            aliases: [批量删除, 输入数量, 已选账号]
+            location: 账号管理的列表复选框与顶部「批量删除」
+            steps: [勾选需要删除的账号，点击顶部「批量删除」。, 在弹窗核对所勾选账号名单和删除影响，输入弹窗提示的勾选账号数量，点「确认删除」。, 操作后查看成功、被拒或失败数量；若有未删除账号，查看结果列表中的原因。]
+            notes: [数量确认按全部勾选账号计数；受保护账号会在执行时被拒并列入结果，不是预先从确认数量中排除。]
+            anchors: [批量删除账号, bdGo, bdConfirm]
+          - id: admin.users.batch.result
+            title: 查看批量删除失败或被拒原因
+            aliases: [未删除的账号, 已拒绝, 知道了]
+            location: 批量删除后出现的「未删除的账号」弹窗
+            steps: [在「未删除的账号」弹窗查看用户名、结果和原因，点底部「知道了」关闭。]
+            anchors: [未删除的账号, showBatchResult, 知道了]
+      assistant:
+        title: 智能助手
+        source: assets/js/admin/views/assistant.js
+        features:
+          - id: admin.assistant.platform
+            title: 查询平台运行、账号课程规模和数据检查
+            aliases: [平台治理, 知识库索引, 数据一致性, 系统状态]
+            location: 管理员左侧「智能助手」
+            steps: [在智能助手输入所需平台问题，例如账号数量、课程规模、知识库索引状态或数据一致性。, 助手调用平台只读查询工具后回答；班级教学详情需要任课教师查看。]
+            notes: [当前没有管理员图形化索引重建、课程内容编辑或通知发送面板，不要编造入口。]
+            anchors: [平台治理, kb_status, data_check]
+shared:
+  - id: system.modal
+    title: 关闭弹窗或右侧详情抽屉
+    aliases: [取消操作, 关闭弹窗, 抽屉关闭, 弹窗叉号]
+    source: assets/js/common.js
+    navigation: false
+    location: 弹窗或右侧抽屉的右上角及底部
+    steps: [点击右上角「×」或底部「关闭」「取消」退出；也可点击弹窗外的遮罩区域关闭。, 需要保存时先点击该弹窗的保存按钮，关闭按钮不等同于保存。]
+    notes: [有特殊进度自动保存行为的资源阅读弹窗，以资源阅读步骤为准。]
+    anchors: [modal__head, data-close, e.target === ov, drawer(opts)]
+  - id: system.logout
+    title: 退出当前登录
+    aliases: [退出登录, 切换账号]
+    source: assets/js/common.js
+    navigation: false
+    location: 三端顶部右侧退出图标
+    steps: [点击顶部右侧退出图标（提示「退出登录」），在确认弹窗点击「退出登录」；点「取消」保持登录。]
+    anchors: [logoutBtn, logoutConfirm, 退出登录]
+  - id: system.theme
+    title: 当前界面主题与个人信息入口限制
+    aliases: [夜间模式, 深色模式, 个人资料, 用户头像]
+    source: assets/js/common.js
+    navigation: false
+    location: 当前三端公共界面
+    steps: [界面目前固定使用亮色主题，没有可用的夜间模式切换入口。]
+    notes: [侧栏底部用户信息仅展示当前用户，不提供个人资料编辑面板；账号资料由管理员在账号管理中编辑。]
+    anchors: [夜间模式已取消, light]
+  - id: chat.send
+    title: 提问、换行与停止生成
+    aliases: [发送, Enter, Shift+Enter, 停止生成]
+    location: 智能体页面中间对话区底部输入框及右侧发送按钮
+    steps: [输入问题后按 Enter 或点击发送按钮；Shift + Enter 换行。, 回答生成时发送按钮变为「停止生成」，点击可停止并保留已经生成的内容。]
+    anchors: [chatInput, chatSend, Shift+Enter, 停止生成]
+  - id: chat.upload
+    title: 上传图片或文档、移除待发附件
+    aliases: [聊天附件, 上传图片, 上传文件, 图片格式, 附件上限]
+    location: 智能体输入框旁上传按钮与输入框上方待发附件区
+    steps: [点击输入框旁上传按钮选择文件，可多选；输入问题后一起发送。, 待发附件右上角小「×」可移除；图片展示缩略图，文档展示文件名。]
+    notes: [三端均支持 TXT / MD / CSV / JSON / XLSX / DOCX / PDF 和 JPG / JPEG / PNG / GIF / WebP；每轮最多 5 个附件，单个不超过 10 MB，图片总大小不超过 32 MB。, 聊天上传不会自动加入课程资源或知识库；识图需要当前模型支持视觉输入。]
+    anchors: [chatUpload, chatFile, attTray, 移除图片, MAX_N = 5, MAX_MB = 10, MAX_IMAGE_TOTAL_MB = 32]
+  - id: chat.image
+    title: 双击放大待发或已发送图片
+    aliases: [图片预览, 放大图片, 图片没有名称]
+    location: 智能体待发附件区或用户消息中的图片缩略图
+    steps: [双击图片缩略图打开大图预览，待发图片和历史消息图片均可。, 点关闭按钮、预览遮罩或按 Esc 关闭；图片不显示文件名。]
+    anchors: [双击放大查看, 图片预览, onKeydown]
+  - id: chat.edit
+    title: 复制用户消息或重新编辑文字和附件
+    aliases: [重新编辑, 复制消息, 回填问题, 附件恢复]
+    location: 自己发出的消息下方的小复制和编辑按钮
+    steps: [点击「复制消息」按钮复制文字。, 点击「重新编辑」将这条问题的文字及图片、文档恢复到输入框待发区；修改后自行发送，不会自动发出。]
+    notes: [历史附件无法读取时需重新选择文件。]
+    anchors: [复制消息, 重新编辑, editUserMessage]
+  - id: chat.answer
+    title: 复制回答或反馈回答是否有帮助
+    aliases: [复制回答, 有帮助, 没帮助, 点赞, 点踩]
+    location: AI 回答下方的反馈与复制小按钮
+    steps: [点击「复制回答」复制答案；点击「有帮助」或「没帮助」提交对应反馈。]
+    anchors: [复制回答, 有帮助, 没帮助]
+  - id: chat.history
+    title: 新建会话、切换历史和登录期间恢复
+    aliases: [历史会话, 新建会话, 新对话, 上次记录]
+    location: 对话区顶部「新建会话」及右侧「历史会话」
+    steps: [点对话区顶部「新建会话」开始空对话。, 点击右侧「历史会话」中的条目切换查看；每次登录首次进入从新对话开始，同次登录返回页面时恢复上次打开的会话。]
+    anchors: [newSessBtn, 历史会话, renderSessions]
+  - id: chat.history.delete
+    title: 删除历史会话
+    aliases: [删除会话, 历史删除按钮]
+    location: 右侧历史会话条目上的删除小按钮
+    steps: [点击历史会话条目上的「删除会话」小按钮，进入确认状态后再次点击确认删除。]
+    notes: [删除会话会清理其消息引用的保存附件。]
+    anchors: [删除会话, btn.dataset.armed]
+  - id: chat.recommend
+    title: 查看猜你想问并发起推荐问题
+    aliases: [猜你想问, 推荐问题, 用户偏好]
+    location: 智能体页面右侧「猜你想问」面板
+    steps: [查看「猜你想问」推荐，点击问题发起提问。, 教师和管理员推荐结合当前课程或平台数据及本人近期对话主题调整；数据不足时可能没有推荐。]
+    anchors: [猜你想问, recommended, emptyRecommend]
+  - id: chat.sources
+    title: 展开思考工具过程或原文溯源
+    aliases: [思考与工具调用, 原文溯源, 引用来源, 检索证据]
+    location: AI 回答的折叠面板与引用区域
+    steps: [点击「思考与工具调用」展开或折叠工具过程。, 有引用时点击「原文溯源」查看来源；纯系统操作指导可能没有教材引用。]
+    anchors: [思考与工具调用, 原文溯源]
+  - id: chat.action
+    title: 使用页面跳转按钮或确认待批准动作
+    aliases: [打开页面, 确认执行, 拒绝, 确认卡片]
+    location: AI 回答下方的建议按钮或待批准卡片
+    steps: [点击回答下方页面按钮进入对应页面，再按回答中的按钮位置自行操作。, 遇到「待批准」卡片时先核对摘要和影响，再点「确认执行」或「拒绝」；页面跳转本身不会编辑或保存数据。]
+    notes: [学生端没有业务写操作审批工具；教师或管理员只可批准本角色已支持的操作。]
+    anchors: [data-agent-action, 确认执行, 拒绝]

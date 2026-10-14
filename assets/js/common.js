@@ -6,11 +6,11 @@
 const ICONS = {
   home: '<path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V21h14V9.5"/>',
   layers: '<path d="m12 2 9 5-9 5-9-5 9-5Z"/><path d="m3 12 9 5 9-5"/><path d="m3 17 9 5 9-5"/>',
-  bot: '<rect x="4" y="8" width="16" height="12" rx="3"/><path d="M12 4v4M9 14h.01M15 14h.01M9 18h6"/><path d="M2 13v2M22 13v2"/>',
+  bot: '<rect x="4" y="8" width="16" height="12" rx="6"/><path d="M12 4v4M9 14h.01M15 14h.01M9 18h6"/><path d="M2 13v2M22 13v2"/>',
   pencil: '<path d="M17 3a2.8 2.8 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/>',
-  chart: '<path d="M3 3v18h18"/><rect x="7" y="12" width="3" height="6"/><rect x="12" y="8" width="3" height="10"/><rect x="17" y="4" width="3" height="14"/>',
+  chart: '<path d="M3 3v18h18"/><path d="M8 18v-6M12 18V8M16 18V4"/>',
   bell: '<path d="M18 8a6 6 0 1 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/>',
-  grid: '<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>',
+  grid: '<rect x="3" y="3" width="7" height="7" rx="2"/><rect x="14" y="3" width="7" height="7" rx="2"/><rect x="3" y="14" width="7" height="7" rx="2"/><rect x="14" y="14" width="7" height="7" rx="2"/>',
   search2: '<circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>',
   file: '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6"/>',
   target: '<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1.5"/>',
@@ -30,11 +30,14 @@ const ICONS = {
   trend: '<path d="m3 17 6-6 4 4 8-8"/><path d="M21 7h-5v5" transform="translate(0.5,-0.5)"/>',
   down: '<path d="m3 7 6 6 4-4 8 8"/><path d="M21 17h-5v-5" transform="translate(0.5,0.5)"/>',
   arrowRight: '<path d="M5 12h14M13 6l6 6-6 6"/>',
+  arrowUp: '<path d="M12 19V5M6 11l6-6 6 6"/>',
   arrowLeft: '<path d="M19 12H5M11 6l-6 6 6 6"/>',
   chevronDown: '<path d="m6 9 6 6 6-6"/>',
   chevronRight: '<path d="m9 6 6 6-6 6"/>',
   send: '<path d="M22 2 11 13"/><path d="M22 2 15 22l-4-9-9-4Z"/>',
+  square: '<rect x="6.5" y="6.5" width="11" height="11" rx="2"/>',
   refresh: '<path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/>',
+  undo: '<polyline points="9 14 4 9 9 4"/><path d="M20 20v-7a4 4 0 0 0-4-4H4"/>',
   shuffle: '<path d="M16 3h5v5M4 20 21 3M21 16v5h-5M15 15l6 6M4 4l5 5"/>',
   list: '<path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/>',
   users: '<circle cx="9" cy="8" r="3.5"/><path d="M2 21c0-3.9 3.1-7 7-7s7 3.1 7 7"/><path d="M17 4.5a3.5 3.5 0 0 1 0 7M18 21c0-2.5-.7-4.5-2-6"/>',
@@ -74,7 +77,20 @@ const ICONS = {
 
 function icon(name, cls) {
   const path = ICONS[name] || ICONS.info;
-  return `<svg class="${cls || ''}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${path}</svg>`;
+  return `<svg class="ico ${cls || ''}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${path}</svg>`;
+}
+
+/** 课程智能助手标识（书本 + 助手 + 引导箭头）。独立 SVG 文件，避免渐变 id 冲突。 */
+const ASSISTANT_MARK_SRC = 'assets/img/course-assistant.svg';
+
+function assistantMark(cls) {
+  const c = cls ? ` class="${cls}"` : '';
+  return `<img${c} src="${ASSISTANT_MARK_SRC}" alt="" draggable="false">`;
+}
+
+function navIcon(name) {
+  if (name === 'bot') return assistantMark('nav-item__icon nav-item__icon--mark');
+  return icon(name || 'info', 'nav-item__icon');
 }
 
 /* ---------------- 2. 工具函数 ---------------- */
@@ -99,7 +115,7 @@ const U = {
   },
   levelBadge: { excellent: 'badge--ok', good: 'badge--ok', fair: 'badge--warn', weak: 'badge--danger', none: 'badge--outline' },
 
-  alertName: { red: '紧急', yellow: '关注', green: '正常' },
+  alertName: { red: '紧急', yellow: '关注', green: '已解除' },
   alertBadge: { red: 'badge--danger', yellow: 'badge--warn', green: 'badge--ok' },
   alertCard: { red: 'alert-card--red', yellow: 'alert-card--yellow', green: 'alert-card--green' },
 
@@ -148,6 +164,43 @@ const U = {
       ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   },
 
+  /** 题目配图地址：外链，或本系统保存的题目图片。 */
+  httpImageUrl(raw) {
+    const text = String(raw == null ? '' : raw).trim();
+    if (!text || text.includes('..') || text.includes('\\')) return '';
+    if (/^\/resources\/question-figures\/[A-Za-z0-9]+\/[A-Za-z0-9]+\.(png|jpe?g|gif|webp)$/i.test(text)) return text;
+    try {
+      const url = new URL(text);
+      if ((url.protocol !== 'http:' && url.protocol !== 'https:') || url.username || url.password) return '';
+      return url.href;
+    } catch (e) {
+      return '';
+    }
+  },
+
+  /** 把图片链接画进容器；加载失败时给出说明，不把链接写进脚本。 */
+  mountQuestionImage(container, raw) {
+    if (!container) return false;
+    const url = this.httpImageUrl(raw);
+    if (!url) {
+      container.textContent = '';
+      return false;
+    }
+    const img = document.createElement('img');
+    img.className = 'q-linked-image';
+    img.alt = '题目配图';
+    img.referrerPolicy = 'no-referrer';
+    img.addEventListener('error', () => {
+      const note = document.createElement('div');
+      note.className = 'callout callout--warn';
+      note.textContent = '图片无法打开，请确认链接可公开访问。';
+      container.replaceChildren(note);
+    });
+    img.src = url;
+    container.replaceChildren(img);
+    return true;
+  },
+
   /** 骨架屏 */
   skeleton(h) {
     return `<div style="height:${h || 120}px;border-radius:var(--r-md);background:linear-gradient(90deg,var(--surface-2) 25%,var(--surface-3) 50%,var(--surface-2) 75%);background-size:200% 100%;animation:sk 1.4s infinite"></div>`;
@@ -157,6 +210,27 @@ const U = {
     if (v == null) return '';
     const up = v >= 0;
     return `<span class="stat__delta ${up ? 'delta-up' : 'delta-down'}">${icon(up ? 'trend' : 'down')} ${up ? '+' : ''}${v}${unit || 'pp'}</span>`;
+  },
+
+  /**
+   * 时长统一展示格式：分'秒"（60 进制；分用单引号，秒用双引号）。
+   * 例：202s → 3'22"；45s → 45"；0 → 0"；3725s → 1:02'05"
+   * 全站「时长」类数值一律走这里，避免各页各写一套（曾出现直接显示 202″ 的写法）。
+   */
+  dur(seconds) {
+    const total = Math.max(0, Math.round(Number(seconds) || 0));
+    const h = Math.floor(total / 3600);
+    const m = Math.floor((total % 3600) / 60);
+    const s = total % 60;
+    const pad = (n) => String(n).padStart(2, '0');
+    if (h > 0) return `${h}:${pad(m)}'${pad(s)}"`;
+    if (m > 0) return `${m}'${pad(s)}"`;
+    return `${s}"`;
+  },
+
+  /** 分钟（可含小数）→ 分'秒" ；用于接口返回「分钟」的时长字段 */
+  durMin(minutes) {
+    return U.dur((Number(minutes) || 0) * 60);
   }
 };
 
@@ -203,6 +277,10 @@ const Toast = {
   ok(t, d) { this.show(t, d, 'ok'); },
   warn(t, d) { this.show(t, d, 'warn'); },
   err(t, d) { this.show(t, d, 'danger'); },
+  /** `error` 是 `err` 的别名：全站有近 30 处调用写的是 Toast.error，
+   *  而这里过去只有 err —— 于是所有失败分支都会抛 "Toast.error is not a function"，
+   *  用户看不到任何提示（表现为「点了没反应」）。保留别名兜住这类写法。 */
+  error(t, d) { this.show(t, d, 'danger'); },
   info(t, d) { this.show(t, d, 'info'); },
   loading(title) {
     // 如果已有 loading toast，先移除
@@ -234,12 +312,22 @@ const Modal = {
     ov.className = 'overlay';
     ov.innerHTML = `<div class="modal ${opts.size ? 'modal--' + opts.size : ''}">
       <div class="modal__head"><h3>${opts.title}</h3>
+        ${opts.headerActions || ''}
         <button class="btn btn--ghost btn--icon btn--sm" data-close>${icon('x')}</button></div>
       <div class="modal__body">${opts.body}</div>
       ${opts.footer === null ? '' : `<div class="modal__foot">${opts.footer || `<button class="btn" data-close>关闭</button>`}</div>`}
     </div>`;
     document.body.appendChild(ov);
-    const close = () => ov.remove();
+    let closed = false;
+    const close = () => {
+      if (closed) return;
+      closed = true;
+      try {
+        if (opts.onClose) opts.onClose(ov);
+      } finally {
+        ov.remove();
+      }
+    };
     ov.addEventListener('click', e => {
       if (e.target === ov || e.target.closest('[data-close]')) close();
     });
@@ -272,22 +360,34 @@ const Router = {
   views: {},
   current: null,
   titles: {},
+  emptyState: null,
   register(key, cfg) { this.views[key] = cfg; },
   go(key, params) {
     if (!this.views[key]) return;
-    U.$$('.view').forEach(v => v.classList.remove('is-active'));
+    U.$$('.view').forEach(v => { v.classList.remove('is-active'); v.classList.remove('view-enter'); });
     const el = U.$('#view-' + key);
-    if (el) el.classList.add('is-active');
+    if (el) {
+      el.classList.add('is-active');
+      // 强制回流后再加 view-enter，确保每次切换（含重复点击同一板块）都重放入场动画
+      void el.offsetWidth;
+      el.classList.add('view-enter');
+    }
     U.$$('.nav-item').forEach(n => n.classList.toggle('is-active', n.dataset.view === key));
     const cfg = this.views[key];
     const tt = U.$('#pageTitle'), ts = U.$('#pageSub');
-    if (tt) tt.textContent = cfg.title || '';
+    if (tt) { tt.textContent = cfg.title || ''; tt.classList.remove('ph-enter'); void tt.offsetWidth; tt.classList.add('ph-enter'); }
     if (ts) ts.textContent = cfg.sub || '';
     location.hash = '#' + key;
     this.current = key;
     U.$('.content').scrollTo ? window.scrollTo({ top: 0, behavior: 'smooth' }) : null;
+    if (this.emptyState && this.emptyState(key, el, params)) return;
     if (cfg.mount && !cfg._mounted) { cfg.mount(params); cfg._mounted = true; }
     else if (cfg.update) cfg.update(params);
+  },
+  rerender() {
+    /* 重新执行当前视图的 mount（各视图 mount 均为全量重绘）——课程切换后刷新数据用 */
+    const cfg = this.views[this.current];
+    if (cfg && cfg.mount) cfg.mount();
   },
   init(def) {
     U.$$('.nav-item').forEach(n => n.addEventListener('click', () => this.go(n.dataset.view)));
@@ -301,15 +401,42 @@ const Router = {
 };
 
 /* ---------------- 7. 顶栏通用初始化 ---------------- */
-function initTopbar() {
+
+/**
+ * 退出登录二次确认（学生端/教师端/管理端共用）
+ * @param {string} redirect 退出后跳转地址，默认 index.html
+ */
+function confirmLogout(redirect) {
+  const u = (window.Auth && Auth.currentUser) ? Auth.currentUser() : null;
+  const roleText = u && u.role === 'teacher' ? '教师' : u && u.role === 'student' ? '学生' : '管理员';
+  Modal.open({
+    title: '退出登录',
+    body: `
+      <div class="callout callout--warn" style="margin:0">
+        ${icon('alert')}
+        <div><b>确定要退出登录吗？</b><br>
+          退出后需要重新输入账号密码；页面上未保存的编辑内容将丢失。</div>
+      </div>
+      ${u && (u.name || u.userId) ? `<p class="fz-13 t-2" style="margin:14px 0 0">
+        当前账号：<b>${U.esc(u.name || u.userId)}</b>${u.role ? ` · ${roleText}` : ''}</p>` : ''}`,
+    footer: `<button class="btn" data-close>取消</button>
+      <button class="btn btn--danger" id="logoutConfirm">${icon('logout')} 退出登录</button>`,
+    onMount(ov, close) {
+      U.$('#logoutConfirm', ov).addEventListener('click', () => {
+        close();
+        if (window.Auth) Auth.logout();
+        location.href = redirect || 'index.html';
+      });
+    }
+  });
+}
+
+function initTopbar(redirect) {
   const out = U.$('#logoutBtn');
   if (out) {
     out.innerHTML = icon('logout');
     out.title = '退出登录';
-    out.addEventListener('click', () => {
-      if (window.Auth) Auth.logout();
-      location.href = 'index.html';
-    });
+    out.addEventListener('click', () => confirmLogout(redirect));
   }
   if (window.Auth) Auth.applyUserBadge();
 }
@@ -318,8 +445,11 @@ function initTopbar() {
 const R = {
   /** 待办条 */
   todo(t) {
+    const idAttr = t.id ? ' data-todo-id="' + U.esc(t.id) + '"' : '';
     const actionData = t.userId ? ` data-action="${U.esc(t.action)}" data-user-id="${U.esc(t.userId)}" data-user-name="${U.esc(t.userName || '')}"` : '';
-    return `<div class="todo" data-target="${t.target || ''}"${actionData}>
+    // kpName：待办目标为资源中心时，用于定位到对应知识点（与「我的学情」下钻同一机制）
+    const kpData = t.kpName ? ` data-kp-name="${U.esc(t.kpName)}"` : '';
+    return `<div class="todo"${idAttr} data-target="${t.target || ''}"${t.sessionId ? ` data-session="${U.esc(t.sessionId)}"` : ''}${t.mode ? ` data-mode="${U.esc(t.mode)}"` : ''}${kpData}${actionData}>
       <div class="todo__ico todo__ico--${t.level}">${icon(t.type === 'alert' ? 'alert' : t.type === 'homework' ? 'pencil' : t.type === 'practice' ? 'target' : 'sparkle')}</div>
       <div class="todo__main"><b>${U.esc(t.title)}</b><span>${U.esc(t.desc)}</span></div>
       <button class="btn btn--sm ${t.level === 'danger' ? 'btn--danger' : t.level === 'brand' ? 'btn--primary' : ''}">${t.action}</button>
@@ -334,11 +464,10 @@ const R = {
   /** 资源卡 */
   res(r) {
     const map = { video: 'video', ppt: 'ppt', doc: 'file', quiz: 'quiz' };
-    const label = { video: '教学视频', ppt: '课堂PPT', doc: '教材文献', quiz: '题库' };
+    const label = { video: '教学视频', ppt: '教学课件', doc: '教材文献', quiz: '题库' };
     return `<div class="res" data-res="${r.resId}" data-kp="${U.esc(r.kp)}" ${r.url ? `data-url="${U.esc(r.url)}"` : ''}>
       <div class="res__thumb res__thumb--${r.type}">
-        <img class="res__cover" src="/assets/resources/covers/${r.resId}.jpg" alt="" loading="lazy" onerror="this.remove()">
-        <span class="res__type-label">${label[r.type]}</span>
+        <img class="res__cover" src="/resources/covers/${r.resId}.jpg" alt="" loading="lazy" onerror="this.remove()">
         ${r.duration ? `<span class="res__dur">${r.duration}</span>` : ''}
         ${r.pages ? `<span class="res__dur">${r.pages} 页</span>` : ''}
         ${r.count ? `<span class="res__dur">${r.count} 题</span>` : ''}</div>
@@ -346,8 +475,7 @@ const R = {
         <b class="clamp-2">${U.esc(r.title)}</b>
         <div class="row"><span class="badge badge--outline">${label[r.type]}</span><span class="spacer"></span><span>${r.views || 0} 次</span></div>
         <div class="mt-a">
-          ${U.bar(r.progress, r.progress >= 100 ? 'excellent' : r.progress > 0 ? 'fair' : 'none', 'sm')}
-          <div class="row fz-11 t-dim" style="margin-top:4px"><span>${U.esc(r.kp)}</span><span class="spacer"></span><span class="mono">${r.progress}%</span></div>
+          <div class="row fz-11 t-dim"><span>${U.esc(r.kp)}</span><span class="spacer"></span><span class="mono">${r.progress}%</span></div>
         </div>
       </div>
     </div>`;
@@ -356,5 +484,93 @@ const R = {
   /** 空状态 */
   empty(title, desc, ic) {
     return `<div class="empty">${icon(ic || 'folder')}<b>${title}</b><p>${desc || ''}</p></div>`;
+  }
+};
+
+/** 课程多标签选择器：多选已有 + 输入新建 */
+window.TagPicker = {
+  /**
+   * @param {HTMLElement} root 挂载容器
+   * @param {Array<{tagId:string,name:string}>} initial 已选标签
+   * @returns {{ getTagIds: () => string[] }}
+   */
+  mount(root, initial) {
+    let all = [];
+    let selected = new Set((initial || []).map(t => t.tagId).filter(Boolean));
+    root.innerHTML = `
+      <div class="tag-picker" data-tp>
+        <div class="chips tag-picker__sel" data-tp-sel style="min-height:28px"></div>
+        <div class="row" style="gap:6px;margin-top:6px">
+          <input class="input" data-tp-new placeholder="新建标签后回车" style="flex:1;min-width:0">
+          <button type="button" class="btn btn--sm btn--outline" data-tp-add>新建</button>
+        </div>
+        <div class="chips tag-picker__all" data-tp-all style="margin-top:6px;max-height:88px;overflow:auto"></div>
+      </div>`;
+
+    const selBox = root.querySelector('[data-tp-sel]');
+    const allBox = root.querySelector('[data-tp-all]');
+    const newIn = root.querySelector('[data-tp-new]');
+
+    function render() {
+      const byId = Object.fromEntries(all.map(t => [t.tagId, t]));
+      const sel = [...selected].map(id => byId[id] || { tagId: id, name: id });
+      selBox.innerHTML = sel.length
+        ? sel.map(t => `<span class="badge badge--brand" data-tp-off="${U.esc(t.tagId)}" title="点击移除">${U.esc(t.name)} ×</span>`).join('')
+        : '<span class="fz-11 t-dim">未选择标签</span>';
+      allBox.innerHTML = all.map(t => {
+        const on = selected.has(t.tagId);
+        return `<button type="button" class="chip ${on ? 'is-on' : ''}" data-tp-on="${U.esc(t.tagId)}">${U.esc(t.name)}</button>`;
+      }).join('') || '<span class="fz-11 t-dim">暂无标签，可上方新建</span>';
+    }
+
+    function load() {
+      return API.teacher.tags().then(r => {
+        all = (r && r.list) || [];
+        // 确保已选标签在 all 中可见
+        (initial || []).forEach(t => {
+          if (t && t.tagId && !all.some(x => x.tagId === t.tagId)) all.push(t);
+        });
+        render();
+      }).catch(() => render());
+    }
+
+    root.addEventListener('click', e => {
+      const on = e.target.closest('[data-tp-on]');
+      if (on) {
+        const id = on.getAttribute('data-tp-on');
+        if (selected.has(id)) selected.delete(id); else selected.add(id);
+        render();
+        return;
+      }
+      const off = e.target.closest('[data-tp-off]');
+      if (off) {
+        selected.delete(off.getAttribute('data-tp-off'));
+        render();
+      }
+    });
+
+    async function createFromInput() {
+      const name = (newIn.value || '').trim();
+      if (!name) { Toast.warn('请输入标签名'); return; }
+      try {
+        const t = await API.teacher.createTag({ name });
+        if (t && t.tagId) {
+          selected.add(t.tagId);
+          if (!all.some(x => x.tagId === t.tagId)) all.push(t);
+          newIn.value = '';
+          render();
+          Toast.ok('已添加标签', t.name);
+        }
+      } catch (err) {
+        Toast.error('创建标签失败', (err && err.message) || '');
+      }
+    }
+    root.querySelector('[data-tp-add]').addEventListener('click', createFromInput);
+    newIn.addEventListener('keydown', e => {
+      if (e.key === 'Enter') { e.preventDefault(); createFromInput(); }
+    });
+
+    load();
+    return { getTagIds: () => [...selected] };
   }
 };

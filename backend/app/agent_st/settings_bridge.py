@@ -21,17 +21,16 @@ class AgentSettings:
     embedding_api_key: str
     embedding_model: str
 
-    bank_path: Path
     data_dir: Path
     rag_db_path: Path
     agent_db_path: Path          # 不再使用独立 agent.db，保留字段兼容原型代码
-    drafts_dir: Path
 
     min_retrieve_score: float
     retrieve_top_k: int
     max_steps: int
     off_topic_score: float
 
+    agent_runtime: str = "legacy"        # legacy | sdk（见 app/config.py 的 AGENT_RUNTIME）
     extra: dict = field(default_factory=dict)
 
 
@@ -49,22 +48,19 @@ class _Bridge:
             embedding_base_url=app_settings.EMBEDDING_BASE_URL,
             embedding_api_key=app_settings.EMBEDDING_API_KEY,
             embedding_model=app_settings.EMBEDDING_MODEL,
-            bank_path=Path(app_settings.ST_BANK_PATH),
             data_dir=data_dir,
             rag_db_path=Path(app_settings.RAG_DB_PATH),
             agent_db_path=data_dir / "agent.db",
-            drafts_dir=Path(app_settings.ST_DRAFTS_DIR),
             min_retrieve_score=app_settings.MIN_RETRIEVE_SCORE,
             retrieve_top_k=app_settings.RETRIEVE_TOP_K,
             max_steps=app_settings.AGENT_MAX_STEPS,
             off_topic_score=app_settings.OFF_TOPIC_SCORE,
+            agent_runtime=getattr(app_settings, "AGENT_RUNTIME", "legacy"),
         )
 
     def refresh(self) -> AgentSettings:
         self._cache = self._build()
         self._cache.data_dir.mkdir(parents=True, exist_ok=True)
-        self._cache.drafts_dir.mkdir(parents=True, exist_ok=True)
-        self._cache.bank_path.parent.mkdir(parents=True, exist_ok=True)
         return self._cache
 
     def get(self) -> AgentSettings:

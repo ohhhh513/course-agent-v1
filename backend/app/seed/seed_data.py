@@ -4,9 +4,12 @@
 
 灌库顺序:
   1. 公共数据（无 user_id）: 账号、班级、课程、图谱、资源、题库、模板、报告
-  2. Transaction（有 user_id 归属）: 每学生独立 LearningPath、AnswerRecord、
-     PracticeSession、Alert、Intervention、ChatSession、ChatMessage
+  2. Transaction（有 user_id 归属）: PracticeSession、Intervention、
+     ChatSession、ChatMessage
   3. 班级级 Dashboard 聚合数据
+
+不含 LearningPath：学习路径由图谱派生，且必须在图谱扩展为 9 章之后生成，
+所以交给启动引导 bootstrap.ensure_learning_paths()（见 services/learning_path.py）。
 
 运行: 应用启动时自动执行  或  python -m app.seed.seed_data
 """
@@ -14,30 +17,22 @@ import json
 import sys
 from pathlib import Path
 
+import secrets
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 from app.database import SessionLocal, engine, Base
 from app.middleware.auth import hash_password
 from app.models.user import User, ClassInfo, TeacherClass
-from app.models.course import Course, Resource
-from app.models.graph import GraphNode, GraphLink, KpDetail, LearningPath
-from app.models.question import Question  # noqa: F401  （题库不再由 seed 灌入，见第 3 节说明）
-from app.models.practice import PracticeSession
-from app.models.ai import ChatSession, ChatMessage
-from app.models.alert import Alert
-from app.models.intervention import (
-    Intervention, InterventionTemplate, Report, TeacherClassDashboard,
-)
+from app.models.course import Course
+from app.models.graph import GraphNode, GraphLink, KpDetail
+from app.models.question import Question  # noqa: F401  （题库由 bootstrap.import_questions 导入，seed 不灌）
+from app.models.user_course import UserCourse
+from app.models.intervention import InterventionTemplate
 from .mock_data import (
     DEFAULT_ACCOUNTS,
     MOCK_GRAPH_NODES, MOCK_GRAPH_LINKS, MOCK_KP_DETAIL,
-    MOCK_RESOURCES,
-    MOCK_LEARNING_PATHS,
-    MOCK_PRACTICE_SESSIONS,
-    MOCK_CHAT_SESSIONS, MOCK_CHAT_MESSAGES,
-    MOCK_ALERTS, MOCK_INTERVENTIONS,
-    MOCK_TEMPLATES, MOCK_REPORTS,
-    DASHBOARD_DATA,
+    MOCK_TEMPLATES,
 )
 
 
@@ -62,7 +57,12 @@ def run_seed():
                 class_name=acct.get("class_name", ""),
                 title=acct.get("title", ""), dept=acct.get("dept", ""),
             ))
-        print(f"  -> {len(DEFAULT_ACCOUNTS)} 账号")
+            # 成员归属：所有种子账号加入默认课程（成员校验的数据来源，多课程地基）
+            db.add(UserCourse(
+                user_id=acct["user_id"], course_id="C2026DS001",
+                role_in_course=acct["role"],
+            ))
+        print(f"  -> {len(DEFAULT_ACCOUNTS)} 账号（含默认课程归属）")
 
         # 班级
         db.add_all([
@@ -79,12 +79,16 @@ def run_seed():
                          class_name="软件工程 2301 班", student_count=38),
         ])
 
-        # 课程
+        # 课程（空课起点：章节/知识点/资源计数随真实使用增长；邀请码供学生凭码加入）
+        _INV = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+        _invite = "".join(secrets.choice(_INV) for _ in range(8))
         db.add(Course(
             course_id="C2026DS001", name="数据结构与算法", code="CS20301",
             term="2026 春季学期", teacher="李文博", credit=4,
-            chapters=8, knowledge_points=25, resources=132, questions=860,
+            chapters=0, knowledge_points=0, resources=0, questions=0,
+            invite_code=_invite, owner_id="T100286",
         ))
+        print(f"  -> course: C2026DS001（邀请码 {_invite}）")
         # 先落库父表（用户/班级/课程），避免后续 FK 子表先于父表插入导致外键失败
         db.flush()
 
@@ -102,74 +106,32 @@ def run_seed():
         # =========================================================
         # 3. 资源 & 题库
         # ---------------------------------------------------------
-        # 注意：占位种子题（Q1024/Q2001-2010，数据均为人工编造）已从
-        # 正式版移除。正式题库由 backend/import_st_bank.py 从
-        # app/data/st/st_bank/after_class.json 导入（KHD 前缀 228 题）。
-        # 首次部署流程：启动一次建库 → 停止 → 运行 import_st_bank.py。
-        # =========================================================
-        for r in MOCK_RESOURCES:
-            db.add(Resource(**r))
-        print(f"  -> resources: {len(MOCK_RESOURCES)}（题库不灌入，由 import_st_bank.py 提供）")
-        # 先落库图谱/资源，供 learning_path 等子表外键引用
-        db.flush()
-
-        # =========================================================
-        # 4. Transaction 数据（按 user_id 归属）
+        # 资源：**不再灌入任何种子资源**（含历史占位资源）——资源一律由
+        # 教师通过「资源管理 → 上传」添加，这是既定的真实流程约定。
+        # 题库：由 bootstrap.import_questions() 从 after_class.json 导入
+        # （KHD 前缀 228 题），不在 seed 内。
         # =========================================================
 
-        # 4.1 每学生独立 LearningPath（25 × 12 = 300 条）
-        for lp in MOCK_LEARNING_PATHS:
-            db.add(LearningPath(**lp))
-        print(f"  -> learning_paths: {len(MOCK_LEARNING_PATHS)}")
-
-        # 4.2 答题记录 —— 不再灌入：MOCK_ANSWER_RECORDS 全部围绕已移除的
-        # 占位种子题生成，且学情/错题本应由真实答题产生（数据来自 practice 接口）
-
-        # 4.3 练习会话（12 学生 × 2-4 条 ≈ 38 条）
-        for ps in MOCK_PRACTICE_SESSIONS:
-            db.add(PracticeSession(**ps))
-        print(f"  -> practice_sessions: {len(MOCK_PRACTICE_SESSIONS)}")
-
-        # 4.4 预警（全部带 user_id 归属）
-        for a in MOCK_ALERTS:
-            db.add(Alert(**a))
-        print(f"  -> alerts: {len(MOCK_ALERTS)}")
-
-        # 4.5 干预
-        for iv in MOCK_INTERVENTIONS:
-            db.add(Intervention(**iv))
-        print(f"  -> interventions: {len(MOCK_INTERVENTIONS)}")
-
-        # 4.6 AI 对话会话 & 消息
-        for cs in MOCK_CHAT_SESSIONS:
-            db.add(ChatSession(**cs))
-        # 先落库会话，避免 chat_messages 外键先于 chat_sessions 插入
-        db.flush()
-        for cm in MOCK_CHAT_MESSAGES:
-            db.add(ChatMessage(**cm))
-        print(f"  -> chat_sessions: {len(MOCK_CHAT_SESSIONS)}, "
-              f"chat_messages: {len(MOCK_CHAT_MESSAGES)}")
+        # =========================================================
+        # 4. Transaction 数据 —— 全部不再灌入（seed 降级 · Step 7）
+        # ---------------------------------------------------------
+        # 以下演示/人设数据已全部移除，系统数据只来自真实使用：
+        #   - 假练习会话（MOCK_PRACTICE_SESSIONS）
+        #   - 假 AI 答疑会话与消息（MOCK_CHAT_*）
+        #   - 假干预记录（MOCK_INTERVENTIONS）
+        # 学习路径仍由 bootstrap.ensure_learning_paths() 按图谱派生；
+        # 预警/错题本/掌握率等指标由真实答题与资源进度驱动（初始为 0 属正常）。
+        # =========================================================
 
         # =========================================================
-        # 5. 模板 & 报告（班级级）
+        # 5. 干预建议模板（功能配置，非演示数据）
         # =========================================================
         for tpl in MOCK_TEMPLATES:
             db.add(InterventionTemplate(**tpl))
-        for r in MOCK_REPORTS:
-            db.add(Report(**r))
-
-        # =========================================================
-        # 6. Dashboard 班级级聚合数据（JSON）
-        # =========================================================
-        for dt, cid, dkey, jdata in DASHBOARD_DATA:
-            db.add(TeacherClassDashboard(
-                class_id=(cid or None), data_type=dt, data_key=dkey,
-                data_json=json.dumps(jdata, ensure_ascii=False),
-            ))
-        print(f"  -> dashboards: {len(DASHBOARD_DATA)}")
+        print(f"  -> intervention_templates: {len(MOCK_TEMPLATES)}")
 
         db.commit()
-        print("[seed] 种子数据写入完成")
+        print("[seed] 种子数据写入完成（已降级：仅账号/归属/课程/班级/图谱/模板）")
     except Exception as e:
         db.rollback()
         print(f"[seed] 写入失败: {e}")

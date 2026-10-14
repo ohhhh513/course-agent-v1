@@ -7,7 +7,7 @@ import random
 from datetime import datetime, timedelta
 
 # 固定种子，保证每次运行生成完全相同的数据
-random.seed(42)
+rng = random.Random(42)   # 固定种子实例：mock 数据可复现，且不污染全局 random（邀请码等真实流程随机性不受影响）
 
 # ============ 时间基准 ============
 BASE = datetime(2026, 9, 2, 17, 0, 0)   # "今天" 17:00
@@ -18,8 +18,8 @@ def days_ago(n, hour_jitter=6):
     # hour_jitter 只用负值或 0，保证结果 <= BASE
     return BASE - timedelta(
         days=n,
-        hours=abs(random.randint(-hour_jitter, 0)),
-        minutes=random.randint(0, 59),
+        hours=abs(rng.randint(-hour_jitter, 0)),
+        minutes=rng.randint(0, 59),
     )
 
 
@@ -337,215 +337,6 @@ MOCK_QUESTIONS = [
     },
 ]
 
-# ============ 预警（公共数据 —— 全部保留） ============
-MOCK_ALERTS = [
-    {
-        "alert_id": "AL20260828001", "course_id": "C2026DS001", "user_id": "S20260317", "class_id": "CL2301",
-        "level": "red", "type": "mastery_low", "title": "「最短路径 Dijkstra 算法」掌握率严重偏低",
-        "desc": "当前掌握率 41%，低于课程达标线 60%，低于班级平均 27 个百分点。",
-        "trigger": "规则 R-M02：核心知识点掌握率 < 50% 且连续 2 次练习正确率 < 45%",
-        "kp_id": "KP52", "kp_name": "最短路径 Dijkstra",
-        "detail_json": json.dumps({"current": 41, "threshold": 60, "classAvg": 68, "errorCount": 7}, ensure_ascii=False),
-        "suggestions_json": json.dumps([{"type": "video", "text": "观看补救微课《易错点串讲：负权边为何失效》", "resId": "R204"}], ensure_ascii=False),
-        "status": "open",
-    },
-    {
-        "alert_id": "AL20260827002", "course_id": "C2026DS001", "user_id": "S20260317", "class_id": "CL2301",
-        "level": "yellow", "type": "progress_lag", "title": "第5章学习进度滞后于教学计划",
-        "desc": "教学计划本周应完成至「最小生成树」，你当前停留在「图的存储结构」，滞后约 4 学时。",
-        "trigger": "规则 R-P01：实际进度落后教学计划 ≥ 3 学时",
-        "kp_id": "", "kp_name": "第5章 图",
-        "detail_json": json.dumps({"planned": "最小生成树", "actual": "图的存储结构", "lagHours": 4}, ensure_ascii=False),
-        "suggestions_json": json.dumps([{"type": "path", "text": "按推荐路径优先完成剩余 30%"}], ensure_ascii=False),
-        "status": "open",
-    },
-    {
-        "alert_id": "AL20260826003", "course_id": "C2026DS001", "user_id": "S20260317", "class_id": "CL2301",
-        "level": "yellow", "type": "error_cluster", "title": "「哈夫曼树」相关题目错误集中",
-        "desc": "近 7 天该知识点共作答 12 题，错 6 题，错误集中在 WPL 加权路径长度计算。",
-        "trigger": "规则 R-E01：同一知识点 7 日内错题数 ≥ 5 且错误类型集中度 > 60%",
-        "kp_id": "KP44", "kp_name": "哈夫曼树",
-        "detail_json": json.dumps({"total": 12, "wrong": 6, "mainErrorType": "WPL 计算失误", "concentration": 0.67}, ensure_ascii=False),
-        "suggestions_json": json.dumps([{"type": "practice", "text": "完成「WPL 专项 5 题」，逐题核对构造过程", "packId": "PK2026002"}], ensure_ascii=False),
-        "status": "open",
-    },
-    {
-        "alert_id": "AL20260825004", "course_id": "C2026DS001", "user_id": "S20260317", "class_id": "CL2301",
-        "level": "green", "type": "resolved", "title": "「循环队列判空判满」预警已解除",
-        "desc": "经补救微课 + 5 道靶向练习后，掌握率从 48% 提升至 61%，已回归正常区间。",
-        "trigger": "规则 R-R01：掌握率回升至阈值以上并稳定 3 日",
-        "kp_id": "KP23", "kp_name": "循环队列判空判满",
-        "detail_json": json.dumps({"before": 48, "after": 61, "days": 3}, ensure_ascii=False),
-        "suggestions_json": json.dumps([{"type": "keep", "text": "保持每周 1 次错题回顾，防止遗忘回落"}], ensure_ascii=False),
-        "status": "closed",
-    },
-    # --- 赵梓涵 (S20260322) ---
-    {
-        "alert_id": "AL20260901001", "course_id": "C2026DS001", "user_id": "S20260322", "class_id": "CL2301",
-        "level": "red", "type": "mastery_low", "title": "「最短路径 Dijkstra」掌握率严重偏低",
-        "desc": "当前掌握率仅 22%，低于班级平均 28 个百分点。",
-        "trigger": "规则 R-M02：核心知识点掌握率 < 30%",
-        "kp_id": "KP52", "kp_name": "最短路径 Dijkstra",
-        "detail_json": json.dumps({"current": 22, "threshold": 60, "classAvg": 50.3, "errorCount": 11}, ensure_ascii=False),
-        "suggestions_json": json.dumps([{"type": "video", "text": "从「图的存储结构」重新补齐前置"}, {"type": "path", "text": "使用 AI 生成的个性化补救路径"}], ensure_ascii=False),
-        "status": "open",
-    },
-    {
-        "alert_id": "AL20260901002", "course_id": "C2026DS001", "user_id": "S20260322", "class_id": "CL2301",
-        "level": "red", "type": "mastery_low", "title": "「哈夫曼树与编码」掌握率不足 40%",
-        "desc": "WPL 加权路径长度计算频繁出错，掌握率 35%。",
-        "trigger": "规则 R-M02：核心知识点掌握率 < 40%",
-        "kp_id": "KP44", "kp_name": "哈夫曼树与编码",
-        "detail_json": json.dumps({"current": 35, "threshold": 60, "classAvg": 58.1, "errorCount": 9}, ensure_ascii=False),
-        "suggestions_json": json.dumps([{"type": "practice", "text": "完成「WPL 构造 10 题专项」"}], ensure_ascii=False),
-        "status": "open",
-    },
-    {
-        "alert_id": "AL20260901003", "course_id": "C2026DS001", "user_id": "S20260322", "class_id": "CL2301",
-        "level": "yellow", "type": "progress_lag", "title": "学习进度严重滞后，已偏离教学计划 12 学时",
-        "desc": "3 天未登录，当前停留在「图的定义与术语」，班级已推进至「最小生成树」。",
-        "trigger": "规则 R-P01：实际进度落后教学计划 ≥ 8 学时",
-        "kp_id": "", "kp_name": "第5章 图",
-        "detail_json": json.dumps({"planned": "最小生成树", "actual": "图的定义与术语", "lagHours": 12, "daysSinceLogin": 3}, ensure_ascii=False),
-        "suggestions_json": json.dumps([{"type": "contact", "text": "建议主动联系老师评估状态"}], ensure_ascii=False),
-        "status": "open",
-    },
-    {
-        "alert_id": "AL20260901004", "course_id": "C2026DS001", "user_id": "S20260322", "class_id": "CL2301",
-        "level": "yellow", "type": "mastery_low", "title": "「循环队列判空判满」掌握率持续低迷",
-        "desc": "掌握率 42%，低于达标线。错误集中在队满条件判断。",
-        "trigger": "规则 R-M01：知识点掌握率 < 50%",
-        "kp_id": "KP23", "kp_name": "循环队列判空判满",
-        "detail_json": json.dumps({"current": 42, "threshold": 60, "errorCount": 5}, ensure_ascii=False),
-        "suggestions_json": json.dumps([{"type": "video", "text": "观看补救微课《循环队列专题》"}], ensure_ascii=False),
-        "status": "open",
-    },
-    {
-        "alert_id": "AL20260901005", "course_id": "C2026DS001", "user_id": "S20260322", "class_id": "CL2301",
-        "level": "yellow", "type": "error_cluster", "title": "「图的遍历 DFS/BFS」错题集中",
-        "desc": "近 7 天 8 道错题中 5 道集中在遍历顺序理解，错误集中度 63%。",
-        "trigger": "规则 R-E01：同一知识点 7 日内错题数 ≥ 5",
-        "kp_id": "KP43", "kp_name": "图的遍历 DFS/BFS",
-        "detail_json": json.dumps({"total": 10, "wrong": 5, "concentration": 0.63}, ensure_ascii=False),
-        "suggestions_json": json.dumps([{"type": "practice", "text": "DFS/BFS 对比练习"}], ensure_ascii=False),
-        "status": "open",
-    },
-    # --- 吴嘉豪 (S20260333) ---
-    {
-        "alert_id": "AL20260901006", "course_id": "C2026DS001", "user_id": "S20260333", "class_id": "CL2301",
-        "level": "red", "type": "mastery_low", "title": "「最短路径 Dijkstra」掌握率 32%",
-        "desc": "算法流程未内化，连续两次练习正确率 < 40%。",
-        "trigger": "规则 R-M02：核心知识点掌握率 < 40% 且连续正确率偏低",
-        "kp_id": "KP52", "kp_name": "最短路径 Dijkstra",
-        "detail_json": json.dumps({"current": 32, "threshold": 60, "errorCount": 8}, ensure_ascii=False),
-        "suggestions_json": json.dumps([{"type": "video", "text": "手工模拟 Dijkstra 全过程"}], ensure_ascii=False),
-        "status": "open",
-    },
-    {
-        "alert_id": "AL20260901007", "course_id": "C2026DS001", "user_id": "S20260333", "class_id": "CL2301",
-        "level": "yellow", "type": "mastery_low", "title": "「哈夫曼树与编码」掌握率 44%",
-        "desc": "哈夫曼树构造步骤遗漏，前缀码验证不熟练。",
-        "trigger": "规则 R-M01：知识点掌握率 < 50%",
-        "kp_id": "KP44", "kp_name": "哈夫曼树与编码",
-        "detail_json": json.dumps({"current": 44, "threshold": 60, "errorCount": 6}, ensure_ascii=False),
-        "suggestions_json": json.dumps([{"type": "practice", "text": "哈夫曼构造 5 题专项"}], ensure_ascii=False),
-        "status": "open",
-    },
-    {
-        "alert_id": "AL20260901008", "course_id": "C2026DS001", "user_id": "S20260333", "class_id": "CL2301",
-        "level": "yellow", "type": "mastery_low", "title": "「循环队列判空判满」掌握率 52%",
-        "desc": "临界知识点，仍低于达标线。队空队满条件容易混淆。",
-        "trigger": "规则 R-M01：知识点掌握率 < 60%",
-        "kp_id": "KP23", "kp_name": "循环队列判空判满",
-        "detail_json": json.dumps({"current": 52, "threshold": 60, "errorCount": 4}, ensure_ascii=False),
-        "suggestions_json": json.dumps([{"type": "practice", "text": "循环队列判空判满专项训练"}], ensure_ascii=False),
-        "status": "open",
-    },
-    {
-        "alert_id": "AL20260901009", "course_id": "C2026DS001", "user_id": "S20260333", "class_id": "CL2301",
-        "level": "yellow", "type": "error_cluster", "title": "「二叉树的遍历」错题集中",
-        "desc": "非递归遍历实现频繁出错，近 5 题错 3 题。",
-        "trigger": "规则 R-E01：同一知识点 7 日内错题数 ≥ 4",
-        "kp_id": "KP32", "kp_name": "二叉树的遍历",
-        "detail_json": json.dumps({"total": 8, "wrong": 5, "concentration": 0.6}, ensure_ascii=False),
-        "suggestions_json": json.dumps([{"type": "video", "text": "观看《二叉树遍历非递归实现》"}], ensure_ascii=False),
-        "status": "open",
-    },
-    # --- 徐子墨 (S20260337) ---
-    {
-        "alert_id": "AL20260901010", "course_id": "C2026DS001", "user_id": "S20260337", "class_id": "CL2301",
-        "level": "red", "type": "mastery_low", "title": "「最短路径 Dijkstra」掌握率仅 25%",
-        "desc": "前置知识薄弱（图的存储 42%），Dijkstra 实现多处出错。",
-        "trigger": "规则 R-M02：核心知识点掌握率 < 30%",
-        "kp_id": "KP52", "kp_name": "最短路径 Dijkstra",
-        "detail_json": json.dumps({"current": 25, "threshold": 60, "errorCount": 10, "preMastery": 42}, ensure_ascii=False),
-        "suggestions_json": json.dumps([{"type": "path", "text": "回退至前置知识点重新学习"}], ensure_ascii=False),
-        "status": "open",
-    },
-    {
-        "alert_id": "AL20260901011", "course_id": "C2026DS001", "user_id": "S20260337", "class_id": "CL2301",
-        "level": "red", "type": "mastery_low", "title": "「哈夫曼树与编码」掌握率 32%",
-        "desc": "哈夫曼编码构造错误率高，近 7 天错题 8 道。",
-        "trigger": "规则 R-M02：核心知识点掌握率 < 40%",
-        "kp_id": "KP44", "kp_name": "哈夫曼树与编码",
-        "detail_json": json.dumps({"current": 32, "threshold": 60, "errorCount": 8}, ensure_ascii=False),
-        "suggestions_json": json.dumps([{"type": "practice", "text": "哈夫曼构造 + WPL 计算综合训练"}], ensure_ascii=False),
-        "status": "open",
-    },
-    {
-        "alert_id": "AL20260901012", "course_id": "C2026DS001", "user_id": "S20260337", "class_id": "CL2301",
-        "level": "yellow", "type": "progress_lag", "title": "学习进度滞后 9 学时",
-        "desc": "2 天未登录，当前停留「二叉树的基本概念」，班级已推至「图的遍历」。",
-        "trigger": "规则 R-P01：实际进度落后教学计划 ≥ 6 学时",
-        "kp_id": "", "kp_name": "第4-5章 树与图",
-        "detail_json": json.dumps({"planned": "图的遍历", "actual": "二叉树基本概念", "lagHours": 9, "daysSinceLogin": 2}, ensure_ascii=False),
-        "suggestions_json": json.dumps([{"type": "contact", "text": "主动联系老师评估状态"}], ensure_ascii=False),
-        "status": "open",
-    },
-    {
-        "alert_id": "AL20260901013", "course_id": "C2026DS001", "user_id": "S20260337", "class_id": "CL2301",
-        "level": "yellow", "type": "error_cluster", "title": "「图的存储结构」错题集中",
-        "desc": "邻接矩阵/表选择频繁出错，近 6 题错 4 题。",
-        "trigger": "规则 R-E01：同一知识点 7 日内错题数 ≥ 4",
-        "kp_id": "KP42", "kp_name": "图的存储结构",
-        "detail_json": json.dumps({"total": 6, "wrong": 4, "concentration": 0.75}, ensure_ascii=False),
-        "suggestions_json": json.dumps([{"type": "practice", "text": "邻接矩阵 vs 邻接表对比练习"}], ensure_ascii=False),
-        "status": "open",
-    },
-    # --- 林浩然 (S20260341) ---
-    {
-        "alert_id": "AL20260901014", "course_id": "C2026DS001", "user_id": "S20260341", "class_id": "CL2301",
-        "level": "yellow", "type": "mastery_low", "title": "「最短路径 Dijkstra」掌握率 40%",
-        "desc": "处于临界线，若不补救很可能跌入红色预警。",
-        "trigger": "规则 R-M01：知识点掌握率 < 50%",
-        "kp_id": "KP52", "kp_name": "最短路径 Dijkstra",
-        "detail_json": json.dumps({"current": 40, "threshold": 60, "errorCount": 5}, ensure_ascii=False),
-        "suggestions_json": json.dumps([{"type": "video", "text": "观看 Dijkstra 原理视频 + 手工模拟"}], ensure_ascii=False),
-        "status": "open",
-    },
-    {
-        "alert_id": "AL20260901015", "course_id": "C2026DS001", "user_id": "S20260341", "class_id": "CL2301",
-        "level": "yellow", "type": "mastery_low", "title": "「哈夫曼树与编码」掌握率 50%",
-        "desc": "处于临界线，WPL 计算需要加强。",
-        "trigger": "规则 R-M01：知识点掌握率 < 60%",
-        "kp_id": "KP44", "kp_name": "哈夫曼树与编码",
-        "detail_json": json.dumps({"current": 50, "threshold": 60, "errorCount": 4}, ensure_ascii=False),
-        "suggestions_json": json.dumps([{"type": "practice", "text": "WPL 专项 5 题"}], ensure_ascii=False),
-        "status": "open",
-    },
-    # --- 周雨桐 (S20260329) ---
-    {
-        "alert_id": "AL20260901016", "course_id": "C2026DS001", "user_id": "S20260329", "class_id": "CL2301",
-        "level": "yellow", "type": "mastery_low", "title": "「最短路径 Dijkstra」掌握率 48%",
-        "desc": "接近警戒线，建议主动练习 Dijkstra 相关习题。",
-        "trigger": "规则 R-M01：知识点掌握率 < 50%",
-        "kp_id": "KP52", "kp_name": "最短路径 Dijkstra",
-        "detail_json": json.dumps({"current": 48, "threshold": 60, "errorCount": 3}, ensure_ascii=False),
-        "suggestions_json": json.dumps([{"type": "practice", "text": "Dijkstra 专项 5 题"}], ensure_ascii=False),
-        "status": "open",
-    },
-]
-
 # ============ 干预（公共数据） ============
 MOCK_INTERVENTIONS = [
     {
@@ -591,146 +382,28 @@ MOCK_REPORTS = [
     },
 ]
 
-# ============ 课程 25 个 kp step 模板（顺序固定） ============
-KP_STEPS_TEMPLATE = [
-    (1, "KP01", "算法与复杂度", "第1章 绪论", 4, 3, 0),
-    (2, "KP02", "时间复杂度分析", "第1章 绪论", 4, 2, 0),
-    (3, "KP11", "线性表定义", "第2章 线性表", 2, 2, 0),
-    (4, "KP12", "顺序表", "第2章 线性表", 4, 4, 0),
-    (5, "KP13", "单链表", "第2章 线性表", 6, 5, 0),
-    (6, "KP14", "双向 / 循环链表", "第2章 线性表", 4, 3, 0),
-    (7, "KP21", "栈的定义与实现", "第3章 栈与队列", 4, 3, 0),
-    (8, "KP22", "队列的定义与实现", "第3章 栈与队列", 4, 3, 0),
-    (9, "KP24", "栈的典型应用", "第3章 栈与队列", 4, 3, 0),
-    (10, "KP23", "循环队列判空判满", "第3章 栈与队列", 2, 2, 0),
-    (11, "KP31", "二叉树基本概念", "第4章 树与二叉树", 4, 5, 0),
-    (12, "KP32", "二叉树的遍历", "第4章 树与二叉树", 6, 7, 0),
-    (13, "KP44", "哈夫曼树与编码", "第4章 树与二叉树", 4, 4, 0),
-    (14, "KP33", "线索二叉树", "第4章 树与二叉树", 4, 3, 0),
-    (15, "KP34", "树与森林的转换", "第4章 树与二叉树", 4, 3, 1),
-    (16, "KP41", "图的定义与术语", "第5章 图", 2, 3, 0),
-    (17, "KP42", "图的存储结构", "第5章 图", 4, 5, 0),
-    (18, "KP52", "最短路径 Dijkstra", "第5章 图", 6, 4, 0),
-    (19, "KP43", "图的遍历 DFS/BFS", "第5章 图", 6, 3, 0),
-    (20, "KP51", "最小生成树", "第5章 图", 4, 3, 0),
-    (21, "KP53", "拓扑排序", "第5章 图", 4, 2, 0),
-    (22, "KP61", "查找的基本概念", "第6章 查找", 2, 2, 0),
-    (23, "KP62", "二分查找", "第6章 查找", 4, 3, 0),
-    (24, "KP63", "二叉排序树", "第6章 查找", 6, 3, 0),
-    (25, "KP64", "哈希表", "第6章 查找", 4, 3, 0),
-]
-
-# 锁原因（仅 step 15 有 locked=1）
-LOCK_REASON_MAP = {"KP34": "需先完成「二叉树的遍历」"}
-
 # ============ 学生档位配置 ============
-# 每档: (max_done_count, mastery_base, description)
+# 只保留「档位」，用于决定该生生成多少答题记录 / 练习会话 / 答疑会话。
+# 学习路径不再由 seed 生成（历史上那套手写模板与图谱不一致），
+# 改由图谱派生：见 services/learning_path.py 与 bootstrap.ensure_learning_paths()。
 STUDENT_PROFILES = {
-    # 陈思远：保持原 seed 结构（done=11, doing=2, warn=2）
-    "S20260317": {"tier": "custom_chen", "done_steps": [1, 2, 3, 4, 5, 6, 7, 8, 9, 11, 16],
-                  "doing_steps": [12, 17], "warn_steps": [10, 18]},
-    # 优秀：王志豪 / 刘欣然 / 何子轩 —— done≈17
-    "S20260319": {"tier": "excellent", "done_count": 18},
-    "S20260325": {"tier": "excellent", "done_count": 17},
-    "S20260328": {"tier": "excellent", "done_count": 16},
-    # 良好：孙博文 / 陈欣怡 / 李雅琪 / 周雨桐 —— done≈10-12
-    "S20260330": {"tier": "good", "done_count": 13},
-    "S20260318": {"tier": "good", "done_count": 12},
-    "S20260321": {"tier": "good", "done_count": 11},
-    "S20260329": {"tier": "good", "done_count": 10},
-    # 合格：林浩然 / 吴嘉豪 —— done≈7-8
-    "S20260341": {"tier": "medium", "done_count": 9},
-    "S20260333": {"tier": "medium", "done_count": 7},
-    # 薄弱：赵梓涵 / 徐子墨 —— done≈4-5
-    "S20260322": {"tier": "weak", "done_count": 5},
-    "S20260337": {"tier": "weak", "done_count": 4},
+    "S20260317": {"tier": "custom_chen"},   # 陈思远
+    # 优秀：王志豪 / 刘欣然 / 何子轩
+    "S20260319": {"tier": "excellent"},
+    "S20260325": {"tier": "excellent"},
+    "S20260328": {"tier": "excellent"},
+    # 良好：孙博文 / 陈欣怡 / 李雅琪 / 周雨桐
+    "S20260330": {"tier": "good"},
+    "S20260318": {"tier": "good"},
+    "S20260321": {"tier": "good"},
+    "S20260329": {"tier": "good"},
+    # 合格：林浩然 / 吴嘉豪
+    "S20260341": {"tier": "medium"},
+    "S20260333": {"tier": "medium"},
+    # 薄弱：赵梓涵 / 徐子墨
+    "S20260322": {"tier": "weak"},
+    "S20260337": {"tier": "weak"},
 }
-
-
-# ============ LearningPath 生成（每学生独立） ============
-def _build_learning_paths_for_user(user_id):
-    """为单个学生生成完整的 25 条 LearningPath 记录"""
-    profile = STUDENT_PROFILES.get(user_id, {"tier": "good", "done_count": 10})
-    paths = []
-
-    if profile["tier"] == "custom_chen":
-        done_set = set(profile["done_steps"])
-        doing_set = set(profile["doing_steps"])
-        warn_set = set(profile["warn_steps"])
-    else:
-        # 根据档位确定 done/doing/warn/todo 分配
-        total = len(KP_STEPS_TEMPLATE)
-        n_done = profile["done_count"]
-        n_doing = 2
-        n_warn = 2
-        n_todo = total - n_done - n_doing - n_warn
-        # 前面的步骤优先 done，然后 doing、warn，最后 todo
-        done_set = set(range(1, n_done + 1))
-        doing_set = set(range(n_done + 1, n_done + 1 + n_doing))
-        warn_set = set(range(n_done + 1 + n_doing, n_done + 1 + n_doing + n_warn))
-
-    # 根据档位决定 mastery 基础值
-    tier_mastery_base = {
-        "excellent": 90, "good": 75, "medium": 62, "weak": 52,
-        "custom_chen": 78,
-    }
-    base = tier_mastery_base.get(profile["tier"], 70)
-
-    for step, kp_id, name, chapter, hours, res_count, locked in KP_STEPS_TEMPLATE:
-        if step in done_set:
-            status = "done"
-            # done 的 mastered_at 分散在 108 天内
-            days_back = max(2, int(108 * (step / 25)) + random.randint(-5, 5))
-            mastered_at = days_ago(days_back)
-            last_practiced = days_ago(max(1, days_back - random.randint(0, 10)))
-            # mastery 在 base 附近随机 ±8
-            mastery = max(55, min(100, base + random.randint(-8, 8)))
-            progress = 0   # done 不关心 progress
-        elif step in doing_set:
-            status = "doing"
-            mastered_at = None
-            last_practiced = days_ago(random.randint(0, 3))
-            mastery = max(30, min(85, base - 15 + random.randint(-10, 10)))
-            progress = random.randint(30, 80)
-        elif step in warn_set:
-            status = "warn"
-            mastered_at = None
-            last_practiced = days_ago(random.randint(1, 5))
-            mastery = max(20, min(70, base - 30 + random.randint(-10, 10)))
-            progress = random.randint(40, 70)
-        else:
-            status = "todo"
-            mastered_at = None
-            last_practiced = None
-            mastery = 0
-            progress = 0
-
-        lock_reason = LOCK_REASON_MAP.get(kp_id, "") if locked else ""
-
-        paths.append({
-            "user_id": user_id,
-            "course_id": "C2026DS001",
-            "step": step,
-            "kp_id": kp_id,
-            "name": name,
-            "chapter": chapter,
-            "status": status,
-            "hours": hours,
-            "mastery": mastery,
-            "res_count": res_count,
-            "progress": progress,
-            "locked": locked,
-            "lock_reason": lock_reason,
-            "mastered_at": mastered_at,
-            "last_practiced_at": last_practiced,
-        })
-    return paths
-
-
-# 所有学生的 LearningPath，扁平列表
-MOCK_LEARNING_PATHS = []
-for acct in STUDENT_ACCOUNTS:
-    MOCK_LEARNING_PATHS.extend(_build_learning_paths_for_user(acct["user_id"]))
 
 
 # ============ AnswerRecord 生成 ============
@@ -797,7 +470,7 @@ def _gen_answer_records():
             today_count = 4
             extra_today_seconds = [180, 900, 720, 1080]  # 合计 2880 秒 = 48 分钟
         else:
-            today_count = random.randint(1, 2)
+            today_count = rng.randint(1, 2)
             extra_today_seconds = None
 
         # 确保过去 12 天每天至少 1 条（保证 streak 至少 12）
@@ -812,7 +485,7 @@ def _gen_answer_records():
                 # 过去 11 天：至少 1 条，其余随机分配
                 remaining_extra = (total - today_count) - 11  # 剩余多出来的
                 count = 1 + max(0, remaining_extra // 11)
-                if remaining_extra > 0 and random.random() < 0.3:
+                if remaining_extra > 0 and rng.random() < 0.3:
                     count += 1  # 30% 概率多一条
                 count = min(count, 4)  # 每天不超过 4 条
                 count = max(count, 1)  # 每天至少 1 条
@@ -829,7 +502,7 @@ def _gen_answer_records():
                     all_times.append((0, chen_today_times[i]))
                 elif day == 0:
                     all_times.append((0, BASE.replace(
-                        hour=random.randint(9, 16), minute=random.randint(0, 59))))
+                        hour=rng.randint(9, 16), minute=rng.randint(0, 59))))
                 else:
                     all_times.append((day, days_ago(day, hour_jitter=5)))
 
@@ -837,7 +510,7 @@ def _gen_answer_records():
         all_times.sort(key=lambda x: x[1])
 
         session_counter = 1
-        session_size = random.randint(4, 6)
+        session_size = rng.randint(4, 6)
         session_id = f"PS{uid}{session_counter:02d}"
         sess_count = 0
         chen_today_idx = 0  # 陈思远今天答题时间分配索引
@@ -845,22 +518,22 @@ def _gen_answer_records():
         for idx, (days_back, created_at) in enumerate(all_times):
             if sess_count >= session_size:
                 session_counter += 1
-                session_size = random.randint(4, 6)
+                session_size = rng.randint(4, 6)
                 session_id = f"PS{uid}{session_counter:02d}"
                 sess_count = 0
 
-            qid = random.choice(q_ids)
+            qid = rng.choice(q_ids)
             kp_id, corr = q_meta[qid]
-            is_correct = 1 if random.random() < correct_letter else 0
-            my_ans = corr if is_correct else random.choice(wrong_choices_by_q[qid])
-            duration = random.randint(30, 120) if is_correct else random.randint(60, 180)
+            is_correct = 1 if rng.random() < correct_letter else 0
+            my_ans = corr if is_correct else rng.choice(wrong_choices_by_q[qid])
+            duration = rng.randint(30, 120) if is_correct else rng.randint(60, 180)
             # 陈思远今天的答题时长用预设值
             if tier == "custom_chen" and days_back == 0 and extra_today_seconds:
                 if chen_today_idx < len(extra_today_seconds):
                     duration = extra_today_seconds[chen_today_idx]
                     chen_today_idx += 1
 
-            error_type = "" if is_correct else random.choice(ERROR_TYPES)
+            error_type = "" if is_correct else rng.choice(ERROR_TYPES)
 
             records.append({
                 "session_id": session_id,
@@ -915,27 +588,27 @@ def _gen_practice_sessions():
             # 陈思远特殊：今天 1 条长 session (48 分钟=2880秒)，过去 11 天每天 1 条短的
             session_times.append((0, 2880, "今天 14:00 - 14:48"))
             for day in range(1, 12):
-                session_times.append((day, random.randint(600, 1200), f"过去{day}天"))
+                session_times.append((day, rng.randint(600, 1200), f"过去{day}天"))
         else:
             for day in range(count):
-                session_times.append((day, random.randint(600, 1800), ""))
+                session_times.append((day, rng.randint(600, 1800), ""))
 
         for i, (days_back, duration, label) in enumerate(session_times[:count]):
-            mode = random.choice(modes)
+            mode = rng.choice(modes)
             session_id = record_sessions[i] if i < len(record_sessions) else f"PS{uid}{i+1:02d}"
 
             created_at = days_ago(days_back, hour_jitter=4) if days_back > 0 else BASE.replace(
-                hour=random.randint(9, 20), minute=random.randint(0, 59))
+                hour=rng.randint(9, 20), minute=rng.randint(0, 59))
             finished_at = created_at + timedelta(seconds=duration)
 
             # 从该 session 的答题记录计算 correct/wrong/total
             sess_records = [r for r in user_records if r["session_id"] == session_id]
-            total = len(sess_records) if sess_records else random.randint(6, 12)
+            total = len(sess_records) if sess_records else rng.randint(6, 12)
             if sess_records:
                 correct = sum(1 for r in sess_records if r["is_correct"])
             else:
                 if tier == "excellent":
-                    correct = random.randint(total - 1, total)
+                    correct = rng.randint(total - 1, total)
                 elif tier == "custom_chen":
                     correct = int(total * 0.68)
                 elif tier == "good":
@@ -1000,24 +673,24 @@ def _gen_chat_data():
             ]
         elif tier == "excellent":
             session_infos = [
-                (*random.choice(CHAT_TOPICS), random.randint(4, 7)) for _ in range(3)
+                (*rng.choice(CHAT_TOPICS), rng.randint(4, 7)) for _ in range(3)
             ]
         elif tier == "good":
             session_infos = [
-                (*random.choice(CHAT_TOPICS), random.randint(3, 6)) for _ in range(2)
+                (*rng.choice(CHAT_TOPICS), rng.randint(3, 6)) for _ in range(2)
             ]
         elif tier == "medium":
             session_infos = [
-                (*random.choice(CHAT_TOPICS), random.randint(3, 5)) for _ in range(2)
+                (*rng.choice(CHAT_TOPICS), rng.randint(3, 5)) for _ in range(2)
             ]
         else:
             session_infos = [
-                (*random.choice(CHAT_TOPICS), random.randint(2, 4)) for _ in range(1)
+                (*rng.choice(CHAT_TOPICS), rng.randint(2, 4)) for _ in range(1)
             ]
 
         for s_idx, (title, kp_name, rounds) in enumerate(session_infos):
             session_id = f"CH{uid}{s_idx+1:02d}"
-            created_at = days_ago(random.randint(0, 7), hour_jitter=3)
+            created_at = days_ago(rng.randint(0, 7), hour_jitter=3)
             updated_at = created_at + timedelta(minutes=rounds * 2)
 
             sessions.append({
@@ -1050,7 +723,7 @@ def _gen_chat_data():
                 # assistant 消息
                 messages.append({
                     "id": msg_id, "session_id": session_id, "role": "ai",
-                    "method": random.choice(methods),
+                    "method": rng.choice(methods),
                     "content": _ai_msg_content(title, kp_name, r),
                     "citations": _citations_for_kp(kp_name),
                     "time_str": time_str_a,

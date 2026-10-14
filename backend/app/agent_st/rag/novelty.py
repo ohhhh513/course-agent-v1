@@ -4,7 +4,7 @@ from __future__ import annotations
 import re
 from difflib import SequenceMatcher
 
-from app.agent_st.rag.chapter_map import DIRECTED_TYPES
+from app.agent_st.rag.figures import DIRECTED_TYPES
 
 STEM_CLONE_RATIO = 0.85
 STEM_FRESH_RATIO = 0.65
@@ -231,7 +231,7 @@ def _ref_graph(ref: dict) -> dict | None:
 
 
 def _ref_id(ref: dict) -> str:
-    return str(ref.get("id") or ref.get("question_id") or "?")
+    return str(ref.get("q_id") or ref.get("id") or "?")
 
 
 def compare_against_ref(candidate: dict, ref: dict) -> dict:
