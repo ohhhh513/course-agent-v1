@@ -29,20 +29,11 @@
         el.innerHTML = `<div class="card"><div class="card__body"><div class="empty" style="padding:48px;text-align:center"><b>尚未创建或选择课程</b><p class="fz-12 t-dim">请先建课后再查看归因分析。</p></div></div></div>`;
         return;
       }
-      Promise.all([
-        API.analysis.errors({}),
-        API.course.my().catch(() => []),
-      ]).then(([d, courses]) => {
+      API.analysis.errors({}).then(d => {
         const topWrongQuestions = Array.isArray(d.topWrongQuestions) ? d.topWrongQuestions : [];
         const commonVsIndividual = d.commonVsIndividual || { common: [], individual: [] };
         const common = Array.isArray(commonVsIndividual.common) ? commonVsIndividual.common : [];
         const individual = Array.isArray(commonVsIndividual.individual) ? commonVsIndividual.individual : [];
-        const scope = d.scope || {};
-        const cur = (Array.isArray(courses) ? courses : []).find(
-          c => c.courseId === (scope.classId || API.config.activeCourseId)
-        );
-        const courseLabel = (cur && cur.name) || API.config.activeCourseId || '当前课程';
-        const timeLabel = { '7d': '近 7 天', '30d': '近 30 天' }[scope.timeRange] || '全部时间';
 
         /* 概览指标：全部由本页返回的数据现算，口径写在每张卡的 hint 里 */
         const wrongTimes = topWrongQuestions.reduce((sum, q) => sum + (Number(q.count) || 0), 0);
@@ -58,7 +49,7 @@
           const rate = Number(q.wrongRate) || 0;
           const t = anTone(rate);
           return `
-          <div class="an-item">
+          <div class="an-item" data-wrong="${i}" role="button" tabindex="0" title="查看题目">
             <span class="an-rank" style="background:${t.bg};color:${t.c}">${i + 1}</span>
             <div class="an-main">
               <b class="an-stem clamp-2">${U.esc(q.stem || '')}</b>
@@ -117,15 +108,7 @@
 
         el.innerHTML = `
         <style>
-          #view-analysis .an-scope{display:flex;gap:12px;align-items:flex-start}
-          #view-analysis .an-scope__ico{flex:0 0 34px;height:34px;border-radius:var(--r-md);display:grid;place-items:center;background:rgba(99,102,241,.12);color:var(--brand-400)}
-          #view-analysis .an-scope__ico svg{width:18px;height:18px}
-          #view-analysis .an-scope__head{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
-          #view-analysis .an-scope__head b{font-size:14px}
-          #view-analysis .an-scope__head .chip{cursor:default;height:24px;font-size:12.5px}
-          #view-analysis .an-scope__head .chip svg{width:13px;height:13px;color:var(--text-3)}
-          #view-analysis .an-scope p{font-size:13px;color:var(--text-3);margin:8px 0 0;line-height:1.7}
-          #view-analysis .an-item{display:flex;gap:12px;align-items:flex-start;padding:13px 16px;border-bottom:1px solid var(--border-soft)}
+          #view-analysis .an-item{display:flex;gap:12px;align-items:flex-start;padding:13px 16px;border-bottom:1px solid var(--border-soft);cursor:pointer}
           #view-analysis .an-item:last-child{border-bottom:none}
           #view-analysis .an-item:hover{background:var(--surface-2)}
           #view-analysis .an-rank{flex:0 0 24px;height:24px;border-radius:var(--r-full);display:grid;place-items:center;font-family:var(--font-num);font-size:13.5px;font-weight:700}
@@ -151,26 +134,11 @@
           #view-analysis .an-row__pct b{font-size:19px;font-weight:700}
           #view-analysis .an-row__pct small{font-size:12px;color:var(--text-3)}
           #view-analysis .an-avatar{flex:0 0 34px;height:34px;border-radius:var(--r-full);display:grid;place-items:center;font-size:15px;font-weight:600}
-          #view-analysis .an-note__t{display:flex;align-items:center;gap:7px;font-size:13.5px;font-weight:650;color:var(--text-2)}
-          #view-analysis .an-note__t svg{width:15px;height:15px;color:var(--brand-400)}
-          #view-analysis .an-note ul{margin:9px 0 0;padding-left:18px;font-size:13px;color:var(--text-3);line-height:1.85}
-          #view-analysis .an-note b{color:var(--text-2)}
+          #view-analysis .an-scroll{max-height:360px;overflow-y:auto;scrollbar-width:thin;scrollbar-color:var(--brand-300) var(--surface-3)}
+          #view-analysis .an-scroll::-webkit-scrollbar{width:6px}
+          #view-analysis .an-scroll::-webkit-scrollbar-track{background:var(--surface-3);border-radius:var(--r-full)}
+          #view-analysis .an-scroll::-webkit-scrollbar-thumb{background:var(--brand-300);border-radius:var(--r-full)}
         </style>
-
-        <div class="card" style="margin-bottom:16px">
-          <div class="card__body an-scope">
-            <div class="an-scope__ico">${icon('flask')}</div>
-            <div style="flex:1;min-width:0">
-              <div class="an-scope__head">
-                <b>分析范围</b>
-                <span class="chip">${icon('book')}${U.esc(courseLabel)}</span>
-                <span class="chip">${icon('layers')}${U.esc(scope.chapter || '全部章节')}</span>
-                <span class="chip">${icon('clock')}${U.esc(timeLabel)}</span>
-              </div>
-              <p>按答题记录与学习路径实时统计（不做估算），用于定位共性薄弱知识点与需要关注的学生。</p>
-            </div>
-          </div>
-        </div>
 
         <div class="grid g-4" style="margin-bottom:16px">
           ${stats.map(s => `
@@ -201,7 +169,7 @@
               <span class="spacer"></span>
               <span class="badge ${common.length ? 'badge--danger' : 'badge--ok'}">${common.length ? common.length + ' 个知识点' : '正常'}</span>
             </div>
-            <div class="card__body card__body--flush">
+            <div class="card__body card__body--flush an-scroll">
               ${common.length
                 ? common.map(commonRow).join('')
                 : R.empty('暂无共性薄弱知识点', '判定线：学习过该知识点的学生中，出现错题 ≥2 人且占比 ≥30%；当前没有知识点达到', 'target')}
@@ -213,31 +181,83 @@
               <span class="spacer"></span>
               <span class="badge ${individual.length ? 'badge--warn' : 'badge--ok'}">${individual.length ? individual.length + ' 名学生' : '正常'}</span>
             </div>
-            <div class="card__body card__body--flush">
+            <div class="card__body card__body--flush an-scroll">
               ${individual.length
                 ? individual.map(individualRow).join('')
                 : R.empty('暂无个体异常学生', '判定线：有效学习点 ≥3 个的学生中，平均掌握率 <40% 或完成率 <30%；当前没有学生达到', 'user')}
             </div>
           </div>
-        </div>
-
-        <div class="card an-note" style="margin-top:16px">
-          <div class="card__body">
-            <div class="an-note__t">${icon('info')} 数据口径</div>
-            <ul>
-              <li><b>高频错题</b>：按每道题的答错次数降序取前 5；错误率 = 该题答错次数 ÷ 该题作答次数（取自答题记录）。</li>
-              <li><b>共性薄弱</b>：学习过该知识点的学生中，出现错题的人数占比 ≥30% 且至少 2 人。</li>
-              <li><b>个体异常</b>：有效学习点 ≥3 个的学生中，平均掌握率 <40% 或完成率 <30%。</li>
-            </ul>
-          </div>
         </div>`;
 
         U.$$('[data-cnt]', el).forEach(s => U.countUp(s, +s.dataset.cnt, 0));
         U.$$('[data-uid]', el).forEach(b => b.addEventListener('click', () => Monitor.openProfile(b.dataset.uid)));
+        this._topWrong = topWrongQuestions;
+        U.$$('[data-wrong]', el).forEach(row => row.addEventListener('click', () => {
+          this.openWrongDetail(this._topWrong[Number(row.dataset.wrong)]);
+        }));
       }).catch(err => {
         el.innerHTML = `<div class="card"><div class="card__body" style="padding:24px;text-align:center;color:var(--danger)">
           ${icon('alert')}<h3 style="margin:0">加载失败</h3><p class="fz-12 t-dim">${U.esc(err.message || err)}</p></div></div>`;
       });
+    },
+
+    openWrongDetail(summary) {
+      const qId = summary && summary.qId;
+      if (!qId) return;
+      API.question.bank({ keyword: qId, page: 1, size: 50 }).then(r => {
+        const full = ((r && r.list) || []).find(item => item.qId === qId);
+        if (!full) {
+          Toast.warn('题库里没有这道题', '可能已移入回收站');
+          return;
+        }
+        const typeName = { single: '单选题', multi: '多选题', multiple: '多选题', blank: '填空题', judge: '判断题', essay: '简答题' };
+        const blank = full.type === 'blank';
+        const options = Array.isArray(full.options) ? full.options : [];
+        const optionHtml = blank
+          ? `<div class="callout">参考答案：${U.esc(full.answer || '未填写')}</div>`
+          : `<div class="opts opts--readonly">${options.map(option => `
+              <div class="opt${option.right ? ' is-right' : ''}">
+                <span class="opt__key">${U.esc(option.key || '')}</span>
+                <span style="flex:1">${U.esc(option.text || '')}</span>
+                ${option.right ? '<span class="opt__flag badge badge--ok">正确答案</span>' : ''}
+              </div>`).join('') || '<div class="t-dim fz-13">没有选项</div>'}</div>`;
+        const rate = Number(summary.wrongRate) || 0;
+        Modal.open({
+          title: '题目详情 · ' + qId,
+          size: 'wide',
+          body: `
+            <div class="stack" style="gap:12px">
+              <div class="row row--wrap fz-12 t-dim">
+                <span class="badge badge--outline mono">${U.esc(qId)}</span>
+                <span class="badge badge--brand">${U.esc(typeName[full.type] || full.type || '题目')}</span>
+                <span class="badge badge--outline">${U.esc(full.kp || summary.kp || '未标注知识点')}</span>
+                <span class="badge badge--outline">难度 ${U.stars(full.difficulty)}</span>
+                <span class="badge badge--danger">错误率 ${rate}%</span>
+                <span class="badge badge--outline">${Number(summary.count) || 0} 次答错</span>
+              </div>
+              <div>
+                <div class="fz-12 t-dim" style="margin-bottom:6px">题干</div>
+                <div class="callout" style="white-space:pre-wrap">${U.esc(full.stem || '')}</div>
+              </div>
+              <div id="wrongFig"></div>
+              <div>
+                <div class="fz-12 t-dim" style="margin-bottom:6px">${blank ? '填空答案' : '选项'}</div>
+                ${optionHtml}
+              </div>
+              <div>
+                <div class="fz-12 t-dim" style="margin-bottom:6px">解析</div>
+                <div class="callout" style="white-space:pre-wrap">${U.esc(full.analysis || '暂无解析')}</div>
+              </div>
+            </div>`,
+          onMount() {
+            const figure = full.figureJson;
+            const figEl = U.$('#wrongFig');
+            if (!figEl || !figure) return;
+            if (figure.imageUrl || figure.image_url) U.mountQuestionImage(figEl, figure.imageUrl || figure.image_url);
+            else if (figure.graph && window.DsFigure) DsFigure.mount(figEl, figure.graph);
+          },
+        });
+      }).catch(err => Toast.err('加载题目失败', err && err.message));
     }
   };
 

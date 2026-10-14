@@ -47,7 +47,7 @@
             <div class="search" style="width:160px">${icon('search2')}<input class="input" id="stuSearch" placeholder="姓名 / 学号"></div>
             <div class="seg" id="stuSeg"><button data-l="all" class="is-active">全部</button><button data-l="red">红</button><button data-l="yellow">黄</button><button data-l="green">绿</button></div>
           </div>
-          <div class="card__body card__body--flush"><div class="list" id="stuList" style="height:calc(100vh - 184px);overflow:auto">${U.skeleton(300)}</div></div>
+          <div class="card__body card__body--flush"><div class="list" id="stuList" style="max-height:min(52vh,560px);overflow:auto">${U.skeleton(300)}</div></div>
         </div>
 
         <div class="card card--alerts">
@@ -55,7 +55,7 @@
             <span class="badge badge--outline" id="alCount"></span>
             <div class="seg" id="alSeg"><button data-l="all" class="is-active">全部</button><button data-l="red">红</button><button data-l="yellow">黄</button></div>
           </div>
-          <div class="card__body stack" id="alList" style="height:calc(100vh - 240px);min-height:180px;overflow:auto">${U.skeleton(300)}</div>
+          <div class="card__body stack" id="alList" style="min-height:0;overflow:auto">${U.skeleton(300)}</div>
         </div>
       </div>`;
 
@@ -305,11 +305,7 @@
                 <span class="fz-11 t-dim">今日为止（近 ${a.trendDays || 14} 天累计）</span>
                 ${diffText ? `<span class="badge ${diffAcc > 0 ? 'badge--ok' : diffAcc < 0 ? 'badge--danger' : 'badge--outline'}">${diffText}</span>` : ''}
               </div>
-              <p class="fz-12 t-dim" style="margin:0 0 8px">每天取「截至当天」的累计正确率（同一道题只算最近一次作答）；当天没做题就沿用前一天的值，故曲线是台阶式推进。</p>
-              <div class="chart chart--sm" id="alTrend"></div>
-              <div class="divider"></div>
-              <div class="callout callout--brand">${icon('bulb')}
-                <div>建议：${a.level === 'red' ? '立即人工介入 / 推送补救资源' : '持续监控并安排一次靶向练习'}</div></div>`,
+              <div class="chart chart--sm" id="alTrend"></div>`,
             footer: `<button class="btn" data-close>关闭</button>`,
             onMount(ov) {
               Charts.line('#alTrend', {

@@ -310,9 +310,9 @@ const AgentUI = (() => {
       commit.disabled = true;
       try {
         const result = await API.teacher.importQuestions({ questions: preview.questions });
-        status.textContent = `成功导入 ${result.success} 题（已加入草稿箱，待审核）。请到「草稿箱」发布后学生方可练习。${(result.errors || []).join('；')}`;
+        status.textContent = `成功导入 ${result.success} 题，已放入草稿箱。请在草稿箱核对后再发布，学生才能练习。${(result.errors || []).join('；')}`;
         preview = null;
-        Question.loadBank();
+        if (Question.showDrafts) Question.showDrafts();
       } catch (error) { status.textContent = error.message || '导入失败'; commit.disabled = false; }
     });
     if (ctx.files.length && !values.questions) setFile(root.querySelector('#qiFile'), ctx.files);

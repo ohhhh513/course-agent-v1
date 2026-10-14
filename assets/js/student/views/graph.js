@@ -45,7 +45,6 @@
         ${toolbar}
         <div class="graph-layout">
           <div class="graph-box" id="graphBox">
-            <div class="graph-hint">滚轮缩放 · 长按拖动 · 双击画布取消选中</div>
             <div class="graph-legend">
               ${mt.legend.map(([n, c]) => `<div class="row"><i class="lg-line" style="border-color:${c}"></i><span>${n}</span></div>`).join('')}
               <div class="row" style="margin-top:2px"><i class="lg-dot" style="background:var(--warn)"></i><span>◆ 边框 = 重难点</span></div>

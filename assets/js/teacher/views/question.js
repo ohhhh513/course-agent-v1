@@ -5,7 +5,7 @@
      ================================================================ */
   const Question = {
     tab: 'gen',
-    gen: { kpIds: [], difficulty: 3, count: 6 },
+    gen: { kpIds: [], difficulty: 3, count: 6, types: ['single'], materialIds: [] },
     bankFilter: 'all', bankKeyword: '', bankPage: 1, bankPageSize: 10,
     bankSort: 'default',                       // 2026-09-24：题库管理排序键 default | kp | correctRate | difficulty
     bankDir: 'asc',                            // 2026-09-24：排序方向 asc | desc（按知识点排序按字母 a→z）
@@ -19,6 +19,10 @@
       if (previousCourseId !== this._renderCourseId) {
         // 切换课程后不能沿用上一门课程的知识点选择、草稿生成状态。
         this.gen.kpIds = [];
+        this.gen.types = ['single'];
+        this.gen.materialIds = [];
+        this._genOpenChapter = '';
+        this._genMaterials = [];
         this._drafts = [];
         this._genBusy = false;
         this.bankPage = 1;
@@ -47,7 +51,190 @@
         else if (this.tab === 'recycle') this.renderRecycle();
         else this.renderBank();
       }));
-      this.renderGen();
+      if (this.tab === 'draft') this.renderDrafts();
+      else if (this.tab === 'bank') this.renderBank();
+      else if (this.tab === 'recycle') this.renderRecycle();
+      else this.renderGen();
+      U.$$('#qTabs button', el).forEach(b => b.classList.toggle('is-active', b.dataset.t === this.tab));
+    },
+
+    showDrafts() {
+      this.tab = 'draft';
+      const tabs = U.$$('#qTabs button');
+      if (!tabs.length) return;
+      tabs.forEach(b => b.classList.toggle('is-active', b.dataset.t === 'draft'));
+      this.renderDrafts();
+    },
+
+    GEN_TYPES: [
+      { key: 'single', name: '单选' },
+      { key: 'multi', name: '多选' },
+      { key: 'blank', name: '填空' },
+      { key: 'judge', name: '判断' },
+    ],
+    GEN_TYPE_LABEL: { single: '单选题', multi: '多选题', blank: '填空题', judge: '判断题' },
+
+    _genOptionHtml(q, figPrefix) {
+      const options = q.options;
+      if (q.type === 'blank' || q.is_blank || Array.isArray(options)) {
+        return `<div class="fz-12 t-dim" style="margin-top:8px">参考答案：${U.esc(q.answer || '未填写')}</div>`;
+      }
+      const map = options && typeof options === 'object' ? options : {};
+      const letters = 'ABCDEFGH'.split('').filter(k => String(map[k] || '').trim());
+      const use = letters.length ? letters : ['A', 'B', 'C', 'D'];
+      const answers = new Set(String(q.answer || '').toUpperCase().replace(/[^A-H]/g, '').split(''));
+      return `<div class="gen-q__opts">${use.map(k => {
+        const right = answers.has(k);
+        const mini = q.options_graph && q.options_graph[k] ? `<div id="${figPrefix}${k}" style="margin:4px 0"></div>` : '';
+        return `<div class="gen-q__opt ${right ? 'is-answer' : ''}"><i>${k}</i> ${map[k] ? U.esc(map[k]) : ''}${right ? ' ✓ 正确答案' : ''}${mini}</div>`;
+      }).join('')}</div>`;
+    },
+
+    _paintGenMaterials(box) {
+      if (!box) return;
+      const list = this._genMaterials || [];
+      if (!list.length) {
+        box.innerHTML = `<div class="fz-12 t-dim" style="padding:8px 2px">还没有课程素材。上传后会出现在这里，点选后本次出题会优先参考。</div>`;
+        return;
+      }
+      const typeName = { video: '视频', ppt: '课件', doc: '教材' };
+      box.innerHTML = list.map(m => {
+        const on = this.gen.materialIds.includes(m.resId);
+        const meta = [typeName[m.type] || '素材', m.chapter].filter(Boolean).join(' · ');
+        return `<button type="button" class="file-item ${on ? 'is-active' : ''}" data-mat="${U.esc(m.resId)}">
+          ${icon(m.type === 'video' ? 'video' : m.type === 'doc' ? 'file' : 'ppt')}
+          <b>${U.esc(m.title || m.resId)}</b>
+          <span class="fz-11 t-dim nowrap">${U.esc(meta)}</span>
+        </button>`;
+      }).join('');
+      U.$$('[data-mat]', box).forEach(btn => btn.addEventListener('click', () => {
+        const id = btn.dataset.mat;
+        const has = this.gen.materialIds.includes(id);
+        this.gen.materialIds = has ? this.gen.materialIds.filter(x => x !== id) : this.gen.materialIds.concat(id);
+        btn.classList.toggle('is-active', !has);
+      }));
+    },
+
+    _reloadGenMaterials(selectId) {
+      return API.teacher.resources({ includeGen: 1 }).then(res => {
+        this._genMaterials = (res && res.list) || [];
+        if (selectId && !this.gen.materialIds.includes(selectId)) this.gen.materialIds.push(selectId);
+        this._paintGenMaterials(U.$('#genMaterials'));
+      }).catch(() => {});
+    },
+
+    _paintGenKp(box) {
+      if (!box) return;
+      const groups = [];
+      const index = {};
+      ((this._cfg && this._cfg.kpOptions) || []).forEach(k => {
+        const name = k.chapter || '未分章';
+        if (!(name in index)) { index[name] = groups.length; groups.push({ name, items: [] }); }
+        groups[index[name]].items.push(k);
+      });
+      if (!groups.length) {
+        box.innerHTML = `<span class="fz-12 t-dim">暂无知识点，请先在课程目录中创建</span>`;
+        return;
+      }
+      if (this._genOpenChapter && !groups.some(g => g.name === this._genOpenChapter)) this._genOpenChapter = '';
+      const selected = new Set(this.gen.kpIds);
+      box.innerHTML = `
+        <div class="gen-kp__chapters">${groups.map(g => {
+          const n = g.items.filter(k => selected.has(k.kpId)).length;
+          const open = g.name === this._genOpenChapter;
+          return `<button type="button" class="chip chip--chapter ${open ? 'is-active' : ''}" data-gen-chapter="${U.esc(g.name)}">${U.esc(g.name)}${n ? `<span class="chip__count">${n}</span>` : ''}</button>`;
+        }).join('')}</div>
+        ${groups.map(g => `
+          <div class="gen-kp__list" data-chapter-list="${U.esc(g.name)}" ${g.name === this._genOpenChapter ? '' : 'hidden'}>
+            <div class="chips-popup">
+              <div class="chips-popup__hint">${U.esc(g.name)} · ${g.items.length} 个知识点
+                <button class="chips-popup__close" type="button" data-gen-close title="收起">✕</button></div>
+              <div class="chips-popup__row">${g.items.map(k =>
+                `<button type="button" class="chip chip--kp ${selected.has(k.kpId) ? 'is-active' : ''}" data-kp="${U.esc(k.kpId)}">${U.esc(k.name)}</button>`).join('')}</div>
+            </div>
+          </div>`).join('')}`;
+      U.$$('[data-gen-chapter]', box).forEach(btn => btn.addEventListener('click', () => {
+        const name = btn.dataset.genChapter;
+        this._genOpenChapter = this._genOpenChapter === name ? '' : name;
+        this._paintGenKp(box);
+      }));
+      const close = U.$('[data-gen-close]', box);
+      if (close) close.addEventListener('click', (event) => {
+        event.stopPropagation();
+        this._genOpenChapter = '';
+        this._paintGenKp(box);
+      });
+      U.$$('[data-kp]', box).forEach(btn => btn.addEventListener('click', () => {
+        const id = btn.dataset.kp;
+        const has = this.gen.kpIds.includes(id);
+        this.gen.kpIds = has ? this.gen.kpIds.filter(x => x !== id) : this.gen.kpIds.concat(id);
+        btn.classList.toggle('is-active', !has);
+        const chapterBtn = U.$(`[data-gen-chapter="${CSS.escape(this._genOpenChapter)}"]`, box);
+        if (chapterBtn) {
+          const group = groups.find(g => g.name === this._genOpenChapter);
+          const n = group ? group.items.filter(k => this.gen.kpIds.includes(k.kpId)).length : 0;
+          chapterBtn.innerHTML = `${U.esc(this._genOpenChapter)}${n ? `<span class="chip__count">${n}</span>` : ''}`;
+        }
+      }));
+    },
+
+    openGenMaterialUpload() {
+      Modal.open({
+        title: '上传出题素材',
+        body: `
+          <div class="stack" style="gap:10px">
+            <label class="stack" style="gap:4px"><span class="fz-12 t-dim">素材类型</span>
+              <select class="select" id="gmType">
+                <option value="doc">教材文献</option>
+                <option value="ppt">课件</option>
+                <option value="video">教学视频</option>
+              </select></label>
+            <label class="stack" style="gap:4px"><span class="fz-12 t-dim">文件</span>
+              <input class="input" id="gmFile" type="file"></label>
+            <label class="stack" style="gap:4px"><span class="fz-12 t-dim">标题</span>
+              <input class="input" id="gmTitle" placeholder="不填则使用文件名"></label>
+            <p class="fz-12 t-dim">文件只进入出题素材，供本次检索。学生端资源中心、图谱和学习路径都不会看到。</p>
+          </div>`,
+        footer: `<button class="btn" data-close>取消</button><button class="btn btn--primary" id="gmOk" type="button">上传</button>`,
+        onMount(ov, close) {
+          const typeIn = U.$('#gmType', ov);
+          const fileIn = U.$('#gmFile', ov);
+          if (window.TeacherResourceUpload) TeacherResourceUpload.attach(typeIn, fileIn);
+          fileIn.addEventListener('change', () => {
+            const file = fileIn.files && fileIn.files[0];
+            const title = U.$('#gmTitle', ov);
+            if (file && title && !title.value.trim()) title.value = file.name.replace(/\.[^.]+$/, '');
+          });
+          U.$('#gmOk', ov).addEventListener('click', () => {
+            const file = fileIn.files && fileIn.files[0];
+            const invalid = window.TeacherResourceUpload
+              ? TeacherResourceUpload.validate(typeIn.value, file)
+              : (file ? '' : '请先选择文件');
+            if (invalid) { Toast.warn(invalid); return; }
+            const fd = new FormData();
+            fd.append('file', file);
+            fd.append('resourceType', typeIn.value);
+            fd.append('title', (U.$('#gmTitle', ov).value || '').trim());
+            fd.append('category', 'knowledge');
+            fd.append('kp', '');
+            fd.append('kp_id', '');
+            fd.append('tagIds', '[]');
+            fd.append('forQuestion', '1');
+            const btn = U.$('#gmOk', ov);
+            btn.disabled = true;
+            btn.textContent = '上传中…';
+            API.teacher.uploadResource(fd).then(result => {
+              Toast.ok('素材已上传', '仅用于出题，学生端不可见');
+              close();
+              Question._reloadGenMaterials(result && result.resId);
+            }).catch(err => {
+              btn.disabled = false;
+              btn.textContent = '上传';
+              Toast.err('上传失败', err && err.message);
+            });
+          });
+        }
+      });
     },
 
     renderGen() {
@@ -56,37 +243,41 @@
       const isCurrent = () => renderToken === this._renderToken
         && renderCourseId === API.config.activeCourseId;
       const box = U.$('#qBody');
-      API.question.genConfig({}).then(cfg => {
+      Promise.all([
+        API.question.genConfig({}),
+        API.teacher.resources({ includeGen: 1 }).catch(() => ({ list: [] })),
+      ]).then(([cfg, resources]) => {
         if (!isCurrent()) return;
         this._cfg = cfg;
+        this._genMaterials = (resources && resources.list) || [];
+        const known = new Set(this._genMaterials.map(m => m.resId));
+        this.gen.materialIds = (this.gen.materialIds || []).filter(id => known.has(id));
+        const typeBtns = Question.GEN_TYPES.map(t =>
+          `<button type="button" class="chip ${this.gen.types.includes(t.key) ? 'is-active' : ''}" data-type="${t.key}">${t.name}</button>`).join('');
         box.innerHTML = `
         <div class="gen-layout">
-          <div class="stack" style="gap:14px">
+          <div class="stack" style="gap:10px">
             <div class="card">
               <div class="card__head"><h3>${icon('upload')} 素材库</h3></div>
-              <div class="card__body">
-                <div class="upload" id="genUpload">
-                  <div style="color:var(--brand-400)">${icon('upload')}</div>
-                  <b>上传教材 / 课件 / 视频</b><span>PDF · PPT · MP4，AI 自动解析并挂载知识点</span>
-                </div>
-                <div class="stack" style="gap:6px;margin-top:10px">
-                  ${cfg.materials.map(m => `
-                    <div class="file-item">${icon(m.type === 'video' ? 'video' : m.type === 'doc' ? 'file' : 'ppt')}
-                      <b>${U.esc(m.name)}</b>
-                      <span class="fz-11 t-dim nowrap">${m.size}</span>
-                      ${m.status === 'parsing'
-                        ? `<span class="badge badge--warn">解析中 ${m.progress}%</span>`
-                        : `<span class="badge badge--ok">已解析 · ${m.kpCount} 知识点</span>`}</div>`).join('')}
-                </div>
+              <div class="card__body" style="padding:10px 12px">
+                <button type="button" class="upload upload--compact" id="genUpload">
+                  ${icon('upload')}
+                  <span class="upload__text"><b>上传教材 / 课件 / 视频</b><span>仅用于出题，学生端不可见</span></span>
+                </button>
+                <div class="gen-material-list" id="genMaterials"></div>
               </div>
             </div>
             <div class="card">
               <div class="card__head"><h3>${icon('settings')} 出题配置</h3></div>
-              <div class="card__body stack gen-config-body" style="gap:12px">
+              <div class="card__body stack gen-config-body" style="gap:10px">
+                <div class="gen-config-section">
+                  <p class="fz-12 t-dim" style="margin-bottom:6px">题型</p>
+                  <div class="gen-type-row" id="genTypes">${typeBtns}</div>
+                </div>
                 <div class="gen-config-section gen-config-section--kp">
-                  <p class="fz-12 t-dim" style="margin-bottom:8px">指定知识点（可多选）</p>
-                  <div class="gen-kp-scroll" id="genKp">${cfg.kpOptions.map(k =>
-                    `<button class="chip" data-kp="${k.kpId}">${U.esc(k.name)}</button>`).join('')}</div></div>
+                  <p class="fz-12 t-dim" style="margin-bottom:6px">知识点（先点章节，再选其中的知识点）</p>
+                  <div id="genKp"></div>
+                </div>
                 <div class="gen-config-section gen-config-section--settings">
                   <div class="gen-config-settings">
                     <div class="gen-config-field"><p class="fz-12 t-dim" style="margin-bottom:6px">难度 <span class="mono" id="genDiffLbl">${this.gen.difficulty} 星</span></p>
@@ -99,30 +290,19 @@
               </div>
             </div>
           </div>
-          <div class="stack" style="gap:12px">
-            <div class="callout callout--brand">${icon('info')}<div>AI 将依据课程标准自动标注每题的<b>知识点定位树</b>（前后置关系 + 重难点），并附<b>材料溯源</b>（fileId + 定位），确保可解释、可溯源。</div></div>
-            <div id="genResult" class="gen-result-scroll"><div class="card"><div class="card__body card__body--flush" style="padding:18px">${R.empty('配置后点击「生成习题」', 'AI 将产出并预览题目与解析', 'sparkle')}</div></div></div>
+          <div class="stack gen-preview">
+            <div id="genResult" class="gen-result-scroll"><div class="card gen-result-empty"><div class="card__body">${R.empty('配置后点击「生成习题」', 'AI 将产出并预览题目与解析', 'sparkle')}</div></div></div>
           </div>
         </div>`;
 
-        U.$('#genUpload').addEventListener('click', () => {
-          Modal.open({
-            title: '上传出题素材',
-            body: `<div class="upload" style="cursor:default">${icon('upload')}<b>选择文件（演示）</b><span>真实环境此处触发分片上传与异步解析</span></div>
-              <div class="kv" style="margin-top:14px"><div class="kv__row"><span>支持格式</span><span>PDF / PPT / PPTX / MP4</span></div>
-              <div class="kv__row"><span>解析产物</span><span>知识点挂载 · 难度标注 · 溯源定位</span></div></div>`,
-            footer: `<button class="btn" data-close>关闭</button><button class="btn btn--primary" id="upOk">模拟上传</button>`,
-            onMount(ov, close) {
-              U.$('#upOk', ov).addEventListener('click', () => { API.question.upload({ name: '新素材.pdf' }).then(() => { Toast.ok('素材已上传', '开始异步解析'); close(); }); });
-            }
-          });
-        });
-
-        U.$$('#genKp .chip', box).forEach(c => c.addEventListener('click', () => {
-          c.classList.toggle('is-active');
-          const id = c.dataset.kp;
-          if (this.gen.kpIds.includes(id)) this.gen.kpIds = this.gen.kpIds.filter(x => x !== id);
-          else this.gen.kpIds.push(id);
+        this._paintGenMaterials(U.$('#genMaterials', box));
+        this._paintGenKp(U.$('#genKp', box));
+        U.$('#genUpload', box).addEventListener('click', () => this.openGenMaterialUpload());
+        U.$$('#genTypes .chip', box).forEach(c => c.addEventListener('click', () => {
+          const key = c.dataset.type;
+          if (this.gen.types[0] === key) return;
+          this.gen.types = [key];
+          U.$$('#genTypes .chip', box).forEach(x => x.classList.toggle('is-active', x.dataset.type === key));
         }));
         U.$('#genDiff', box).addEventListener('input', e => { this.gen.difficulty = +e.target.value; U.$('#genDiffLbl', box).textContent = e.target.value + ' 星'; });
         U.$('#genCountRange', box).addEventListener('input', e => {
@@ -144,16 +324,14 @@
               <div class="card__body"><div class="fz-12 t-dim" id="genProc">正在调用检索与出题工具…</div></div></div>`;
           const card = (d, i) => {
             const q = d.payload || {};
-            const opts = ['A', 'B', 'C', 'D'].map(k => ({
-              key: k, text: (q.options || {})[k] || '', right: q.answer === k,
-            }));
+            const typeLabel = Question.GEN_TYPE_LABEL[q.type] || '单选题';
+            const optHtml = Question._genOptionHtml(q, 'genOptFig' + i);
             const figId = 'genFig' + i;
-            const optFigId = 'genOptFig' + i;
             return `
             <div class="gen-q">
               <div class="gen-q__head">
                 <span class="badge badge--brand">${i + 1}</span>
-                <b>单选题</b>
+                <b>${typeLabel}</b>
                 <span class="badge badge--outline">${U.esc(q.chapter || '')}</span>
                 <span class="badge ${d.status === 'draft' ? 'badge--ok' : 'badge--danger'}">${d.status === 'draft' ? '校验通过 · 草稿' : '校验未通过'}</span>
                 <span class="badge badge--outline">#${q.id || ''}</span>
@@ -161,10 +339,7 @@
               <div class="gen-q__body">
                 <div>${U.esc(q.question || '')}</div>
                 <div id="${figId}" style="margin:8px 0"></div>
-                <div class="gen-q__opts">${opts.map(o => {
-                  const mini = d.payload && d.payload.options_graph && d.payload.options_graph[o.key] ? `<div id="${optFigId}${o.key}" style="margin:4px 0"></div>` : '';
-                  return `<div class="gen-q__opt ${o.right ? 'is-answer' : ''}"><i>${o.key}</i> ${o.text ? U.esc(o.text) : ''}${o.right ? ' ✓ 正确答案' : ''}${mini}</div>`;
-                }).join('')}</div>
+                ${optHtml}
                 <div class="callout callout--brand" style="margin-top:10px;padding:9px 11px">${icon('bulb')}
                   <div><b>解析：</b>${U.esc(q.analysis || '暂无')}</div>
                   ${d.errors && d.errors.length ? `<div class="callout callout--danger" style="margin-top:6px;padding:7px 10px">${U.esc(d.errors.join('；'))}</div>` : ''}
@@ -183,10 +358,17 @@
             }
           };
           const box = U.$('#genResult');
+          const typeLine = '题型：' + this.gen.types.map(t => Question.GEN_TYPE_LABEL[t] || t).join('、') + '。';
+          const picked = (this._genMaterials || []).filter(m => this.gen.materialIds.includes(m.resId));
+          const materialLine = picked.length
+            ? '请优先依据这些课程素材出题：' + picked.map(m => m.title).join('、') + '。'
+            : '';
+          const requirement = [this.gen.requirement || '', typeLine, materialLine].filter(Boolean).join('');
           API.question.genStream({
-            kpIds: this.gen.kpIds, types: ['single'],
+            kpIds: this.gen.kpIds, types: this.gen.types.slice(),
+            materialIds: this.gen.materialIds.slice(),
             difficulty: this.gen.difficulty, count: this.gen.count,
-            requirement: this.gen.requirement || ''
+            requirement
           }, {
             onMeta: (d) => {
               if (!isCurrent()) return;
@@ -228,23 +410,6 @@
               box.scrollTop = box.scrollHeight;
             },
             onError: (d) => { if (isCurrent()) Toast.err('生成出错', (d && d.message) || ''); },
-            onAction: (d) => {
-              // 写操作待批准（P2c）：草稿此刻**还没有**落库，需用户在卡片上点确认
-              if (!isCurrent()) return;
-              const confirms = ((d && d.actions) || []).filter(a => a && a.kind === 'confirm');
-              if (!confirms.length) return;
-              let holder = U.$('#genConfirms', box);
-              if (!holder) {
-                holder = document.createElement('div');
-                holder.id = 'genConfirms';
-                holder.className = 'gen-confirms';
-                box.appendChild(holder);
-              }
-              holder.insertAdjacentHTML('beforeend',
-                confirms.map(a => AgentChatView.confirmCardHtml(a)).join(''));
-              AgentChatView.bindConfirms(holder);
-              box.scrollTop = box.scrollHeight;
-            },
             onDone: (d) => {
               if (!isCurrent()) return;
               this._genBusy = false;
@@ -252,15 +417,11 @@
               if (progressStatus) progressStatus.remove();
               const prog = U.$('#genProg', box);
               const made = d.count || this._drafts.length;
-              const pending = U.$$('#genConfirms .confirm-card.is-pending', box).length;
               if (prog) prog.textContent = made + ' 题 · 完成';
               if (made) {
-                Toast.ok('AI 出题完成', `${made} 道草稿已存入草稿箱`);
-              } else if (pending) {
-                // P2c：写操作要用户确认后才落库，这里不能说「已存入草稿箱」
-                Toast.info('已生成待批准动作', '在上方卡片点「确认执行」后才会写入草稿箱');
+                Toast.ok('AI 出题完成', `${made} 道题已在右侧预览，并写入草稿箱`);
               } else {
-                Toast.warn('本次没有产出草稿', '可查看右侧生成过程');
+                Toast.warn('本次没有产出题目', '可调整知识点或题型后重试');
               }
             },
           }).catch((e) => {
@@ -317,7 +478,7 @@
       <div class="card">
         <div class="card__head">
           <h3>${icon('pencil')} 出题草稿箱</h3>
-          <span class="badge badge--outline">仅本人可见 · 发布后进入题库</span>
+          <span class="badge badge--outline">AI 出题、新建、导入和待审核题目 · 发布后进入题库</span>
           <span class="spacer"></span>
           <div class="seg" id="draftSeg">
             <button data-s="draft" class="is-active">待处理</button>
@@ -325,12 +486,15 @@
           </div>
           <button class="btn btn--sm btn--outline" id="draftRefresh">${icon('refresh')} 刷新</button>
         </div>
-        <div class="card__body" id="draftList" style="max-height:calc(100vh - var(--topbar-h) - 220px);overflow-y:auto"></div>
+        <div class="card__body" id="draftList" style="max-height:min(62vh,640px);overflow-y:auto"></div>
       </div>`;
-      U.$$('#draftSeg button', box).forEach(b => b.addEventListener('click', () => {
-        U.$$('#draftSeg button', box).forEach(x => x.classList.remove('is-active'));
-        b.classList.add('is-active'); this.draftFilter = b.dataset.s; this.loadDrafts();
-      }));
+      U.$$('#draftSeg button', box).forEach(b => {
+        b.classList.toggle('is-active', b.dataset.s === this.draftFilter);
+        b.addEventListener('click', () => {
+          U.$$('#draftSeg button', box).forEach(x => x.classList.remove('is-active'));
+          b.classList.add('is-active'); this.draftFilter = b.dataset.s; this.loadDrafts();
+        });
+      });
       U.$('#draftRefresh', box).addEventListener('click', () => this.loadDrafts());
       this.loadDrafts();
     },
@@ -343,16 +507,28 @@
         && renderCourseId === API.config.activeCourseId;
       if (!list) return;
       list.innerHTML = `<div class="fz-12 t-dim" style="padding:14px">加载中…</div>`;
-      API.question.drafts({ status: this.draftFilter }).then(r => {
+      const pendingReq = this.draftFilter === 'draft'
+        ? this._fetchPendingQuestions().catch(() => [])
+        : Promise.resolve([]);
+      Promise.all([
+        API.question.drafts({ status: this.draftFilter }),
+        pendingReq,
+      ]).then(([r, pendingList]) => {
         if (!isCurrent()) return;
-        if (!r.list.length) {
+        const drafts = r.list || [];
+        const pending = pendingList || [];
+        if (!drafts.length && !pending.length) {
           list.innerHTML = `<div class="fz-12 t-dim" style="padding:20px;text-align:center">
-            ${icon('pencil')} 暂无草稿——去「AI 智能出题」生成，草稿会自动出现在这里</div>`;
+            ${icon('pencil')} ${this.draftFilter === 'published'
+              ? '还没有已发布的草稿'
+              : '暂无待确认题目。AI 出题、新建题目、导入题目都会先出现在这里，核对后再发布进题库。'}</div>`;
           return;
         }
-        list.innerHTML = r.list.map((d, i) => this.draftCard(d, i)).join('');
+        list.innerHTML = pending.map((q, i) => this.pendingCard(q, i)).join('')
+          + drafts.map((d, i) => this.draftCard(d, i)).join('');
+        pending.forEach((q, i) => this._mountPendingFigure(q, i));
         // 图题渲染
-        r.list.forEach((d, i) => {
+        drafts.forEach((d, i) => {
           const p = d.payload || {};
           if (p.graph) { const el = U.$('#draftFig' + i); if (el && window.DsFigure) DsFigure.mount(el, p.graph); }
           if (p.options_graph) {
@@ -362,10 +538,33 @@
             });
           }
         });
+        // 待审核题：编辑 / 确认发布 / 删除
+        U.$$('#draftList [data-pedit]').forEach(b => b.addEventListener('click', () => {
+          const q = pending.find(x => x.qId === b.dataset.pedit);
+          if (q) _openEditModal(q.qId, q);
+        }));
+        U.$$('#draftList [data-ppub]').forEach(b => b.addEventListener('click', () => {
+          const qId = b.dataset.ppub;
+          b.disabled = true; b.textContent = '发布中…';
+          API.question.update({ qId, status: 'published' }).then(() => {
+            Toast.ok('已发布进题库', '学生现在可以练习这道题');
+            this.loadDrafts();
+          }).catch(err => { b.disabled = false; b.textContent = '发布进题库'; Toast.err('发布失败', err && err.message); });
+        }));
+        U.$$('#draftList [data-pdel]').forEach(b => b.addEventListener('click', () => {
+          if (!b.dataset.armed) {
+            b.dataset.armed = '1'; b.classList.add('is-arm'); b.textContent = '确认删除';
+            setTimeout(() => { if (b.isConnected) { b.dataset.armed = ''; b.classList.remove('is-arm'); b.textContent = '删除'; } }, 3000);
+            return;
+          }
+          API.question.remove({ qId: b.dataset.pdel }).then(() => {
+            Toast.ok('已移入回收站', '7 天内可在「回收站」恢复');
+            this.loadDrafts();
+          }).catch(err => Toast.err('删除失败', err && err.message));
+        }));
         // 编辑 / 发布 / 删除
-        U.$('[data-dedit]', list)?.addEventListener || null;
         U.$$('#draftList [data-dedit]').forEach(b => b.addEventListener('click', () => {
-          const d = r.list.find(x => x.draftId === b.dataset.dedit);
+          const d = drafts.find(x => x.draftId === b.dataset.dedit);
           this.openDraftEdit(d);
         }));
         U.$$('#draftList [data-dpub]').forEach(b => b.addEventListener('click', () => {
@@ -392,6 +591,60 @@
       });
     },
 
+    _fetchPendingQuestions() {
+      const size = 100;
+      const pull = (page, acc) => API.question.bank({ status: 'pending', page, size }).then(r => {
+        const list = acc.concat(r.list || []);
+        const total = r.total || 0;
+        if (!r.list || !r.list.length || list.length >= total || page >= 20) return list;
+        return pull(page + 1, list);
+      });
+      return pull(1, []);
+    },
+
+    _mountPendingFigure(q, i) {
+      const fig = q.figureJson;
+      const el = U.$('#pendFig' + i);
+      if (!el || !fig) return;
+      if (fig.imageUrl || fig.image_url) U.mountQuestionImage(el, fig.imageUrl || fig.image_url);
+      else if (fig.graph && window.DsFigure) DsFigure.mount(el, fig.graph);
+    },
+
+    pendingCard(q, i) {
+      const typeLabel = { single: '单选题', multi: '多选题', multiple: '多选题', blank: '填空题', judge: '判断题', essay: '简答题' }[q.type] || q.type || '题目';
+      const blank = q.type === 'blank';
+      const options = Array.isArray(q.options) ? q.options : [];
+      const kpText = (q.tags && q.tags.length
+        ? q.tags.map(t => t.name || t.kpName || '').filter(Boolean).join('、')
+        : (q.kp || ''));
+      const optHtml = blank
+        ? `<div class="fz-12 t-dim" style="margin-top:8px">参考答案：${U.esc(q.answer || '未填写')}</div>`
+        : `<div class="gen-q__opts">${options.map(o => `<div class="gen-q__opt ${o.right ? 'is-answer' : ''}"><i>${U.esc(o.key || '')}</i> ${U.esc(o.text || '')}${o.right ? ' ✓ 正确答案' : ''}</div>`).join('')}</div>`;
+      return `
+      <div class="gen-q" style="margin:0 16px 12px">
+        <div class="gen-q__head">
+          <span class="badge badge--brand">${i + 1}</span>
+          <b>${U.esc(typeLabel)}</b>
+          <span class="badge badge--outline">${U.esc(kpText)}</span>
+          <span class="badge badge--warn">待审核</span>
+          <span class="badge badge--outline">难度 ${U.stars(q.difficulty)}</span>
+          <span class="badge badge--outline mono">#${U.esc(q.qId || '')}</span>
+        </div>
+        <div class="gen-q__body">
+          <div>${U.esc(q.stem || '')}</div>
+          <div id="pendFig${i}" style="margin:8px 0"></div>
+          ${optHtml}
+          <div class="callout callout--brand" style="margin-top:10px;padding:9px 11px">${icon('bulb')}
+            <div><b>解析：</b>${U.esc(q.analysis || '暂无')}</div></div>
+        </div>
+        <div class="row" style="padding:0 16px 12px;gap:8px">
+          <button class="btn btn--sm btn--outline" data-pedit="${U.esc(q.qId)}">${icon('edit')} 编辑</button>
+          <button class="btn btn--sm btn--primary" data-ppub="${U.esc(q.qId)}">${icon('check')} 发布进题库</button>
+          <button class="btn btn--sm btn--ghost" data-pdel="${U.esc(q.qId)}" style="color:var(--danger)">删除</button>
+        </div>
+      </div>`;
+    },
+
     draftCard(d, i) {
       const p = d.payload || {};
       const statusBadge = {
@@ -399,16 +652,14 @@
         invalid: '<span class="badge badge--danger">校验未过</span>',
         published: `<span class="badge badge--brand">已发布 ${U.esc(d.publishedQId || '')}</span>`,
       }[d.status] || `<span class="badge badge--outline">${U.esc(d.status)}</span>`;
-      const opts = ['A', 'B', 'C', 'D'].map(k => ({
-        key: k, text: (p.options || {})[k] || '', right: p.answer === k,
-      }));
       const errs = (d.errors || []).map(e => `<div>${U.esc(e)}</div>`).join('');
       const canPub = d.status === 'draft';
+      const typeLabel = Question.GEN_TYPE_LABEL[p.type] || '单选题';
       return `
       <div class="gen-q" style="margin:0 16px 12px">
         <div class="gen-q__head">
           <span class="badge badge--brand">${i + 1}</span>
-          <b>单选题</b>
+          <b>${typeLabel}</b>
           <span class="badge badge--outline">${U.esc(d.kpName || d.kpId || '')}</span>
           ${statusBadge}
           <span class="badge badge--outline mono">#${U.esc(d.qId || p.q_id || '')}</span>
@@ -418,10 +669,7 @@
         <div class="gen-q__body">
           <div>${U.esc(p.question || '')}</div>
           <div id="draftFig${i}" style="margin:8px 0"></div>
-          <div class="gen-q__opts">${opts.map(o => {
-            const mini = p.options_graph && p.options_graph[o.key] ? `<div id="draftOptFig${i}${o.key}" style="margin:4px 0"></div>` : '';
-            return `<div class="gen-q__opt ${o.right ? 'is-answer' : ''}"><i>${o.key}</i> ${o.text ? U.esc(o.text) : ''}${o.right ? ' ✓ 正确答案' : ''}${mini}</div>`;
-          }).join('')}</div>
+          ${Question._genOptionHtml(p, 'draftOptFig' + i)}
           <div class="callout callout--brand" style="margin-top:10px;padding:9px 11px">${icon('bulb')}
             <div><b>解析：</b>${U.esc(p.analysis || '暂无')}</div></div>
           ${d.status === 'invalid' && errs ? `<div class="callout callout--danger" style="margin-top:8px;padding:7px 10px">${icon('alert')}<div>${errs}</div></div>` : ''}
@@ -438,7 +686,20 @@
 
     openDraftEdit(d) {
       const p = d.payload || {};
-      const opts = ['A', 'B', 'C', 'D'].map(k => ({ key: k, text: (p.options || {})[k] || '', right: p.answer === k }));
+      const isBlank = p.type === 'blank' || p.is_blank;
+      const isMulti = p.type === 'multi';
+      const optionMap = (p.options && !Array.isArray(p.options)) ? p.options : {};
+      const optionKeys = isBlank ? [] : 'ABCDEFGH'.split('').filter(k => String(optionMap[k] || '').trim() || 'ABCD'.includes(k));
+      const keys = optionKeys.length ? optionKeys : (isBlank ? [] : ['A', 'B', 'C', 'D']);
+      const answerLetters = new Set(String(p.answer || '').toUpperCase().replace(/[^A-H]/g, '').split(''));
+      const opts = keys.map(k => ({ key: k, text: optionMap[k] || '', right: answerLetters.has(k) }));
+      const blankValues = isBlank ? draftBlankSeeds(p) : [];
+      const chapterId = String(p.chapter_id || d.chapterId || '');
+      const kpIds = (Array.isArray(d.kpIds) && d.kpIds.length)
+        ? d.kpIds
+        : (Array.isArray(p.kp_ids) && p.kp_ids.length ? p.kp_ids : (p.kp_id ? [p.kp_id] : []));
+      const kpText = (Array.isArray(d.kpNames) ? d.kpNames.filter(Boolean) : []).join('、') || d.kpName || '';
+      const chapterText = d.chapterName || '';
       Modal.open({
         title: icon('pencil') + ' 编辑草稿 · ' + U.esc(d.draftId), size: 'wide',
         body: `
@@ -453,22 +714,26 @@
           <section class="question-edit__section">
             <div class="edit-grid">
               <div class="edit-field"><label>章节</label>
-                <input class="input" value="${U.esc(p.chapter_id || '')}" disabled placeholder="由出题时定位"></div>
+                <input class="input" id="dqChapter" value="${U.esc(chapterText)}" disabled placeholder="加载章节名称…"></div>
               <div class="edit-field"><label>知识点</label>
-                <input class="input" value="${U.esc(p.kp_id || '')}" disabled placeholder="由出题时定位"></div>
-              <div class="edit-field"><label>答案</label>
-                <input class="input" id="dqAns" value="${U.esc(p.answer || '')}" placeholder="如 B"></div>
+                <input class="input" id="dqKp" value="${U.esc(kpText)}" disabled placeholder="加载知识点名称…"></div>
+              <div class="edit-field" id="dqAnsField" style="${isBlank ? 'display:none' : ''}"><label>答案</label>
+                <input class="input" id="dqAns" value="${U.esc(isBlank ? '' : (p.answer || ''))}" placeholder="${isMulti ? '如 AC' : '如 B'}"></div>
             </div>
           </section>
           <section class="question-edit__section">
-            <div class="question-edit__section-head"><div><b>题干</b><span>${p.graph ? '本题含图，图结构暂不支持在线编辑' : ''}</span></div></div>
+            <div class="question-edit__section-head"><div><b>题干</b><span>${isBlank ? '每个空写 ____ ，空的数量要和下面的答案一致' : (p.graph ? '本题含图，图结构暂不支持在线编辑' : '')}</span></div></div>
             <div class="question-edit__section-body">
               <textarea class="textarea question-edit__stem" id="dqStem">${U.esc(p.question || '')}</textarea>
               ${p.graph ? '<div id="draftEditFig" style="margin:8px 0"></div>' : ''}
             </div>
           </section>
-          <section class="question-edit__section">
-            <div class="question-edit__section-head"><div><b>选项</b><span>勾选正确答案；含小图的选项会随内容保留</span></div></div>
+          <section class="question-edit__section" id="dqBlankSection" style="${isBlank ? '' : 'display:none'}">
+            <div class="question-edit__section-head"><div><b>填空答案</b><span>按空位顺序填写，同一空的多种写法用 | 分隔</span></div></div>
+            <div class="stack" style="gap:8px" id="dqBlanks">${blankEditorHtml(blankValues, blankCountOf(p.question)).replaceAll('eq-blank-accept', 'dq-blank-accept')}</div>
+          </section>
+          <section class="question-edit__section" id="dqChoiceSection" style="${isBlank ? 'display:none' : ''}">
+            <div class="question-edit__section-head"><div><b>选项</b><span>${isMulti ? '勾选所有正确答案' : '勾选正确答案；含小图的选项会随内容保留'}</span></div></div>
             <div class="question-edit__options" id="dqOpts">
               ${opts.map(o => `
                 <div class="eq-opt">
@@ -487,22 +752,71 @@
         </div>`,
         footer: `<button class="btn" data-close>取消</button><button class="btn btn--primary" id="dqSave">保存草稿</button>`,
         onMount(ov, close) {
+          const fillNames = (data) => {
+            const chapters = (data && data.chapters) || [];
+            const chapter = chapters.find(c => c.id === chapterId);
+            const kpNameOf = {};
+            chapters.forEach(c => (c.kps || []).forEach(k => { kpNameOf[k.id] = k.name; }));
+            const chapterInput = U.$('#dqChapter', ov);
+            const kpInput = U.$('#dqKp', ov);
+            if (chapterInput) {
+              chapterInput.value = (chapter && chapter.name) || chapterText || chapterId || '未分章';
+            }
+            if (kpInput) {
+              const names = kpIds.map(id => kpNameOf[id]).filter(Boolean);
+              kpInput.value = names.join('、') || kpText || kpIds.join('、') || '未标注';
+            }
+          };
+          API.teacher.structure().then(fillNames).catch(() => fillNames(null));
           if (p.graph && window.DsFigure) { const el = U.$('#draftEditFig', ov); if (el) DsFigure.mount(el, p.graph); }
-          // 正确答案单选语义：勾一个自动取消其它
-          U.$$('#dqOpts .dq-opt-right', ov).forEach(cb => cb.addEventListener('change', () => {
-            if (cb.checked) U.$$('#dqOpts .dq-opt-right', ov).forEach(x => { if (x !== cb) x.checked = false; });
-          }));
+          const syncDraftBlanks = () => {
+            const stem = U.$('#dqStem', ov).value;
+            const count = blankCountOf(stem);
+            const box = U.$('#dqBlanks', ov);
+            const current = [...ov.querySelectorAll('.dq-blank-accept')].map(input => input.value);
+            const target = count > 0 ? count : 1;
+            if (box && current.length !== target) {
+              box.innerHTML = blankEditorHtml(current, count).replaceAll('eq-blank-accept', 'dq-blank-accept');
+            }
+          };
+          if (isBlank) U.$('#dqStem', ov).addEventListener('input', syncDraftBlanks);
+          if (!isBlank && !isMulti) {
+            U.$$('#dqOpts .dq-opt-right', ov).forEach(cb => cb.addEventListener('change', () => {
+              if (cb.checked) U.$$('#dqOpts .dq-opt-right', ov).forEach(x => { if (x !== cb) x.checked = false; });
+            }));
+          }
           U.$('#dqSave', ov).addEventListener('click', () => {
-            const answer = U.$('#dqAns', ov).value.trim()
-              || (U.$$('#dqOpts .dq-opt-right', ov).find(x => x.checked) || {}).dataset?.k || '';
-            const newOpts = {};
-            U.$$('#dqOpts .eq-opt-text', ov).forEach(inp => { newOpts[inp.dataset.k] = inp.value; });
-            const payload = Object.assign({}, p, {
-              question: U.$('#dqStem', ov).value,
-              options: newOpts,
-              answer: answer || p.answer,
-              analysis: U.$('#dqAnalysis', ov).value,
-            });
+            const stem = U.$('#dqStem', ov).value;
+            const analysis = U.$('#dqAnalysis', ov).value;
+            let payload;
+            if (isBlank) {
+              const packed = collectBlankOptions(ov, '.dq-blank-accept');
+              const marked = blankCountOf(stem);
+              if (!packed || (marked && packed.length !== marked)) {
+                Toast.warn('请为每个空填写答案', '题干里的 ____ 数量要和答案行数一致');
+                return;
+              }
+              payload = Object.assign({}, p, {
+                type: 'blank',
+                is_blank: true,
+                question: stem,
+                options: packed,
+                answer: packed.map(item => item.accept[0]).join('；'),
+                analysis,
+              });
+            } else {
+              const picked = U.$$('#dqOpts .dq-opt-right', ov).filter(x => x.checked).map(x => x.dataset.k);
+              const answer = (U.$('#dqAns', ov).value.trim())
+                || picked.join('');
+              const newOpts = {};
+              U.$$('#dqOpts .eq-opt-text', ov).forEach(inp => { newOpts[inp.dataset.k] = inp.value; });
+              payload = Object.assign({}, p, {
+                question: stem,
+                options: newOpts,
+                answer: answer || p.answer,
+                analysis,
+              });
+            }
             API.question.draftUpdate({ draftId: d.draftId, payload }).then(res => {
               Toast.ok('草稿已保存', res.status === 'draft' ? '校验通过' : '校验未通过：' + (res.errors || []).join('；'));
               close(); Question.loadDrafts();
@@ -560,7 +874,7 @@
       }
       this._renderBankDirBtn(box);
       U.$('#bankSearch', box).addEventListener('input', e => { this.bankKeyword = e.target.value.trim(); this.bankPage = 1; this.loadBank(); });
-      U.$('#bankNew', box).addEventListener('click', () => openNewQuestionModal(() => this.loadBank()));
+      U.$('#bankNew', box).addEventListener('click', () => openNewQuestionModal(() => this.showDrafts()));
       U.$('#bankImport', box).addEventListener('click', () => AgentUI.openImport());
       this.loadBank();
     },
@@ -601,16 +915,15 @@
         const t = U.$('#bankTbl'); if (!t) return;
         const totalPages = Math.max(1, Math.ceil((r.total || 0) / this.bankPageSize));
         if (this.bankPage > totalPages) { this.bankPage = totalPages; return this.loadBank(); }
-        const stMap = { pending: ['待审核', 'badge--warn'], approved: ['已审', 'badge--ok'], published: ['已发布', 'badge--brand'], archived: ['归档', 'badge--outline'] };
         const TYPE_LABEL = { single: '单选题', multi: '多选题', multiple: '多选题', blank: '填空题', judge: '判断题', essay: '简答题' };
+        const visible = (r.list || []).filter(q => q.status !== 'pending');
         t.innerHTML = `
           <thead><tr>
             <th>题号</th><th>题干</th><th>题型</th><th>知识点</th><th>难度</th>
             <th class="t-center">重难点</th>
-            <th class="t-center">正确率</th><th class="t-center">状态</th><th class="t-center">操作</th>
+            <th class="t-center">正确率</th><th class="t-center">操作</th>
           </tr></thead>
-        <tbody>${r.list.map(q => {
-            const [lbl, bd] = stMap[q.status] || ['—', 'badge--outline'];
+        <tbody>${visible.length ? visible.map(q => {
             const typeLabel = TYPE_LABEL[q.type] || q.type || '—';
             const kpText = (q.tags && q.tags.length
               ? q.tags.map(t => t.name || t.kpName || '').filter(Boolean).join('、')
@@ -622,11 +935,10 @@
               <td>${U.stars(q.difficulty)}</td>
               <td class="t-center">${q.isKey ? '<span class="badge badge--warn">◆ 重点</span>' : '<span class="t-dim">' + '—' + '</span>'}</td>
               <td class="t-center num ${q.correctRate === null ? 't-dim' : (q.correctRate < 60 ? 't-danger' : '')}">${q.correctRate === null ? '—' : q.correctRate + '%'}</td>
-              <td class="t-center"><span class="badge ${bd}">${lbl}</span></td>
               <td class="t-center"><button class="btn btn--xs btn--ghost" data-edit="${q.qId}">编辑</button>
                 <button class="btn btn--xs btn--ghost" type="button" data-del="${U.esc(q.qId)}">删除</button></td>
             </tr>`;
-          }).join('')}</tbody>`;
+          }).join('') : `<tr><td colspan="8" class="t-dim" style="padding:28px;text-align:center">${(r.list || []).length ? '本页题目都在草稿箱待确认' : '没有匹配的题目'}</td></tr>`}</tbody>`;
         U.$$('[data-edit]', t).forEach(b => b.addEventListener('click', () => this.editQ(b.dataset.edit, r.list)));
         U.$$('[data-del]', t).forEach(b => b.addEventListener('click', (event) => {
           event.preventDefault();
@@ -852,6 +1164,26 @@
     return (String(stem || '').match(new RegExp(BLANK_MARK_SRC, 'g')) || []).length;
   }
 
+  function draftBlankSeeds(p) {
+    const count = blankCountOf(p.question || '');
+    const options = Array.isArray(p.options) ? p.options : [];
+    if (options.some(item => Array.isArray(item && item.accept))) {
+      const seeded = options.map(item => (item.accept || []).join('|'));
+      while (count > seeded.length) seeded.push('');
+      return count > 0 ? seeded.slice(0, count) : seeded;
+    }
+    const answer = String(p.answer || '').trim();
+    if (!answer) return Array.from({ length: Math.max(count, 1) }, () => '');
+    let parts = answer.split(/[;；]/).map(item => item.trim()).filter(Boolean);
+    if (count > 1 && parts.length !== count) {
+      const byComma = answer.split(/[,，]/).map(item => item.trim()).filter(Boolean);
+      if (byComma.length === count) parts = byComma;
+    }
+    while (count > parts.length) parts.push('');
+    if (count > 0 && parts.length > count) parts = parts.slice(0, count);
+    return parts.length ? parts : [''];
+  }
+
   function blankSeeds(q) {
     const options = Array.isArray(q && q.options) ? q.options : [];
     if (options.some(item => Array.isArray(item && item.accept))) {
@@ -896,7 +1228,7 @@
 
         <section class="question-edit__section">
           <div class="question-edit__section-head">
-            <div><b>基础信息</b><span>设置题目的归属、题型和审核属性</span></div>
+            <div><b>基础信息</b><span>设置题目的归属和题型</span></div>
           </div>
           <div class="edit-grid">
             <div class="edit-field">
@@ -1327,7 +1659,9 @@
           }
           Toast.loading('保存中...');
           API.question.update({ qId, ...body }).then(() => {
-            Toast.done(); Toast.ok('已保存修订'); close(); Question.loadBank();
+            Toast.done(); Toast.ok('已保存修订'); close();
+            if (Question.tab === 'draft') Question.loadDrafts();
+            else Question.loadBank();
           }).catch(err => { Toast.done(); Toast.warn('保存失败：' + (err.message || err)); });
         });
       }
@@ -1435,7 +1769,7 @@ A,C,right</textarea></label>
         </div>
       </div>`,
     footer: `<button class="btn" data-close>取消</button>
-      <button class="btn btn--primary" id="nqSubmit">${icon("check")} 保存进题库</button>`,
+      <button class="btn btn--primary" id="nqSubmit">${icon("check")} 存入草稿箱</button>`,
     onMount(ov, close) {
       const $ = (sel) => ov.querySelector(sel);
       const selectedKps = new Set();

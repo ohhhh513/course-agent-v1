@@ -49,6 +49,13 @@ function refreshTeacherViewsAfterCourseChange() {
 })();
 
 /* —— 课程切换器：数据源 = 我的课程 —— */
+function courseOptionText(c, mine) {
+  const bits = [c.name];
+  if (c.code) bits.push(c.code);
+  if (c.classNo) bits.push(c.classNo);
+  return bits.filter(Boolean).join(' · ') + (mine ? '（我讲授）' : '');
+}
+
 function refreshCourseSel(preferId) {
   return API.course.my().then(list => {
     const courses = Array.isArray(list) ? list : [];
@@ -63,7 +70,7 @@ function refreshCourseSel(preferId) {
     courses.forEach(c => {
       const o = document.createElement('option');
       o.value = c.courseId;
-      o.textContent = c.name + (c.role === 'teacher' ? '（我讲授）' : '');
+      o.textContent = courseOptionText(c, c.role === 'teacher');
       courseSel.appendChild(o);
     });
     // 恢复上次选择；上次课程已不在列表（被清理/退出）时回落到第一门
@@ -99,6 +106,8 @@ window.__courseReady.then(() => {
       body: `
         <div class="stack" style="gap:14px">
           <label class="stack" style="gap:4px"><span class="fz-12 t-dim">课程名称</span><input class="input" id="ncName" placeholder="如：Python 程序设计"></label>
+          <label class="stack" style="gap:4px"><span class="fz-12 t-dim">课程代码</span><input class="input" id="ncCode" placeholder="如：CS20301" maxlength="32"></label>
+          <label class="stack" style="gap:4px"><span class="fz-12 t-dim">教学班级号</span><input class="input" id="ncClass" placeholder="如：计算机 2601" maxlength="32"></label>
           <label class="stack" style="gap:4px"><span class="fz-12 t-dim">学期（可选）</span><input class="input" id="ncTerm" placeholder="如：2026 秋季"></label>
           <p class="fz-12 t-dim">创建后生成邀请码，学生凭码加入；课程初始为空课，章节、知识点与资源由你逐步搭建。</p>
         </div>`,
@@ -107,12 +116,19 @@ window.__courseReady.then(() => {
         U.$('#ncGo', ov).addEventListener('click', () => {
           const name = U.$('#ncName', ov).value.trim();
           if (!name) { Toast.warn('请输入课程名称'); return; }
-          API.teacher.createCourse({ name, term: U.$('#ncTerm', ov).value.trim() }).then(r => {
+          API.teacher.createCourse({
+            name,
+            code: U.$('#ncCode', ov).value.trim(),
+            classNo: U.$('#ncClass', ov).value.trim(),
+            term: U.$('#ncTerm', ov).value.trim(),
+          }).then(r => {
             close();
+            const meta = [r.code, r.classNo].filter(Boolean).map(U.esc).join(' · ');
             Modal.open({
               title: '课程已创建',
               body: `<div class="stack" style="gap:8px;text-align:center;padding:10px 0">
                 <div class="fz-14 fw-6">${U.esc(r.name)}</div>
+                ${meta ? `<div class="fz-12 t-dim">${meta}</div>` : ''}
                 <div class="fz-12 t-dim">把邀请码分享给学生，他们凭码加入：</div>
                 <div style="font-size:27px;font-weight:700;letter-spacing:4px;color:var(--brand)">${U.esc(r.inviteCode)}</div>
                 <div class="fz-11 t-dim">课程 ID：${U.esc(r.courseId)}</div>

@@ -177,9 +177,6 @@
               <div class="ring-cell" data-goto="mastery">${U.ring(m.masteryRate, 'var(--ok)', '知识点学习完成率', '达标线 60%', 96)}</div>
               <div class="ring-cell" data-goto="mastery">${U.ring(m.goalAchieveRate, 'var(--accent-500)', '能力目标达成度', '基线 80%', 96)}</div>
             </div>
-            <div class="callout callout--brand" style="margin-top:14px">
-              ${icon('info')}<div>指标每日 06:00 全量刷新，练习提交后分钟级增量更新。点击环形图可下钻至<b>我的学情</b>。</div>
-            </div>
           </div>
         </div>
       </div>

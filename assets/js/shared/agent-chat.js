@@ -481,7 +481,8 @@ window.AgentChatView = (function () {
         this._setSendMode(false);            // 初始态（重进页面时复位）
         input.addEventListener('input', () => {
           input.style.height = 'auto';
-          input.style.height = Math.min(input.scrollHeight, 148) + 'px';
+          const cap = U.$('.chat')?.classList.contains('chat--empty') ? 148 : 88;
+          input.style.height = Math.min(input.scrollHeight, cap) + 'px';
           this._syncSendReady();
         });
 
@@ -1148,6 +1149,14 @@ window.AgentChatView = (function () {
         if (intro) intro.hidden = !empty;
         if (recommend) recommend.hidden = !empty;
         if (log) log.hidden = empty;
+        const input = root.querySelector('#chatInput');
+        if (input) {
+          input.rows = empty ? 3 : 1;
+          input.style.height = 'auto';
+          if (!empty && input.value) {
+            input.style.height = Math.min(input.scrollHeight, 88) + 'px';
+          }
+        }
       },
 
       _activeSkill() {

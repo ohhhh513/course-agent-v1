@@ -41,7 +41,7 @@ const TeacherStructure = {
       || R.empty('还没有章节目录', '点击上方「新建章节」开始搭建', 'layers');
 
     el.innerHTML = `
-      <div class="card" style="height:calc(100vh - var(--topbar-h) - 44px);display:flex;flex-direction:column;min-height:0">
+      <div class="card" style="height:100%;display:flex;flex-direction:column;min-height:0">
         <div class="card__head" style="flex-shrink:0">
           <h3>${icon('folder')} 课程目录与资源</h3>
           <span class="spacer"></span>

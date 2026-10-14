@@ -13,7 +13,7 @@
     render() {
       const el = U.$('#view-resource');
       el.innerHTML = `
-      <div class="card" style="height:calc(100vh - var(--topbar-h) - 44px)">
+      <div class="card" style="height:100%;min-height:0">
         <div class="card__head">
           <h3>${icon('folder')} 资源管理</h3>
           <span class="spacer"></span>

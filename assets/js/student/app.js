@@ -88,7 +88,8 @@
         }
         courses.forEach(c => {
           const o = document.createElement('option');
-          o.value = c.courseId; o.textContent = c.name;
+          o.value = c.courseId;
+          o.textContent = [c.name, c.code, c.classNo].filter(Boolean).join(' · ');
           courseSel.appendChild(o);
         });
         const cur = API.config.activeCourseId;

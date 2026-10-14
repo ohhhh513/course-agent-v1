@@ -29,6 +29,7 @@
     // 当前按章节过滤时的章名（仅 currentMode === 'chapter' 时有效）
     currentChapter: '',
     _pendingKp: '',
+    _pendingResId: '',
     _allPaths: [],
     // 本次真实拉取到的资源列表与「知识点 → 资源数」映射（用于准确显示章节/知识点资源数）
     _resList: [],
@@ -43,6 +44,8 @@
       // 保证重复点击同一条待办也能重新定位（不能等异步回调里再读，否则会被覆盖）。
       const pendingKp = this._pendingKp;
       this._pendingKp = '';
+      const pendingResId = this._pendingResId;
+      this._pendingResId = '';
       el.innerHTML = `
       <div class="grid g-12" style="margin-bottom:16px">
         <div class="card">
@@ -217,6 +220,18 @@
 
         // 初始 load
         this.load();
+
+        if (pendingResId) {
+          const res = this._resList.find(x => x.resId === pendingResId);
+          if (res && res.url) {
+            API.student.resourceView({ resId: res.resId }).catch(() => {});
+            this.openResource(res);
+          } else if (res) {
+            Modal.open({ title: '资源不可用', body: '<p class="t-dim">该资源暂无文件，请联系教师上传。</p>', footer: '<button class="btn" data-close>关闭</button>' });
+          } else if (typeof Toast !== 'undefined') {
+            Toast.warn('未找到对应学习资源');
+          }
+        }
       });
 
       // 搜索框
@@ -574,7 +589,7 @@
             <span class="rv-load__spin" aria-hidden="true"></span>
             <b class="rv-load__title" id="rvLoadTitle">正在加载视频…</b>
             <div class="rv-load__bar"><i id="rvLoadBar" style="width:0%"></i></div>
-            <p class="rv-load__hint" id="rvLoadHint">整段加载完成后再播放，确保学习进度记录准确</p>
+            <p class="rv-load__hint" id="rvLoadHint"></p>
             <button class="btn btn--sm btn--outline" id="rvForce" type="button" hidden>网络较慢，直接播放</button>
           </div>
         </div>
@@ -985,5 +1000,5 @@
       ResourceView._activeChapter = null;
     },
     // 已 mount 过时再次进入：仅当带着「待定位知识点」才重绘（避免无谓刷新覆盖用户当前筛选）
-    update: () => { if (ResourceView._pendingKp) ResourceView.render(); },
+    update: () => { if (ResourceView._pendingKp || ResourceView._pendingResId) ResourceView.render(); },
   });

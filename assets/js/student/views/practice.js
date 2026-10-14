@@ -94,13 +94,6 @@
           // 薄弱点与预警共用门槛（同一知识点至少作答 2 道不同题）：没有达标的知识点时给明确说明，
           // 不留空白横幅，也不让「薄弱点强化」静默退化成整门课随机（后端同样会返回空池）。
           const wps = d.weakPoints || [];
-          const weakBanner = wps.length
-            ? `<b>系统已为你定位 ${wps.length} 个薄弱知识点</b>` +
-              wps.map(w => `<span class="badge badge--danger" style="margin:4px 4px 0 0">${U.esc(w.name)} ${w.accuracyRate}%</span>`).join('') +
-              `<div style="margin-top:6px">推荐使用「薄弱点强化」模式，习题将自动命中上述知识点并按前后置关系排序。</div>`
-            : `<b>暂无可定位的薄弱知识点</b><div style="margin-top:6px">` +
-              `每个知识点<b>至少作答 2 道不同题</b>（与预警同一门槛）后才会计入薄弱点与靶向练习；` +
-              `可先用「顺序练习」或「随机练习」积累答题记录。</div>`;
           const weakSugs = wps.length
             ? wps.map(w => `
                 <div class="todo">
@@ -111,11 +104,6 @@
                 </div>`).join('')
             : R.empty('暂无靶向强化建议', '同一知识点作答 2 道以上不同题后，这里会给出针对性建议', 'target');
           box.innerHTML = `
-          <div class="callout ${wps.length ? 'callout--brand' : 'callout--warn'}" style="margin-bottom:16px">
-            ${icon(wps.length ? 'sparkle' : 'info')}
-            <div>${weakBanner}</div>
-          </div>
-
           <div class="grid g-4" id="modeGrid" style="margin-bottom:16px">
             ${ms.map(m => `
               <div class="card" style="cursor:pointer;position:relative" data-mode="${m.key}">

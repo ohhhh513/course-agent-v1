@@ -122,8 +122,6 @@
             <div class="card__head"><h3>${icon('grid')} 班级学情总览</h3></div>
             <div class="card__body">
               <div class="chart" id="dashDonut"></div>
-              <div class="callout callout--brand" style="margin-top:4px">${icon('info')}
-                <div>红色预警学生 <b>${ov.alertStudentCount}</b> 名（占比 ${ov.alertRatio}%），建议优先处理驾驶舱待办中的干预建议。</div></div>
             </div>
           </div>
         </div>`;

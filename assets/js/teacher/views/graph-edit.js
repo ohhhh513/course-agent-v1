@@ -75,7 +75,7 @@ const TeacherGraphEdit = {
               <button class="btn btn--sm" id="geUndo" type="button" title="撤回上一步（Ctrl+Z）">${icon('undo')} 撤回</button>
               <button class="btn btn--sm btn--danger" id="geDel" type="button">删除选中</button>
               <button class="btn btn--sm btn--ghost" id="geFit" type="button">适配视图</button>
-              <span class="fz-12 t-dim" id="geHint">拖拽节点调整位置；悬停节点点「+」连线</span>
+              <span class="fz-12 t-dim" id="geHint"></span>
             </div>
             <div class="ge-legend" id="geLegend"></div>
             <div class="ge-board-box" id="geBoardBox">
@@ -93,7 +93,7 @@ const TeacherGraphEdit = {
         </div>
       </div>
       <style>
-        .view.is-active#view-graph-edit{display:block;height:calc(100vh - var(--topbar-h) - 44px);min-height:0}
+        .view.is-active#view-graph-edit{display:flex;flex-direction:column;height:100%;max-height:100%;min-height:0;overflow:hidden}
         #view-graph-edit .ge-root{height:100%;min-height:0;display:flex;flex-direction:column;overflow:hidden;margin:0}
         #view-graph-edit .ge-head{flex:0 0 auto;flex-shrink:0}
         #view-graph-edit .ge-shell{display:grid;grid-template-columns:240px minmax(0,1fr);flex:1 1 auto;min-height:0;height:0}
@@ -790,7 +790,7 @@ const TeacherGraphEdit = {
     this.linking = null;
     this._closeRelPop();
     const hint = U.$('#geHint');
-    if (hint) hint.textContent = '拖拽节点调整位置；悬停节点点「+」连线';
+    if (hint) hint.textContent = '';
     this._syncSel();
     this._paintPlus();
     this._showLinkPreview(false);

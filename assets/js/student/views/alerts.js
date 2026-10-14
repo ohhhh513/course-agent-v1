@@ -33,8 +33,8 @@
       el.innerHTML = `
       <div class="grid g-4" style="margin-bottom:16px" id="alStats">${U.skeleton(90)}</div>
 
-      <div class="grid g-21" style="align-items:start">
-        <div class="card">
+      <div class="grid g-21 al-cols">
+        <div class="card al-col">
           <div class="card__head">
             <h3>${icon('bell')} 我的预警</h3>
             <span class="spacer"></span>
@@ -45,34 +45,16 @@
             </div>
             <button class="btn btn--sm" id="alRefresh" type="button">${icon('refresh')} 刷新</button>
           </div>
-          <div class="card__body" id="alBody">${U.skeleton(220)}</div>
+          <div class="card__body al-scroll" id="alBody">${U.skeleton(220)}</div>
         </div>
 
-        <div class="stack" style="gap:16px">
-          <div class="card">
-            <div class="card__head">
-              <h3>${icon('message')} 提醒与通知</h3>
-              <span class="spacer"></span>
-              <span class="badge badge--outline" id="alMsgBadge">—</span>
-            </div>
-            <div class="card__body card__body--flush">
-              <div class="list" id="alMsgList">${U.skeleton(70)}</div>
-            </div>
+        <div class="card al-col">
+          <div class="card__head">
+            <h3>${icon('message')} 提醒与通知</h3>
+            <span class="spacer"></span>
+            <span class="badge badge--outline" id="alMsgBadge">—</span>
           </div>
-          <div class="card">
-            <div class="card__body">
-              <div class="row" style="gap:7px;align-items:center;font-size:13.5px;font-weight:650;color:var(--text-2)">
-                ${icon('info')} 预警是怎么算的
-              </div>
-              <ul style="margin:9px 0 0;padding-left:18px;font-size:13px;color:var(--text-3);line-height:1.85">
-                <li>按<b>知识点</b>统计正确率：每道题只取<b>最近一次</b>作答，避免重复练习拉偏。</li>
-                <li>题目挂多个知识点时：<b>主知识点权重 1.0、其它标签权重 0.3</b> —— 做错会同时影响这些知识点，但主知识点责任更重。</li>
-                <li><b>红</b> = 正确率 &lt; 50%；<b>黄</b> = 50%~60%；<b>≥60% 即达标</b>，预警会自动解除。</li>
-                <li>该知识点至少作答过 <b>2 道不同题</b>才参与判定，题做太少不会误报。</li>
-                <li>每次交卷或进入学习驾驶舱都会实时重算，不需要老师手动触发。</li>
-              </ul>
-            </div>
-          </div>
+          <div class="card__body card__body--flush al-scroll" id="alMsgList">${U.skeleton(70)}</div>
         </div>
       </div>`;
 

@@ -65,7 +65,8 @@
 
         // 资源学习进度
         API.student.resourceStats().then(rs => {
-          const typeName = { video: '教学视频', ppt: '课件', doc: '教材文献', quiz: '题库' };
+          const typeName = { video: '教学视频', ppt: '教学课件', doc: '教材文献', quiz: '题库' };
+          const recent = (Array.isArray(rs.recent) ? rs.recent : []).slice(0, 5);
           U.$('#rsAvgBadge').textContent = `平均 ${rs.avgProgress}%`;
           U.$('#rsBody').innerHTML = `
             <div class="grid g-4" style="margin-bottom:14px">
@@ -86,20 +87,27 @@
                 <div class="stat__value"><span>${rs.readPages}</span><small>页</small></div>
               </div>
             </div>
-            <p class="fz-12 t-dim" style="margin-bottom:8px">最近学习</p>
-            <div class="stack" style="gap:8px">
-              ${rs.recent.length ? rs.recent.map(r => `
-                <div class="row rs-recent" data-res="${r.resId}">
+            <p class="fz-12 t-dim" style="margin-bottom:4px">最近学习</p>
+            <div class="rs-recent-list">
+              ${recent.length ? recent.map(r => `
+                <div class="rs-recent" data-res="${U.esc(r.resId)}" role="button" tabindex="0" title="打开资源">
                   <span class="badge badge--outline">${typeName[r.type] || r.type}</span>
-                  <span class="fz-12 clamp-1" style="flex:1;margin:0 8px">${U.esc(r.title)}</span>
-                  <span class="mono fz-12" style="min-width:50px;text-align:right">${r.progress}%</span>
+                  <span class="fz-13 clamp-1 rs-recent__title">${U.esc(r.title)}</span>
+                  <span class="rs-recent__bar">${U.bar(Number(r.progress) || 0, (Number(r.progress) || 0) >= 100 ? 'excellent' : 'fair', 'sm')}</span>
+                  <span class="mono fz-12" style="min-width:42px;text-align:right">${Number(r.progress) || 0}%</span>
                 </div>`).join('')
                 : `<div class="empty empty--sm">${icon('play')}<b>暂无学习记录</b><p class="fz-12">去资源中心开始学习，进度会在这里汇总</p></div>`}
             </div>`;
           U.$$('[data-cnt]', U.$('#rsBody')).forEach(s => U.countUp(s, +s.dataset.cnt, 1));
           U.$$('.rs-recent', U.$('#rsBody')).forEach(row => {
-            row.style.cursor = 'pointer';
-            row.addEventListener('click', () => Router.go('resource'));
+            const go = () => {
+              ResourceView._pendingResId = row.dataset.res;
+              Router.go('resource');
+            };
+            row.addEventListener('click', go);
+            row.addEventListener('keydown', e => {
+              if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); go(); }
+            });
           });
         }).catch(() => {
           U.$('#rsBody').innerHTML = `<div class="empty empty--sm">${icon('alert')}<b>加载失败</b></div>`;

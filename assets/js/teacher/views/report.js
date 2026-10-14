@@ -20,35 +20,132 @@
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
 
+  function _trReportHtml(raw) {
+    const detail = raw && raw.detail && typeof raw.detail === 'object' ? raw.detail : (raw || {});
+    const meta = detail.meta || {};
+    const sections = Array.isArray(detail.sections) ? detail.sections : [];
+    const title = raw.title || detail.title || '学情分析报告';
+    const period = meta.period || ((meta.startDate || '') + (meta.endDate ? ' ~ ' + meta.endDate : '')) || '—';
+    return {
+      title,
+      error: detail.error,
+      html: `<div class="report">
+        <div class="report__hd"><h2>${U.esc(title)}</h2>
+          <div class="report__meta">
+            <span>课程：${U.esc(meta.courseName || meta.className || '—')}</span>
+            <span>人数：${U.esc(meta.studentCount != null && meta.studentCount !== '' ? meta.studentCount : '—')}</span>
+            <span>章节：${U.esc(meta.chapter || '全课程')}</span>
+            <span>区间：${U.esc(period)}</span>
+            <span>生成者：${U.esc(meta.generator || '系统')}</span>
+            <span>${U.esc(meta.generatedAt || '—')}</span></div></div>
+        ${sections.map(s => `
+          <h3>${U.esc(s.title)}</h3>
+          ${(s.paragraphs || []).map(p => `<p>${U.esc(p)}</p>`).join('')}
+          ${s.bullets && s.bullets.length ? `<ul>${s.bullets.map(b => `<li>${U.esc(b)}</li>`).join('')}</ul>` : ''}`).join('')}
+      </div>`
+    };
+  }
+
   /* ================================================================
      视图 6 · 学情分析报告
+     版式对齐学生端学情报告：左栏预览正文，右栏历史归档 + 快捷入口。
+     生成仍走教师端配置弹窗（课程 / 章节 / 时间段 / 包含部分）。
      ================================================================ */
   const Report = {
+    _viewingId: '',
+
     render() {
       const el = U.$('#view-report');
+      if (!el) return;
+      this._viewingId = '';
       el.innerHTML = `
-      <div class="grid g-21" style="margin-bottom:16px">
-        <div class="card">
-          <div class="card__head"><h3>${icon('file')} 学情分析报告</h3><span class="spacer"></span>
-            <button class="btn btn--primary btn--sm" id="genReport">${icon('sparkle')} 一键生成报告</button></div>
-          <div class="card__body">
-            <p class="fz-13 t-2" style="line-height:1.8">基于课程 / 章节 / 时间段，自动汇总<b>整体掌握度、共性短板、个体预警、目标达成度</b>，支持 PDF / 网页导出，便于教研与上报。</p>
-            <div class="divider"></div>
-            <div class="row fz-12 t-dim"><span>数据来源</span><span class="spacer"></span><span>当前课程真实学情记录</span></div>
+      <div class="sr-page">
+        <div class="grid g-21 sr-body">
+          <div class="card sr-main">
+            <div class="card__head"><h3>${icon('file')} 学情分析报告</h3>
+              <span class="spacer"></span>
+              <span class="fz-12 t-dim nowrap" id="srScope">当前课程 · 班级学情</span>
+              <button class="btn btn--outline btn--sm" id="exPdf" type="button" hidden>${icon('download')} 导出 PDF</button>
+              <button class="btn btn--outline btn--sm" id="exHtml" type="button" hidden>${icon('download')} 导出网页</button>
+              <button class="btn btn--primary btn--sm" id="genReport" type="button">${icon('sparkle')} 生成报告</button></div>
+            <div class="card__body" id="srPreview">${U.skeleton ? U.skeleton(220) : ''}</div>
           </div>
-        </div>
-        <div class="card">
-          <div class="card__head"><h3>${icon('calendar')} 历史归档</h3></div>
-          <div class="card__body card__body--flush"><div class="list report-archive-list" id="repList"></div></div>
+          <div class="card sr-side">
+            <div class="card__head"><h3>${icon('calendar')} 历史归档</h3>
+              <span class="spacer"></span>
+              <span class="badge badge--outline" id="srArcBadge">—</span></div>
+            <div class="card__body card__body--flush"><div class="list report-archive-list" id="repList"></div></div>
+            <div class="sr-shortcuts">
+              <button type="button" data-go="monitor">${icon('grid')} 打开学情监测看板<span>热力图 / 预警</span></button>
+              <button type="button" data-go="analysis">${icon('flask')} 打开归因与错题分析<span>共性短板</span></button>
+              <button type="button" data-go="dashboard">${icon('home')} 打开教学驾驶舱<span>班级概览</span></button>
+            </div>
+          </div>
         </div>
       </div>`;
 
       U.$('#genReport').addEventListener('click', () => this.openGen());
+      U.$$('.sr-shortcuts [data-go]', el).forEach(b => {
+        b.addEventListener('click', () => Router.go(b.dataset.go));
+      });
+      this._bindExport();
+      this._paintEmpty('正在加载报告…', false);
+
       if (!API.config.activeCourseId) {
         U.$('#repList').innerHTML = `<div class="empty" style="padding:30px;text-align:center"><b>尚未创建或选择课程</b></div>`;
+        this._paintEmpty('请先选择课程后再生成报告', false);
         return;
       }
       this.loadArchive();
+    },
+
+    _bindExport() {
+      const exportFile = (format, selector, label) => {
+        const reportId = this._viewingId;
+        if (!reportId) { Toast.warn('请先打开一份报告'); return; }
+        const button = U.$(selector);
+        if (!button) return;
+        const original = button.innerHTML;
+        button.disabled = true;
+        button.textContent = '生成中…';
+        API.report.exportReport({ reportId, format })
+          .then(file => {
+            saveDownloadedFile(file, `report_${reportId}.${format}`);
+            Toast.ok(label + '已下载', '文件已保存到浏览器默认下载目录');
+          })
+          .catch(err => Toast.warn(label + '失败：' + (err && err.message || err)))
+          .finally(() => { button.disabled = false; button.innerHTML = original; });
+      };
+      const pdf = U.$('#exPdf'), html = U.$('#exHtml');
+      if (pdf && !pdf.dataset.bound) {
+        pdf.dataset.bound = '1';
+        pdf.addEventListener('click', () => exportFile('pdf', '#exPdf', 'PDF'));
+      }
+      if (html && !html.dataset.bound) {
+        html.dataset.bound = '1';
+        html.addEventListener('click', () => exportFile('html', '#exHtml', '网页'));
+      }
+    },
+
+    _paintEmpty(msg, showBtn) {
+      const box = U.$('#srPreview');
+      if (!box) return;
+      box.innerHTML = `<div class="sr-empty">
+        ${icon('file')}
+        <b>还没有学情分析报告</b>
+        <p>${U.esc(msg || '生成后将按当前课程真实学情汇总整体掌握度、共性短板、个体预警与目标达成度，便于教研与上报。')}</p>
+        ${showBtn !== false ? `<button class="btn btn--primary" type="button" id="srEmptyGen">${icon('sparkle')} 生成本次报告</button>` : ''}
+      </div>`;
+      const btn = U.$('#srEmptyGen');
+      if (btn) btn.addEventListener('click', () => this.openGen());
+      this._setExportVisible(false);
+    },
+
+    _setExportVisible(on) {
+      ['#exPdf', '#exHtml'].forEach(sel => {
+        const el = U.$(sel);
+        if (el) el.hidden = !on;
+      });
     },
 
     loadArchive() {
@@ -56,18 +153,22 @@
       if (!listEl) return Promise.resolve();
       return API.report.list({}).then(r => {
         const list = Array.isArray(r && r.list) ? r.list : [];
+        const badge = U.$('#srArcBadge');
+        if (badge) badge.textContent = `${list.length} 份`;
         if (!list.length) {
           listEl.innerHTML = `<div class="empty" style="padding:30px;text-align:center">暂无历史报告</div>`;
+          if (!this._viewingId) this._paintEmpty('点击右上角「生成报告」，按课程、章节与时间段汇总一份可导出的学情分析报告。', true);
           return;
         }
         listEl.innerHTML = list.map(rp => `
-          <div class="list__item list__item--clickable" data-rid="${rp.reportId}">
+          <div class="list__item list__item--clickable${rp.reportId === this._viewingId ? ' is-active' : ''}" data-rid="${rp.reportId}">
             <span class="list__lead" style="color:var(--brand-400)">${icon('file')}</span>
             <div class="list__main"><b>${U.esc(rp.title)}</b>
               <p>${U.esc(rp.scope || '全课程')} · ${U.esc(rp.period || '')} · 由 ${U.esc(rp.creator || '系统')} 生成 · ${rp.pages || 0} 页</p></div>
             <div class="list__trail"><span class="badge ${rp.status === 'ready' ? 'badge--ok' : 'badge--outline'}">${rp.status === 'ready' ? '可查看' : '归档'}</span></div>
           </div>`).join('');
         U.$$('[data-rid]', listEl).forEach(b => b.addEventListener('click', () => this.openDetail(b.dataset.rid)));
+        if (!this._viewingId && list[0]) this.openDetail(list[0].reportId);
       }).catch(() => {
         listEl.innerHTML = `<div class="empty" style="padding:30px;text-align:center">历史报告加载失败</div>`;
       });
@@ -183,6 +284,7 @@
               if (isCurrent() && courseId === API.config.activeCourseId) {
                 Toast.ok('报告已生成');
                 close();
+                reportView._viewingId = r.reportId;
                 await reportView.loadArchive();
                 if (isCurrent() && courseId === API.config.activeCourseId) await reportView.openDetail(r.reportId);
               }
@@ -196,39 +298,28 @@
 
     openDetail(reportId) {
       const courseId = API.config.activeCourseId, login = JSON.stringify(Auth.getSession());
-      const load = (id) => API.report.detail({ reportId: id });
-      return load(reportId).then(raw => {
+      return API.report.detail({ reportId }).then(raw => {
         if (courseId !== API.config.activeCourseId || login !== JSON.stringify(Auth.getSession()) || Router.current !== 'report') return;
-        // 后端返回 { reportId, title, status, detail: { meta, sections } }，mock 则可能直接返回详情
-        const detail = raw && raw.detail && typeof raw.detail === 'object' ? raw.detail : (raw || {});
-        if (detail.error) return Toast.warn(detail.error);
-        const d = {
-          ...detail,
-          title: raw.title || detail.title || '学情分析报告',
-          meta: detail.meta || {},
-          sections: Array.isArray(detail.sections) ? detail.sections : [],
-        };
-        const meta = d.meta;
+        const painted = _trReportHtml(raw);
+        if (painted.error) return Toast.warn(painted.error);
+        this._viewingId = reportId;
+        const preview = U.$('#srPreview');
+        if (preview) {
+          preview.innerHTML = painted.html;
+          this._setExportVisible(true);
+          this._bindExport();
+          U.$$('#repList [data-rid]').forEach(item => {
+            item.classList.toggle('is-active', item.dataset.rid === reportId);
+          });
+          return;
+        }
         Modal.open({
-          title: U.esc(d.title), size: 'wide',
-          body: `<div class="report">
-            <div class="report__hd"><h2>${U.esc(d.title)}</h2>
-              <div class="report__meta">
-                <span>课程：${U.esc(meta.courseName || meta.className || '—')}</span>
-                <span>人数：${U.esc(meta.studentCount != null && meta.studentCount !== '' ? meta.studentCount : '—')}</span>
-                <span>章节：${U.esc(meta.chapter || '全课程')}</span>
-                <span>区间：${U.esc(meta.period || ((meta.startDate || '') + (meta.endDate ? ' ~ ' + meta.endDate : '')) || '—')}</span>
-                <span>生成者：${U.esc(meta.generator || '系统')}</span>
-                <span>${U.esc(meta.generatedAt || '—')}</span></div></div>
-            ${d.sections.map(s => `
-              <h3>${U.esc(s.title)}</h3>
-              ${(s.paragraphs || []).map(p => `<p>${U.esc(p)}</p>`).join('')}
-              ${s.bullets && s.bullets.length ? `<ul>${s.bullets.map(b => `<li>${U.esc(b)}</li>`).join('')}</ul>` : ''}`).join('')}
-          </div>`,
+          title: U.esc(painted.title), size: 'wide',
+          body: painted.html,
           footer: `<button class="btn" data-close>关闭</button>
             <button class="btn btn--outline" id="exPdf">${icon('download')} 导出 PDF</button>
             <button class="btn btn--primary" id="exHtml">${icon('download')} 导出网页</button>`,
-          onMount(ov, close) {
+          onMount: (ov) => {
             const exportFile = (format, selector, label) => {
               const button = U.$(selector, ov);
               const original = button.innerHTML;
@@ -239,7 +330,7 @@
                   saveDownloadedFile(file, `report_${reportId}.${format}`);
                   Toast.ok(label + '已下载', '文件已保存到浏览器默认下载目录');
                 })
-                .catch(err => Toast.warn(label + '失败：' + (err.message || err)))
+                .catch(err => Toast.warn(label + '失败：' + (err && err.message || err)))
                 .finally(() => { button.disabled = false; button.innerHTML = original; });
             };
             U.$('#exPdf', ov).addEventListener('click', () => exportFile('pdf', '#exPdf', 'PDF'));
