@@ -45,6 +45,7 @@
       this._pendingTarget = null;
       this._pendingResume = null;
       this._startTab = null;
+      if (window.StudentExams) window.StudentExams.resetCourseContext();
     },
 
     render() {
@@ -57,16 +58,20 @@
       el.innerHTML = `
       <div class="tabs" id="pTabs" style="margin-bottom:16px">
         <button class="is-active" data-t="quiz">智能练习</button>
+        <button data-t="exam">试卷测验</button>
         <button data-t="wrong">错题本</button>
       </div>
       <div id="pBody"></div>`;
       U.$$('#pTabs button', el).forEach(b => b.addEventListener('click', () => {
         if (this.tab === b.dataset.t) return;
+        if (this.tab === 'exam' && window.StudentExams && !StudentExams.allowTabLeave(b.dataset.t)) return;
         this._modeRevision = (this._modeRevision || 0) + 1;
         U.$$('#pTabs button', el).forEach(x => x.classList.remove('is-active'));
         b.classList.add('is-active');
         this.tab = b.dataset.t;
-        this.tab === 'quiz' ? this.renderSelect() : this.renderWrong();
+        if (this.tab === 'quiz') this.renderSelect();
+        else if (this.tab === 'wrong') this.renderWrong();
+        else if (window.StudentExams) StudentExams.renderList();
       }));
       this.renderSelect();
     },
@@ -1011,3 +1016,5 @@ Router.register('practice', {
   // 得先点一次薄弱点强化再退出才进去"）。
   update: () => { if (Practice._pendingResume || Practice._pendingTarget) Practice.render(); },
 });
+
+window.StudentPractice = Practice;

@@ -704,7 +704,21 @@ window.API = (function () {
       const detail = M().wrongDetail[q.qId];
       if (!detail) return Promise.reject({ code: 404, message: '错题不存在或已移除' });
       return detail;
-    })
+    }),
+
+    /** GET /practice/exams  当前课程已发布试卷及个人最近成绩 */
+    exams: (p) => request('GET', '/practice/exams', p, () => ({ list: [], total: 0 })),
+
+    /** POST /practice/exams/{paperId}/attempts  开始或继续未完成的试卷测验 */
+    startExam: (p) => request('POST', `/practice/exams/${encodeURIComponent(p.paperId)}/attempts`, p, () => M().examAttempt),
+
+    /** PUT /practice/exams/attempts/{attemptId}/answers  保存试卷作答草稿 */
+    saveExamAnswer: (p) => request('PUT', `/practice/exams/attempts/${encodeURIComponent(p.attemptId)}/answers`, p, () => ({
+      itemId: p.itemId, saved: true
+    })),
+
+    /** POST /practice/exams/attempts/{attemptId}/finish  交卷并回写正常答题记录 */
+    finishExam: (p) => request('POST', `/practice/exams/attempts/${encodeURIComponent(p.attemptId)}/finish`, p, () => M().examResult)
   };
 
   /* ======================================================================
@@ -832,6 +846,12 @@ window.API = (function () {
      八、教师端 · AI 出题与题库管理
      ====================================================================== */
   const question = {
+    exams: {
+      list: () => request('GET', '/teacher/exams'),
+      detail: (paperId) => request('GET', '/teacher/exams/' + encodeURIComponent(paperId)),
+      save: (p) => request(p.paperId ? 'PUT' : 'POST', '/teacher/exams' + (p.paperId ? '/' + encodeURIComponent(p.paperId) : ''), p),
+      publish: (p) => request('POST', '/teacher/exams/' + encodeURIComponent(p.paperId) + '/publish', { revision: p.revision }),
+    },
     /** GET /question/gen/config  出题配置项（素材、知识点、题型） */
     genConfig: (p) => request('GET', '/question/gen/config', p, () => M().genConfig),
 
@@ -870,8 +890,9 @@ window.API = (function () {
     /** POST /question/drafts/{draftId}/publish  发布草稿 → 正式题库 */
     draftPublish: (p) => request('POST', '/question/drafts/' + p.draftId + '/publish', p, () => ({ published: true })),
 
-    /** GET /question/bank  题库列表  params: { kpId, type, difficulty, keyword, page, sort, dir }
+    /** GET /question/bank  题库列表  params: { kpId, chapterId, knowledgeId, type, difficulty, keyword, page, sort, dir }
      *  2026-09-24：去掉 status 维度，改为按正确率/难度/知识点/默认 排序（sort=correctRate|difficulty|kp|default, dir=asc|desc）。
+     *  chapterId + knowledgeId 为试卷选题筛选，可组合使用；keyword 同时匹配题号、题干、章节与知识点名称。
      *  mock 数据不可用（questionBank 为空数组），仅保留兜底空结果。 */
     bank: (p) => request('GET', '/question/bank', p, () => ({ total: 0, list: [] })),
 

@@ -1809,6 +1809,8 @@ def draft_publish(
 @question_router.get("/bank")
 def question_bank(
     kpId: str = Query(None),
+    chapterId: str = Query(None),
+    knowledgeId: str = Query(None),
     type: str = Query(None),
     status: str = Query("all"),
     difficulty: int = Query(None),
@@ -1828,6 +1830,23 @@ def question_bank(
         Question.status != "recycled",
     )
     if kpId: q = q.filter(Question.kp_id == kpId)
+    chapter_names = {
+        n.id: n.name for n in db.query(GraphNode).filter(
+            GraphNode.graph_type == "chapter",
+            GraphNode.course_id == course_id,
+        ).all()
+    }
+    if chapterId:
+        from sqlalchemy import or_
+        chapter_name = chapter_names.get(chapterId)
+        chapter_filters = [Question.chapter_id == chapterId]
+        if chapter_name:
+            chapter_filters.append(Question.chapter == chapter_name)
+        q = q.filter(or_(*chapter_filters))
+    if knowledgeId:
+        kp_filter = _question_kp_clause(Question, [knowledgeId])
+        if kp_filter is not None:
+            q = q.filter(kp_filter)
     if type: q = q.filter(Question.type == type)
     if status and status != "all": q = q.filter(Question.status == status)
     if difficulty: q = q.filter(Question.difficulty == difficulty)
@@ -1845,7 +1864,10 @@ def question_bank(
         needle = keyword.strip().casefold()
 
         def matches_keyword(row):
-            if needle in (row.q_id or "").casefold() or needle in (row.stem or "").casefold():
+            chapter_name = row.chapter or chapter_names.get(getattr(row, "chapter_id", ""), "")
+            if (needle in (row.q_id or "").casefold()
+                    or needle in (row.stem or "").casefold()
+                    or needle in chapter_name.casefold()):
                 return True
             kp_ids = _parse_kp_ids(getattr(row, "kp_ids", None))
             if row.kp_id and row.kp_id not in kp_ids:
@@ -1905,7 +1927,7 @@ def question_bank(
             "qId": x.q_id, "type": x.type, "difficulty": x.difficulty,
             "status": x.status, "stem": x.stem,
             "chapterId": getattr(x, "chapter_id", "") or "",
-            "chapter": getattr(x, "chapter", "") or "",
+            "chapter": getattr(x, "chapter", "") or chapter_names.get(getattr(x, "chapter_id", ""), ""),
             "kpId": x.kp_id,
             "kp": kp_id_name.get(x.kp_id, x.kp_id or "未知"),
             "kpIds": kp_ids,

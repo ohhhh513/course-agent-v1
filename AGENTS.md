@@ -62,7 +62,7 @@ backend\.venv\Scripts\python.exe dev_tools\check_mcp_tools.py
 ## 5. 提交规范
 
 - 中文提交信息**不要用 ASCII 双引号**（PowerShell 会吃掉），用 `「」`。
-- 一次提交只装一件事；提交信息写清「改了什么 / 为什么 / 怎么验证的」。
+- 提交信息写清「改了什么 / 为什么 / 怎么验证的」。
 - 提交前跑 `git status`，确认没有把 `data.zip`、临时脚本、`__pycache__` 一起带进去。
 - **不要替人类做 push 决定**：本地提交可以，推送前问一句。
 

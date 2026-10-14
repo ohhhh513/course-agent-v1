@@ -361,9 +361,17 @@ const Router = {
   current: null,
   titles: {},
   emptyState: null,
+  beforeNavigate: null,
   register(key, cfg) { this.views[key] = cfg; },
   go(key, params) {
     if (!this.views[key]) return;
+    if (typeof this.beforeNavigate === 'function' && this.beforeNavigate(key, params) === false) {
+      // hashchange 触发的路由也要复位；直接点击导航时原 hash 尚未改变。
+      if (this.current && location.hash !== '#' + this.current) {
+        history.replaceState(null, '', location.pathname + location.search + '#' + this.current);
+      }
+      return;
+    }
     U.$$('.view').forEach(v => { v.classList.remove('is-active'); v.classList.remove('view-enter'); });
     const el = U.$('#view-' + key);
     if (el) {

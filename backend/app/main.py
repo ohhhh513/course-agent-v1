@@ -109,9 +109,11 @@ from .routers.student import router as student_router
 from .routers.teacher import router as teacher_router, analysis_router, question_router
 from .routers.ai import router as ai_router
 from .routers.practice import router as practice_router
+from .routers.student_exams import router as student_exams_router
 from .routers.intervention import (intervention_router, report_router,
                                    student_report_router)
 from .routers.st_agent import router as st_agent_router
+from .routers.teacher_exams import router as teacher_exams_router
 
 app.include_router(auth_router)
 app.include_router(admin_router)
@@ -123,10 +125,12 @@ app.include_router(analysis_router)
 app.include_router(question_router)
 app.include_router(ai_router)
 app.include_router(practice_router)
+app.include_router(student_exams_router)
 app.include_router(intervention_router)
 app.include_router(report_router)
 app.include_router(student_report_router)
 app.include_router(st_agent_router)
+app.include_router(teacher_exams_router)
 
 
 # ========== 健康检查 ==========

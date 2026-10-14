@@ -40,6 +40,7 @@
         <button class="is-active" data-t="gen">${icon('sparkle')} AI 智能出题</button>
         <button data-t="draft">${icon('pencil')} 草稿箱</button>
         <button data-t="bank">${icon('file')} 题库管理</button>
+        <button data-t="exam">${icon('file')} 试卷测验</button>
         <button data-t="recycle">${icon('trash')} 回收站</button>
       </div>
       <div id="qBody"></div>`;
@@ -49,11 +50,13 @@
         if (this.tab === 'gen') this.renderGen();
         else if (this.tab === 'draft') this.renderDrafts();
         else if (this.tab === 'recycle') this.renderRecycle();
+        else if (this.tab === 'exam') TeacherExams.render();
         else this.renderBank();
       }));
       if (this.tab === 'draft') this.renderDrafts();
       else if (this.tab === 'bank') this.renderBank();
       else if (this.tab === 'recycle') this.renderRecycle();
+      else if (this.tab === 'exam') TeacherExams.render();
       else this.renderGen();
       U.$$('#qTabs button', el).forEach(b => b.classList.toggle('is-active', b.dataset.t === this.tab));
     },
@@ -1669,7 +1672,10 @@
   }
 
 /* ================= 手动单题表单（含图结构编辑器 + 同款渲染预览） ================= */
-function openNewQuestionModal(onDone) {
+function openNewQuestionModal(onDone, editor = {}) {
+  const initial = editor.initial || {};
+  const initialFigure = initial.figureJson || initial.figure_json || null;
+  const openedCourseId = API.config.activeCourseId;
   const PRESETS = [
     { v: "single", t: "单选题" },
   ];
@@ -1682,7 +1688,7 @@ function openNewQuestionModal(onDone) {
   }
 
   Modal.open({
-    title: "新建题目", size: "wide",
+    title: editor.title || "新建题目", size: "wide",
     body: `
       <div class="stack" style="gap:12px">
         <div style="display:grid;grid-template-columns:1fr 1fr 110px 110px;gap:10px">
@@ -1728,6 +1734,7 @@ function openNewQuestionModal(onDone) {
         <div id="nqFigBox" style="display:none" class="stack" style="gap:10px">
           <label class="stack" style="gap:4px"><span class="fz-12 t-dim">配图方式</span>
             <select class="select" id="nqFigSource">
+              ${initialFigure ? '<option value="keep">保留当前配图</option>' : ''}
               <option value="file">上传图片</option>
               <option value="link">图片链接</option>
               <option value="structure">绘制结构图</option>
@@ -1769,10 +1776,10 @@ A,C,right</textarea></label>
         </div>
       </div>`,
     footer: `<button class="btn" data-close>取消</button>
-      <button class="btn btn--primary" id="nqSubmit">${icon("check")} 存入草稿箱</button>`,
+      <button class="btn btn--primary" id="nqSubmit">${icon("check")} ${editor.onSave ? '保存到试卷' : '存入草稿箱'}</button>`,
     onMount(ov, close) {
       const $ = (sel) => ov.querySelector(sel);
-      const selectedKps = new Set();
+      const selectedKps = new Set(initial.kpIds || initial.kp_ids || []);
       let structureData = null;
 
       API.teacher.structure().then(d => {
@@ -1789,6 +1796,8 @@ A,C,right</textarea></label>
             .map(k => `<button type="button" class="chip" data-kp="${U.esc(k.id)}" data-ch="${U.esc(k.chapter || '')}">${U.esc(k.name)}</button>`).join("")
             || '<span class="fz-11 t-dim">暂无知识点，请先在目录页创建</span>';
         }
+        if (initial.chapterId) chSel.value = initial.chapterId;
+        paintKps();
       }).catch(() => {});
 
       const paintKps = () => {
@@ -1884,6 +1893,21 @@ A,C,right</textarea></label>
       };
       $("#nqType").addEventListener("change", syncNewType);
       $("#nqStem").addEventListener("input", () => { if ($("#nqType").value === "blank") syncNewType(); });
+      $("#nqType").value = initial.type || 'single';
+      $("#nqStem").value = initial.stem || '';
+      $("#nqAnalysis").value = initial.analysis || '';
+      $("#nqDiff").value = initial.difficulty || 3;
+      $("#nqScore").value = initial.score || 5;
+      if (editor.onSave) {
+        const scoreLabel = $("#nqScore").closest('label');
+        scoreLabel.style.display = 'none';
+        scoreLabel.parentElement.style.gridTemplateColumns = '1fr 140px';
+      }
+      if (initial.type === 'blank') {
+        $("#nqBlanks").innerHTML = blankEditorHtml(draftBlankSeeds({question: initial.stem, options: initial.options, answer: initial.answer}), blankCountOf(initial.stem)).replaceAll('eq-blank-accept', 'nq-blank-accept');
+      } else if (initial.options) {
+        writeChoice(initial.options.map(o => ({...o, checked: String(initial.answer || '').includes(o.key)})), initial.type);
+      }
       syncNewType();
 
       // 选项增删
@@ -1910,17 +1934,18 @@ A,C,right</textarea></label>
       const figSource = () => $("#nqFigSource").value;
       const nodesList = () => ($("#nqFigNodesInput").value || "").split(/[,，\s]+/).map(s => s.trim()).filter(Boolean);
       function syncFigUI() {
+        const keep = figSource() === 'keep';
         const link = figSource() === "link";
         const file = figSource() === "file";
         const t = figType();
         $("#nqFigFile").style.display = file ? "" : "none";
         $("#nqFigLink").style.display = link ? "" : "none";
-        $("#nqFigStructure").style.display = (file || link) ? "none" : "";
+        $("#nqFigStructure").style.display = (file || link || keep) ? "none" : "";
         $("#nqFigTreeRoot").style.display = !file && !link && t === "tree" ? "" : "none";
         $("#nqFigEdgesTree").style.display = !file && !link && t === "tree" ? "" : "none";
         $("#nqFigEdgesGraph").style.display = !file && !link && t === "graph" ? "" : "none";
         const mWrap = $("#nqFigMatrix");
-        if (!file && !link && t === "adjacency_matrix") {
+        if (!file && !link && !keep && t === "adjacency_matrix") {
           const nodes = nodesList();
           mWrap.innerHTML = `<table class="ds-matrix"><thead><tr><th></th>${nodes.map(n => `<th>${U.esc(n)}</th>`).join("")}</tr></thead><tbody>${
             nodes.map((rn, i) => `<tr><th>${U.esc(rn)}</th>${nodes.map((cn, j) =>
@@ -1959,6 +1984,23 @@ A,C,right</textarea></label>
       }
       function renderPreview() {
         const prev = $("#nqFigPrev");
+        if (figSource() === 'keep' && initialFigure) {
+          prev.replaceChildren();
+          if (initialFigure.imageUrl || initialFigure.image_url) U.mountQuestionImage(prev, initialFigure.imageUrl || initialFigure.image_url);
+          else if (window.DsFigure) {
+            if (initialFigure.graph) {
+              const graphBox = document.createElement('div');
+              prev.appendChild(graphBox);
+              DsFigure.mount(graphBox, initialFigure.graph);
+            }
+            if (initialFigure.options_graph) {
+              const optionsBox = document.createElement('div');
+              prev.appendChild(optionsBox);
+              DsFigure.mountOptions(optionsBox, initialFigure.options_graph);
+            }
+          }
+          return;
+        }
         if (!prev || figBox.style.display === "none") return;
         if (figSource() === "file") {
           const picked = ($("#nqFigFileInput") || {}).files;
@@ -1985,10 +2027,14 @@ A,C,right</textarea></label>
         ov.addEventListener("input", e => { if (e.target.matches(sel)) syncFigUI(); }));
       $("#nqFigSource").addEventListener("change", syncFigUI);
       $("#nqFigFileInput").addEventListener("change", syncFigUI);
+      $("#nqHasFig").checked = !!initialFigure;
+      $("#nqFigBox").style.display = initialFigure ? '' : 'none';
       syncFigUI();
 
       // 提交
       ov.querySelector("#nqSubmit").addEventListener("click", async () => {
+        if ($("#nqSubmit").disabled) return;
+        if (API.config.activeCourseId !== openedCourseId) { Toast.warn('课程已切换，请重新打开题目编辑器'); return; }
         const stem = $("#nqStem").value.trim();
         if (!stem) { Toast.warn("请输入题干"); return; }
         const qType = $("#nqType").value;
@@ -2027,32 +2073,41 @@ A,C,right</textarea></label>
           kp_id: kpIds[0],
           kp_ids: kpIds,
         };
-        if ($("#nqHasFig").checked) {
-          if ($("#nqFigSource").value === "file") {
-            const picked = ($("#nqFigFileInput") || {}).files;
-            if (!picked || !picked[0]) { Toast.warn("请选择题目图片"); return; }
-            const fd = new FormData();
-            fd.append("file", picked[0]);
-            let uploaded;
-            try { uploaded = await API.teacher.uploadQuestionFigure(fd); }
-            catch (err) { Toast.warn(err.message || "图片上传失败"); return; }
-            if (!uploaded || !U.httpImageUrl(uploaded.url)) { Toast.warn("图片上传失败"); return; }
-            q.figure_json = { imageUrl: uploaded.url, has_image: true };
-          } else if ($("#nqFigSource").value === "link") {
-            const url = U.httpImageUrl($("#nqFigUrl").value);
-            if (!url) { Toast.warn("请填写以 http:// 或 https:// 开头的图片链接"); return; }
-            q.figure_json = { imageUrl: url, has_image: true };
-          } else {
-            const spec = buildSpec();
-            if (!spec) { Toast.warn("图像结构不完整：请填写节点"); return; }
-            q.figure_json = { graph: spec, has_image: true };
+        $("#nqSubmit").disabled = true;
+        try {
+          if ($("#nqHasFig").checked) {
+            if ($("#nqFigSource").value === 'keep') {
+              q.figure_json = initialFigure;
+            } else if ($("#nqFigSource").value === "file") {
+              const picked = ($("#nqFigFileInput") || {}).files;
+              if (!picked || !picked[0]) { Toast.warn("请选择题目图片"); return; }
+              const fd = new FormData();
+              fd.append("file", picked[0]);
+              const uploaded = await API.teacher.uploadQuestionFigure(fd);
+              if (!uploaded || !U.httpImageUrl(uploaded.url)) { Toast.warn("图片上传失败"); return; }
+              q.figure_json = { imageUrl: uploaded.url, has_image: true };
+            } else if ($("#nqFigSource").value === "link") {
+              const url = U.httpImageUrl($("#nqFigUrl").value);
+              if (!url) { Toast.warn("请填写以 http:// 或 https:// 开头的图片链接"); return; }
+              q.figure_json = { imageUrl: url, has_image: true };
+            } else {
+              const spec = buildSpec();
+              if (!spec) { Toast.warn("图像结构不完整：请填写节点"); return; }
+              q.figure_json = { graph: spec, has_image: true };
+            }
           }
-        }
-        API.teacher.importQuestions({ questions: [q] }).then(() => {
+          if (API.config.activeCourseId !== openedCourseId) { Toast.warn('课程已切换，请重新打开题目编辑器'); return; }
+          if (editor.onSave) {
+            await editor.onSave(q);
+            close();
+            return;
+          }
+          await API.teacher.importQuestions({ questions: [q] });
           close();
           Toast.ok("题目已加入草稿箱", "请到「草稿箱」发布后学生方可练习");
           if (onDone) onDone();
-        }).catch(err => Toast.error("保存失败", err && err.message || ""));
+        } catch (err) { Toast.error('保存失败', err && err.message || ''); }
+        finally { $("#nqSubmit").disabled = false; }
       });
     }
   });

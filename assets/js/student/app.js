@@ -101,8 +101,23 @@
     // 首屏课程上下文 Promise：路由启动前必须等它（见 start.js），
     // 否则首次登录（localStorage 里还没有 activeCourseId）时各视图会误判为「未加入课程」。
     window.__courseReady = refreshCourseSel();
-    courseSel.addEventListener('change', () => {
+    courseSel.addEventListener('change', async () => {
       if (!courseSel.value) return;
+      const previousCourse = API.config.activeCourseId;
+      const nextCourse = courseSel.value;
+      if (window.StudentPractice && typeof StudentPractice.beforeCourseChange === 'function') {
+        courseSel.disabled = true;
+        const allowed = await StudentPractice.beforeCourseChange(nextCourse);
+        courseSel.disabled = false;
+        if (!allowed) {
+          courseSel.value = previousCourse;
+          return;
+        }
+      }
+      if (API.config.activeCourseId !== previousCourse) {
+        courseSel.value = API.config.activeCourseId;
+        return;
+      }
       API.setActiveCourse(courseSel.value);
       Toast.info('已切换课程', courseSel.options[courseSel.selectedIndex].text);
       refreshStudentViewsAfterCourseChange();
