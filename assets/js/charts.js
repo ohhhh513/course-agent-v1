@@ -113,7 +113,7 @@ const Charts = (function () {
       const inst = echarts.init(el, null, { renderer: 'canvas' });
       inst.setOption(r.builder(tokens()), true);
       if (r.onClick) inst.on('click', r.onClick);   // 重建后必须重绑，否则点击处理器随旧实例一起消失
-      const next = { instance: inst, builder: r.builder, onClick: r.onClick || null, onReady: r.onReady || null, observer: null };
+      const next = { instance: inst, builder: r.builder, onClick: r.onClick || null, onReady: r.onReady || null, observer: null, _kind: r._kind || null };
       store.set(el, next);
       if (r.onReady) r.onReady(inst);               // 悬停等非 click 事件同样要重绑并恢复当前状态
       next.observer = watchSize(el, inst);
@@ -655,6 +655,25 @@ const Charts = (function () {
     });
   }
 
+  /* 与热力图 visualMap 同一套红→绿，单人柱形图按分值上色时复用 */
+  const HEAT_IN_RANGE = ['#ef4444', '#f97316', '#f59e0b', '#a3e635', '#22c55e'];
+
+  function hexToRgb(hex) {
+    const h = String(hex || '').replace('#', '');
+    return [parseInt(h.slice(0, 2), 16) || 0, parseInt(h.slice(2, 4), 16) || 0, parseInt(h.slice(4, 6), 16) || 0];
+  }
+
+  function heatColor(value) {
+    const t = Math.max(0, Math.min(100, Number(value) || 0)) / 100;
+    const n = HEAT_IN_RANGE.length - 1;
+    const x = t * n;
+    const i = Math.min(n - 1, Math.floor(x));
+    const f = x - i;
+    const a = hexToRgb(HEAT_IN_RANGE[i]);
+    const b = hexToRgb(HEAT_IN_RANGE[i + 1]);
+    return `rgb(${Math.round(a[0] + (b[0] - a[0]) * f)},${Math.round(a[1] + (b[1] - a[1]) * f)},${Math.round(a[2] + (b[2] - a[2]) * f)})`;
+  }
+
   /* ================= 5. 热力图（知识点 × 学生） ================= */
   function heatmap(sel, data, onClick) {
     // 后端返回: data.data[row][col] = score 二维矩阵, data.startedMask[row][col] = bool
@@ -669,7 +688,7 @@ const Charts = (function () {
     const maxStudentNameLength = studentNames.reduce((max, name) => Math.max(max, String(name || '').length), 0);
     // 给 Y 轴学生姓名预留稳定空间，避免 containLabel 在窄尺寸初始化时把绘图区压成一小条。
     const gridLeft = Math.min(150, Math.max(78, maxStudentNameLength * 13 + 24));
-    const gridTop = (data.kpAxis || []).length > 18 ? 96 : 76;
+    const gridTop = 44;
     for (let row = 0; row < rawMatrix.length; row++) {
       for (let col = 0; col < (rawMatrix[row] || []).length; col++) {
         const started = mask[row] ? mask[row][col] : true;
@@ -696,10 +715,17 @@ const Charts = (function () {
       }),
       grid: { left: gridLeft, right: 24, top: gridTop, bottom: 18, containLabel: false },
       xAxis: {
-        type: 'category', data: data.kpAxis, position: 'top',
+        type: 'category', data: data.kpAxis, position: 'top', triggerEvent: true,
         splitArea: { show: true, areaStyle: { color: ['transparent'] } },
         axisLine: { show: false }, axisTick: { show: false },
-        axisLabel: { color: t.text2, fontSize: 10.5, rotate: 38, interval: 0, hideOverlap: true, margin: 10 }
+        axisLabel: {
+          color: t.text2, fontSize: 11, interval: 0, rotate: 0, hideOverlap: true,
+          margin: 8,
+          formatter(name) {
+            const s = String(name || '');
+            return s.length > 3 ? s.slice(0, 3) + '…' : s;
+          }
+        }
       },
       yAxis: {
         type: 'category',
@@ -725,7 +751,7 @@ const Charts = (function () {
         show: false, seriesIndex: 1, min: 0, max: 100, calculable: true, orient: 'horizontal',
         right: 14, top: 8, itemWidth: 12, itemHeight: 92,
         textStyle: { color: t.dim, fontSize: 10.5 },
-        inRange: { color: ['#ef4444', '#f97316', '#f59e0b', '#a3e635', '#22c55e'] }
+        inRange: { color: HEAT_IN_RANGE }
       },
       series: [{
         type: 'heatmap', data: unstartedData, silent: true, z: 0,
@@ -741,8 +767,12 @@ const Charts = (function () {
         itemStyle: { borderRadius: 3, borderColor: t.surface, borderWidth: 2 },
         emphasis: { itemStyle: { shadowBlur: 10, shadowColor: 'rgba(0,0,0,.4)', borderColor: t.brand, borderWidth: 2 } }
       }]
-    }), onClick ? (p => onClick(p.value, data)) : null);
+    }), onClick ? (p => onClick(p.value, data)) : null, (chart) => {
+      bindHeatKpAxisTip(chart, data.kpAxis || []);
+    });
     const chartEl = inst && inst.getDom ? inst.getDom() : null;
+    const rec = store.get(chartEl);
+    if (rec) rec._kind = 'heatmap';
     if (chartEl && chartEl._heatmapWheelHandler) {
       chartEl.removeEventListener('wheel', chartEl._heatmapWheelHandler);
       chartEl._heatmapWheelHandler = null;
@@ -770,6 +800,145 @@ const Charts = (function () {
       chartEl._heatmapWheelHandler = wheelHandler;
       chartEl.addEventListener('wheel', wheelHandler, { passive: false });
     }
+    return inst;
+  }
+
+  function bindHeatKpAxisTip(inst, kpAxis) {
+    if (!inst || !inst.getDom) return;
+    const el = inst.getDom();
+    if (getComputedStyle(el).position === 'static') el.style.position = 'relative';
+    let tip = el.querySelector('.hm-axis-tip');
+    if (!tip) {
+      tip = document.createElement('div');
+      tip.className = 'hm-axis-tip';
+      tip.hidden = true;
+      el.appendChild(tip);
+    }
+    const hide = () => { tip.hidden = true; };
+    const show = (p) => {
+      const name = kpAxis[p.dataIndex];
+      if (!name) { hide(); return; }
+      tip.textContent = String(name);
+      tip.hidden = false;
+      const ev = p.event && (p.event.event || p.event);
+      const x = Number(ev && ev.offsetX) || 0;
+      const y = Number(ev && ev.offsetY) || 0;
+      tip.style.left = Math.min(el.clientWidth - 12, Math.max(8, x + 12)) + 'px';
+      tip.style.top = Math.max(4, y + 16) + 'px';
+    };
+    if (el._kpAxisOver) inst.off('mouseover', el._kpAxisOver);
+    if (el._kpAxisOut) inst.off('mouseout', el._kpAxisOut);
+    el._kpAxisOver = (p) => { if (p.componentType === 'xAxis') show(p); };
+    el._kpAxisOut = (p) => { if (p.componentType === 'xAxis') hide(); };
+    inst.on('mouseover', el._kpAxisOver);
+    inst.on('mouseout', el._kpAxisOut);
+  }
+
+  /* ================= 5b. 单人知识点柱形图（热力图同色阶） ================= */
+  function studentKpBar(sel, payload, onClick) {
+    const el = typeof sel === 'string' ? document.querySelector(sel) : sel;
+    if (!el || !window.echarts) return null;
+    const leftover = el.querySelector('.hm-axis-tip');
+    if (leftover) leftover.remove();
+    const kpAxis = payload.kpAxis || [];
+    const values = payload.values || [];
+    const started = payload.started || [];
+    const label = payload.label || '学习完成率';
+    const student = payload.student || {};
+    const studentName = typeof student === 'object' ? (student.name || '') : student;
+    const visibleKp = 10;
+    const needsZoom = kpAxis.length > visibleKp;
+    let zoomStart = 0;
+    let zoomEnd = needsZoom ? Math.min(100, (visibleKp / Math.max(kpAxis.length, 1)) * 100) : 100;
+    const prevRec = store.get(el);
+    if (needsZoom && prevRec && prevRec.instance && prevRec._kind === 'studentKpBar'
+        && !(prevRec.instance.isDisposed && prevRec.instance.isDisposed())) {
+      const z = (prevRec.instance.getOption().dataZoom || [])[0] || {};
+      if (Number.isFinite(Number(z.start)) && Number.isFinite(Number(z.end))) {
+        zoomStart = Number(z.start);
+        zoomEnd = Number(z.end);
+      }
+    }
+
+    const builder = (t) => {
+      const data = kpAxis.map((name, i) => {
+        const on = started[i] !== false && values[i] != null;
+        const raw = on ? Number(values[i]) : null;
+        return {
+          value: on ? raw : 0,
+          kp: name,
+          started: on,
+          raw,
+          itemStyle: {
+            color: on ? heatColor(raw) : t.surface3,
+            borderRadius: [5, 5, 0, 0]
+          }
+        };
+      });
+      const anyStarted = data.some(d => d.started);
+      return {
+        animationDuration: 420,
+        graphic: anyStarted ? [] : [{
+          type: 'text', left: 'center', top: 'middle', silent: true, z: 100,
+          style: { text: '该学生尚未开始学习', fill: t.dim, fontSize: 14, fontWeight: 500 }
+        }],
+        tooltip: Object.assign(baseTooltip(t), {
+          trigger: 'axis',
+          axisPointer: { type: 'shadow' },
+          formatter(items) {
+            const p = items && items[0];
+            if (!p) return '';
+            const d = p.data || {};
+            const head = `<b>${studentName || '该学生'}</b><br/>${d.kp || p.name || ''}<br/>`;
+            if (!d.started) return head + `<span style="color:var(--text-2)">未开始学习</span>`;
+            return head + `${label}：<b style="font-size:15px">${d.raw}%</b>`;
+          }
+        }),
+        grid: { left: 12, right: 16, top: 28, bottom: needsZoom ? 22 : 6, containLabel: true },
+        xAxis: {
+          type: 'category', data: kpAxis,
+          axisLine: { lineStyle: { color: t.split } }, axisTick: { show: false },
+          axisLabel: {
+            color: t.dim, fontSize: 12, interval: 0, rotate: 0, hideOverlap: true,
+            overflow: 'truncate', width: 86, ellipsis: '…', margin: 10
+          }
+        },
+        yAxis: {
+          type: 'value', min: 0, max: 100,
+          axisLine: { show: false }, axisTick: { show: false },
+          splitLine: { lineStyle: { color: t.split, type: 'dashed' } },
+          axisLabel: { color: t.dim, fontSize: 11, formatter: '{value}%' }
+        },
+        dataZoom: needsZoom ? [{
+          type: 'slider', xAxisIndex: 0, height: 10, bottom: 2,
+          start: zoomStart, end: zoomEnd,
+          borderColor: 'transparent', backgroundColor: t.surface3,
+          fillerColor: t.brand + '30', handleStyle: { color: t.brand, borderColor: t.brand },
+          showDetail: false, showDataShadow: false, brushSelect: false
+        }, { type: 'inside', xAxisIndex: 0, zoomOnMouseWheel: false, moveOnMouseWheel: true }] : [],
+        series: [{
+          type: 'bar', barMaxWidth: 36, data,
+          label: {
+            show: true, position: 'top',
+            color: t.text2, fontSize: 10, fontFamily: 'monospace',
+            formatter: p => (p.data && p.data.started) ? p.data.raw : ''
+          }
+        }]
+      };
+    };
+
+    let rec = store.get(el);
+    if (rec && rec.instance && rec._kind === 'studentKpBar' && !(rec.instance.isDisposed && rec.instance.isDisposed())) {
+      rec.builder = builder;
+      rec.onClick = onClick || null;
+      rec.instance.off('click');
+      if (onClick) rec.instance.on('click', onClick);
+      rec.instance.setOption(builder(tokens()), true);
+      return rec.instance;
+    }
+    const inst = render(sel, builder, onClick);
+    rec = store.get(el);
+    if (rec) rec._kind = 'studentKpBar';
     return inst;
   }
 
@@ -849,7 +1018,7 @@ const Charts = (function () {
     }));
   }
 
-  return { render, graph, radar, line, bar, heatmap, donut, gauge, groupBar, resizeAll, redrawAll, tokens, relPalette,
+  return { render, graph, radar, line, bar, heatmap, studentKpBar, donut, gauge, groupBar, resizeAll, redrawAll, tokens, relPalette,
     // 视图冻结：给教师端（graph-edit.js）复用同一实现，避免两处各写一份补偿算法而漂移
     viewMetrics, restoreView };
 })();

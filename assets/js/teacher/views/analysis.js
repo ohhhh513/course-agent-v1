@@ -134,7 +134,7 @@
           #view-analysis .an-row__pct b{font-size:19px;font-weight:700}
           #view-analysis .an-row__pct small{font-size:12px;color:var(--text-3)}
           #view-analysis .an-avatar{flex:0 0 34px;height:34px;border-radius:var(--r-full);display:grid;place-items:center;font-size:15px;font-weight:600}
-          #view-analysis .an-scroll{max-height:360px;overflow-y:auto;scrollbar-width:thin;scrollbar-color:var(--brand-300) var(--surface-3)}
+          #view-analysis .an-scroll{max-height:360px;overflow-x:hidden;overflow-y:auto;scrollbar-width:thin;scrollbar-color:var(--brand-300) var(--surface-3)}
           #view-analysis .an-scroll::-webkit-scrollbar{width:6px}
           #view-analysis .an-scroll::-webkit-scrollbar-track{background:var(--surface-3);border-radius:var(--r-full)}
           #view-analysis .an-scroll::-webkit-scrollbar-thumb{background:var(--brand-300);border-radius:var(--r-full)}

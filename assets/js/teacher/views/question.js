@@ -489,7 +489,7 @@
           </div>
           <button class="btn btn--sm btn--outline" id="draftRefresh">${icon('refresh')} 刷新</button>
         </div>
-        <div class="card__body" id="draftList" style="max-height:min(62vh,640px);overflow-y:auto"></div>
+        <div class="card__body" id="draftList" style="max-height:min(62vh,640px);overflow-x:hidden;overflow-y:auto"></div>
       </div>`;
       U.$$('#draftSeg button', box).forEach(b => {
         b.classList.toggle('is-active', b.dataset.s === this.draftFilter);
@@ -1268,7 +1268,7 @@
             </div>
             <div class="edit-field" style="grid-column:1/-1">
               <label>考查知识点标签（可多选）</label>
-              <div id="eqKpTags" class="chips" style="max-height:88px;overflow:auto"></div>
+              <div id="eqKpTags" class="chips" style="max-height:88px;overflow-x:hidden;overflow-y:auto"></div>
             </div>
           </div>
         </section>
@@ -1701,7 +1701,7 @@ function openNewQuestionModal(onDone, editor = {}) {
         </div>
         <div class="stack" style="gap:4px">
           <span class="fz-12 t-dim">考查知识点标签（可多选；标签=KP）</span>
-          <div id="nqKpTags" class="chips" style="max-height:100px;overflow:auto"></div>
+          <div id="nqKpTags" class="chips" style="max-height:100px;overflow-x:hidden;overflow-y:auto"></div>
         </div>
         <label class="stack" style="gap:4px"><span class="fz-12 t-dim">题型</span>
           <select class="select" id="nqType">

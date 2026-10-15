@@ -10,7 +10,11 @@
 
   const Monitor = {
     stuLevel: 'all', stuKeyword: '', level: 'all', heatType: 'completion',
+    heatMode: 'heatmap', heatKeyword: '',
+    _heatData: null, _heatIndex: 0, _heatTimer: null, _heatPaused: false,
+    HEAT_BAR_ROTATE_MS: 5000,
     render() {
+      this.stopHeatRotate();
       const el = U.$('#view-monitor');
       if (!API.config.activeCourseId) {
         el.innerHTML = `
@@ -24,17 +28,33 @@
       }
       el.innerHTML = `
       <div class="card" style="margin-bottom:16px">
-        <div class="card__head">
+        <div class="card__head card__head--heat">
           <h3 id="heatTitle">${icon('grid')} 知识点 × 学生 学习完成热力图</h3>
           <span class="spacer"></span>
+          <div class="seg" id="heatModeSeg">
+            <button type="button" data-mode="heatmap" class="is-active">热力图</button>
+            <button type="button" data-mode="bar">单人柱形图</button>
+          </div>
+          <div class="search heat-stu-search" id="heatStuSearchWrap" hidden style="width:188px">${icon('search2')}<input class="input" id="heatStuSearch" placeholder="搜索学生姓名 / 学号"></div>
           <select class="input select select--sm" id="heatType" style="width:164px">
             <option value="completion">学习完成热力图</option>
             <option value="mastery">知识点掌握热力图</option>
           </select>
-          <div class="hm-legend" style="margin-left:12px"><span>低</span><div class="hm-legend__bar"></div><span>高</span></div>
+          <div class="hm-legend" style="margin-left:4px"><span>低</span><div class="hm-legend__bar"></div><span>高</span></div>
         </div>
         <div class="card__body">
-          <div class="chart" id="heatChart" style="height:520px"></div>
+          <div class="heat-bar-meta" id="heatBarMeta" hidden>
+            <b class="heat-bar-meta__name" id="heatBarName"></b>
+            <span class="fz-12 t-dim" id="heatBarNo"></span>
+            <span class="badge badge--outline" id="heatBarIdx"></span>
+            <span class="spacer"></span>
+            <span class="fz-12 t-dim" id="heatBarStatus"></span>
+          </div>
+          <div class="heat-bar-stage" id="heatBarStage">
+            <button type="button" class="heat-bar-nav heat-bar-nav--prev" id="heatBarPrev" hidden title="上一个学生" aria-label="上一个学生">${icon('chevronLeft')}</button>
+            <div class="chart" id="heatChart" style="height:520px"></div>
+            <button type="button" class="heat-bar-nav heat-bar-nav--next" id="heatBarNext" hidden title="下一个学生" aria-label="下一个学生">${icon('chevronRight')}</button>
+          </div>
           <div class="divider"></div>
           <p class="fz-12 t-dim" style="margin-bottom:8px" id="heatWeakLabel">共性薄弱识别（班级平均学习完成率最低的 3 个知识点）</p>
           <div class="chips" id="weakChips"></div>
@@ -47,7 +67,7 @@
             <div class="search" style="width:160px">${icon('search2')}<input class="input" id="stuSearch" placeholder="姓名 / 学号"></div>
             <div class="seg" id="stuSeg"><button data-l="all" class="is-active">全部</button><button data-l="red">红</button><button data-l="yellow">黄</button><button data-l="green">绿</button></div>
           </div>
-          <div class="card__body card__body--flush"><div class="list" id="stuList" style="max-height:min(52vh,560px);overflow:auto">${U.skeleton(300)}</div></div>
+          <div class="card__body card__body--flush"><div class="list" id="stuList" style="max-height:min(52vh,560px);overflow-x:hidden;overflow-y:auto">${U.skeleton(300)}</div></div>
         </div>
 
         <div class="card card--alerts">
@@ -55,7 +75,7 @@
             <span class="badge badge--outline" id="alCount"></span>
             <div class="seg" id="alSeg"><button data-l="all" class="is-active">全部</button><button data-l="red">红</button><button data-l="yellow">黄</button></div>
           </div>
-          <div class="card__body stack" id="alList" style="min-height:0;overflow:auto">${U.skeleton(300)}</div>
+          <div class="card__body stack" id="alList" style="min-height:0;overflow-x:hidden;overflow-y:auto">${U.skeleton(300)}</div>
         </div>
       </div>`;
 
@@ -87,27 +107,233 @@
         this.loadHeat();
       });
 
+      U.$$('#heatModeSeg button', el).forEach(b => {
+        b.classList.toggle('is-active', b.dataset.mode === this.heatMode);
+        b.addEventListener('click', () => {
+          if (this.heatMode === b.dataset.mode) return;
+          this.heatMode = b.dataset.mode;
+          U.$$('#heatModeSeg button', el).forEach(x => x.classList.toggle('is-active', x.dataset.mode === this.heatMode));
+          this._heatPaused = false;
+          this.updateHeatLabels();
+          this.syncHeatChrome();
+          this.paintHeat();
+        });
+      });
+
+      const heatSearch = U.$('#heatStuSearch');
+      if (heatSearch) {
+        heatSearch.value = this.heatKeyword || '';
+        heatSearch.addEventListener('input', e => {
+          this.heatKeyword = e.target.value.trim();
+          this._heatIndex = 0;
+          if (this.heatMode === 'bar') {
+            this.paintStudentBar();
+            this.startHeatRotate();
+          }
+        });
+      }
+
+      const heatStage = U.$('#heatBarStage');
+      if (heatStage) {
+        heatStage.addEventListener('mouseenter', () => {
+          if (this.heatMode !== 'bar') return;
+          this._heatPaused = true;
+          this.syncHeatBarMeta();
+        });
+        heatStage.addEventListener('mouseleave', () => {
+          if (this.heatMode !== 'bar') return;
+          this._heatPaused = false;
+          this.syncHeatBarMeta();
+        });
+      }
+      const prevBtn = U.$('#heatBarPrev');
+      const nextBtn = U.$('#heatBarNext');
+      if (prevBtn) prevBtn.addEventListener('click', () => this.stepHeatStudent(-1));
+      if (nextBtn) nextBtn.addEventListener('click', () => this.stepHeatStudent(1));
+
       // 初次渲染即同步标题/标签，避免静态 HTML 文案与当前 heatType 不一致
       this.updateHeatLabels();
+      this.syncHeatChrome();
 
       this.loadHeat(); this.loadStudents(); this.loadAlerts();
     },
 
     updateHeatLabels() {
       const isMastery = this.heatType === 'mastery';
-      U.$('#heatTitle').innerHTML = `${icon('grid')} 知识点 × 学生 ${isMastery ? '知识掌握' : '学习完成'}热力图`;
-      U.$('#heatWeakLabel').textContent = isMastery
-        ? '共性薄弱识别（班级平均知识掌握率低于 80% 的知识点）'
-        : '共性薄弱识别（班级平均学习完成率低于 80% 的知识点）';
+      const isBar = this.heatMode === 'bar';
+      const title = U.$('#heatTitle');
+      if (title) {
+        title.innerHTML = isBar
+          ? `${icon('chart')} 单人学习情况柱形图 · ${isMastery ? '知识掌握' : '学习完成'}`
+          : `${icon('grid')} 知识点 × 学生 ${isMastery ? '知识掌握' : '学习完成'}热力图`;
+      }
+      const weak = U.$('#heatWeakLabel');
+      if (weak) {
+        weak.textContent = isMastery
+          ? '共性薄弱识别（班级平均知识掌握率低于 80% 的知识点）'
+          : '共性薄弱识别（班级平均学习完成率低于 80% 的知识点）';
+      }
+    },
+
+    syncHeatChrome() {
+      const isBar = this.heatMode === 'bar';
+      const searchWrap = U.$('#heatStuSearchWrap');
+      const meta = U.$('#heatBarMeta');
+      if (searchWrap) searchWrap.hidden = !isBar;
+      if (meta) meta.hidden = !isBar;
+      this.syncHeatNav();
+      if (!isBar) this.stopHeatRotate();
+    },
+
+    syncHeatNav() {
+      const list = this._filteredHeatStudents();
+      const show = this.heatMode === 'bar' && list.length > 1;
+      const prev = U.$('#heatBarPrev');
+      const next = U.$('#heatBarNext');
+      if (prev) prev.hidden = !show;
+      if (next) next.hidden = !show;
+    },
+
+    stepHeatStudent(delta) {
+      if (this.heatMode !== 'bar') return;
+      const list = this._filteredHeatStudents();
+      if (list.length <= 1) return;
+      this._heatIndex = (this._heatIndex + delta + list.length) % list.length;
+      this.paintStudentBar();
+      this.startHeatRotate();
+    },
+
+    stuLabel(s) {
+      return typeof s === 'object' ? (s.name || '') : (s || '');
+    },
+
+    _filteredHeatStudents() {
+      const axis = (this._heatData && this._heatData.studentAxis) || [];
+      const kw = (this.heatKeyword || '').trim().toLowerCase();
+      const rows = axis.map((s, i) => ({ s, i }));
+      if (!kw) return rows;
+      return rows.filter(({ s }) => {
+        const name = this.stuLabel(s).toLowerCase();
+        const no = String((s && s.no) || '').toLowerCase();
+        const id = String((s && s.userId) || '').toLowerCase();
+        return name.includes(kw) || no.includes(kw) || id.includes(kw);
+      });
+    },
+
+    stopHeatRotate() {
+      if (this._heatTimer) {
+        clearInterval(this._heatTimer);
+        this._heatTimer = null;
+      }
+    },
+
+    startHeatRotate() {
+      this.stopHeatRotate();
+      if (this.heatMode !== 'bar') return;
+      const list = this._filteredHeatStudents();
+      if (list.length <= 1) return;
+      this._heatTimer = setInterval(() => {
+        if (this._heatPaused || this.heatMode !== 'bar') return;
+        const next = this._filteredHeatStudents();
+        if (next.length <= 1) return;
+        this._heatIndex = (this._heatIndex + 1) % next.length;
+        this.paintStudentBar();
+      }, this.HEAT_BAR_ROTATE_MS);
+    },
+
+    syncHeatBarMeta() {
+      const meta = U.$('#heatBarMeta');
+      if (!meta) return;
+      const isBar = this.heatMode === 'bar';
+      meta.hidden = !isBar;
+      if (!isBar) return;
+      const list = this._filteredHeatStudents();
+      const nameEl = U.$('#heatBarName');
+      const noEl = U.$('#heatBarNo');
+      const idxEl = U.$('#heatBarIdx');
+      const stEl = U.$('#heatBarStatus');
+      if (!list.length) {
+        if (nameEl) nameEl.textContent = this.heatKeyword ? '没有匹配的学生' : '暂无学生数据';
+        if (noEl) noEl.textContent = '';
+        if (idxEl) idxEl.textContent = '';
+        if (stEl) stEl.textContent = this.heatKeyword ? '请换个姓名或学号试试' : '';
+        return;
+      }
+      if (this._heatIndex >= list.length) this._heatIndex = 0;
+      const stu = list[this._heatIndex].s;
+      if (nameEl) nameEl.textContent = this.stuLabel(stu) || '未命名';
+      if (noEl) noEl.textContent = (stu && stu.no) ? `学号 ${stu.no}` : '';
+      if (idxEl) idxEl.textContent = `${this._heatIndex + 1} / ${list.length}`;
+      let status = '自动轮播 · 悬停可暂停';
+      if (list.length <= 1) status = this.heatKeyword ? '已定位到该学生' : '仅 1 名学生';
+      else if (this.heatKeyword) status = this._heatPaused ? '搜索匹配轮播已暂停' : '正在轮播搜索匹配 · 悬停可暂停';
+      else if (this._heatPaused) status = '悬停暂停';
+      if (stEl) stEl.textContent = status;
+    },
+
+    paintStudentBar() {
+      const h = this._heatData;
+      const chart = U.$('#heatChart');
+      if (!h || !chart) return;
+      const list = this._filteredHeatStudents();
+      this.syncHeatBarMeta();
+      this.syncHeatNav();
+      if (!list.length) {
+        this.stopHeatRotate();
+        const inst = window.echarts && echarts.getInstanceByDom(chart);
+        if (inst && !(inst.isDisposed && inst.isDisposed())) inst.dispose();
+        chart.innerHTML = `<div class="empty" style="padding:48px 20px;text-align:center">没有匹配的学生</div>`;
+        return;
+      }
+      if (this._heatIndex >= list.length) this._heatIndex = 0;
+      const item = list[this._heatIndex];
+      const stu = item.s;
+      const row = item.i;
+      const label = h.label || (this.heatType === 'mastery' ? '知识掌握率' : '学习完成率');
+      Charts.studentKpBar('#heatChart', {
+        student: stu,
+        kpAxis: h.kpAxis || [],
+        values: (h.data && h.data[row]) || [],
+        started: (h.startedMask && h.startedMask[row]) || [],
+        label
+      }, () => {
+        if (stu && stu.userId) this.openProfile(stu.userId);
+      });
+    },
+
+    paintHeat() {
+      const h = this._heatData;
+      if (!h) return;
+      if (this.heatMode === 'bar') {
+        this.paintStudentBar();
+        this.startHeatRotate();
+        return;
+      }
+      this.stopHeatRotate();
+      this.syncHeatChrome();
+      Charts.heatmap('#heatChart', h, (val, data) => {
+        if (val[2] == null) return; // 灰色格子不可点
+        const stu = data.studentAxis[val[1]];
+        if (stu && stu.userId) this.openProfile(stu.userId);
+      });
     },
 
     loadHeat() {
+      const keepId = (() => {
+        const list = this._filteredHeatStudents();
+        const cur = list[this._heatIndex];
+        return cur && cur.s && cur.s.userId;
+      })();
       API.teacher.heatmap({ type: this.heatType }).then(h => {
-        Charts.heatmap('#heatChart', h, (val, data) => {
-          if (val[2] == null) return; // 灰色格子不可点
-          const stu = data.studentAxis[val[1]];
-          if (stu && stu.userId) this.openProfile(stu.userId);
-        });
+        this._heatData = h;
+        if (keepId) {
+          const next = this._filteredHeatStudents();
+          const found = next.findIndex(x => x.s && x.s.userId === keepId);
+          this._heatIndex = found >= 0 ? found : 0;
+        } else {
+          this._heatIndex = 0;
+        }
+        this.paintHeat();
         U.$('#weakChips').innerHTML = (h.weakest && h.weakest.length)
           ? h.weakest.map(w =>
               `<span class="chip">${icon('alert')} ${U.esc(w.name)} <b class="mono">${w.avg}%</b></span>`).join('')

@@ -33,6 +33,7 @@ const ICONS = {
   arrowUp: '<path d="M12 19V5M6 11l6-6 6 6"/>',
   arrowLeft: '<path d="M19 12H5M11 6l-6 6 6 6"/>',
   chevronDown: '<path d="m6 9 6 6 6-6"/>',
+  chevronLeft: '<path d="m15 18-6-6 6-6"/>',
   chevronRight: '<path d="m9 6 6 6-6 6"/>',
   send: '<path d="M22 2 11 13"/><path d="M22 2 15 22l-4-9-9-4Z"/>',
   square: '<rect x="6.5" y="6.5" width="11" height="11" rx="2"/>',
@@ -512,7 +513,7 @@ window.TagPicker = {
           <input class="input" data-tp-new placeholder="新建标签后回车" style="flex:1;min-width:0">
           <button type="button" class="btn btn--sm btn--outline" data-tp-add>新建</button>
         </div>
-        <div class="chips tag-picker__all" data-tp-all style="margin-top:6px;max-height:88px;overflow:auto"></div>
+        <div class="chips tag-picker__all" data-tp-all style="margin-top:6px;max-height:88px;overflow-x:hidden;overflow-y:auto"></div>
       </div>`;
 
     const selBox = root.querySelector('[data-tp-sel]');

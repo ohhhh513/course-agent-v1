@@ -101,7 +101,7 @@ const TeacherGraphEdit = {
         #view-graph-edit .ge-tabs{display:flex;gap:6px;padding:8px 10px;flex-shrink:0}
         #view-graph-edit .ge-tabs .tab{flex:1;height:30px;border-radius:8px;border:1px solid var(--border);background:var(--surface-2);font-size:13px;cursor:pointer}
         #view-graph-edit .ge-tabs .tab.on{background:rgba(15,118,110,.12);border-color:#5eead4;color:var(--brand)}
-        #view-graph-edit .ge-list{flex:1;overflow:auto;padding:0 10px 12px;min-height:0}
+        #view-graph-edit .ge-list{flex:1;overflow-x:hidden;overflow-y:auto;padding:0 10px 12px;min-height:0}
         #view-graph-edit .ge-ch{font-size:12px;color:var(--text-3);margin:10px 2px 6px;font-weight:600}
         #view-graph-edit .ge-item{display:flex;align-items:center;gap:8px;padding:8px 10px;border:1px solid var(--border);border-radius:10px;background:var(--surface-2);margin-bottom:6px;cursor:pointer;font-size:13.5px}
         #view-graph-edit .ge-item:hover{border-color:#5eead4}
@@ -166,7 +166,7 @@ const TeacherGraphEdit = {
         #view-graph-edit .ge-detail__head h4{margin:0;font-size:15px;font-weight:600}
         #view-graph-edit .ge-detail__close{margin-left:auto;border:0;background:transparent;font-size:21px;line-height:1;cursor:pointer;color:var(--text-3)}
         #view-graph-edit .ge-detail__close:hover{color:var(--text)}
-        #view-graph-edit .ge-detail__body{padding:14px;overflow:auto;flex:1 1 auto}
+        #view-graph-edit .ge-detail__body{padding:14px;overflow-x:hidden;overflow-y:auto;flex:1 1 auto}
         #view-graph-edit .ge-d-stats{display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin:2px 0 4px}
         #view-graph-edit .ge-d-stat{background:var(--surface-2);border:1px solid var(--border);border-radius:10px;padding:8px 10px;display:flex;flex-direction:column;gap:2px}
         #view-graph-edit .ge-d-stat b{font-size:19px;font-weight:700;line-height:1.1}

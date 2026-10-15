@@ -1,5 +1,27 @@
 'use strict';
 
+  function chaptersOf(courseId) {
+    return API.teacher.resourceKps(courseId ? { courseId } : undefined)
+      .then(d => (d && d.chapters) || [])
+      .catch(() => []);
+  }
+
+  function chapterOptions(kps) {
+    const normKey = ch => { const m = /第\s*(\d+)\s*章/.exec(ch || ''); return m ? '第' + m[1] + '章' : (ch || ''); };
+    const seen = new Set();
+    const options = [];
+    (kps || []).map(c => c.chapter).filter(Boolean).forEach(ch => {
+      const k = normKey(ch);
+      if (k && !seen.has(k)) { seen.add(k); options.push({ value: k, label: ch }); }
+    });
+    return options;
+  }
+
+  function defaultReportTitle(courseName, dateText) {
+    const name = String(courseName || '').trim();
+    return (name ? name + ' · ' : '') + '学情分析报告 ' + dateText;
+  }
+
   function formatDateInput(date) {
     const y = date.getFullYear();
     const m = String(date.getMonth() + 1).padStart(2, '0');
@@ -49,7 +71,7 @@
   /* ================================================================
      视图 6 · 学情分析报告
      版式对齐学生端学情报告：左栏预览正文，右栏历史归档 + 快捷入口。
-     生成仍走教师端配置弹窗（课程 / 章节 / 时间段 / 包含部分）。
+     生成仍走教师端配置弹窗（标题 / 章节 / 时间段 / 包含部分），课程取顶栏当前课。
      ================================================================ */
   const Report = {
     _viewingId: '',
@@ -178,22 +200,10 @@
       const reportView = this;
       const courseAtOpen = API.config.activeCourseId, login = JSON.stringify(Auth.getSession());
       const isCurrent = () => login === JSON.stringify(Auth.getSession()) && Router.current === 'report';
-      const [courses, kps] = await Promise.all([
-        API.course.my().then(r => Array.isArray(r) ? r : []).catch(() => []),
-        API.teacher.resourceKps().then(d => (d && d.chapters) || []).catch(() => [])
-      ]);
+      const allCourses = await API.course.my().then(r => Array.isArray(r) ? r : []).catch(() => []);
       if (!isCurrent() || courseAtOpen !== API.config.activeCourseId) return;
-      const currentCourseId = API.config.activeCourseId || (courses[0] && courses[0].courseId) || '';
-      const courseOptions = courses.length ? courses : (currentCourseId ? [{ courseId: currentCourseId, name: currentCourseId }] : []);
-      // 统计范围（章节）以真实图谱章节为准，按「第N章」归一去重，避免短名与全名同显造成重复。
-      const normKey = ch => { const m = /第\s*(\d+)\s*章/.exec(ch || ''); return m ? '第' + m[1] + '章' : (ch || ''); };
-      const seen = new Set();
-      const scopeOptions = [];
-      (kps || []).map(c => c.chapter).filter(Boolean).forEach(ch => {
-        const k = normKey(ch);
-        if (k && !seen.has(k)) { seen.add(k); scopeOptions.push({ value: k, label: ch }); }
-      });
-      if (!scopeOptions.length) scopeOptions.push({ value: '全课程', label: '全课程' });
+      const currentCourseId = API.config.activeCourseId || '';
+      const currentCourse = allCourses.find(c => c.courseId === currentCourseId) || null;
       const today = new Date();
       const maxDate = formatDateInput(today);
       const minDateObj = new Date(today);
@@ -202,20 +212,20 @@
       const defaultStartObj = new Date(today);
       defaultStartObj.setDate(today.getDate() - 30);
       const defaultStart = formatDateInput(defaultStartObj < minDateObj ? minDateObj : defaultStartObj);
+      const presetTitle = defaultReportTitle(currentCourse && currentCourse.name, maxDate);
       Modal.open({
         title: '生成学情分析报告',
         body: `<div class="stack" style="gap:14px">
-          <div><p class="fz-12 t-dim" style="margin-bottom:6px">选择课程</p>
-            <select class="select" id="rgCourse">${courseOptions.map(c => `<option value="${U.esc(c.courseId)}"${c.courseId === currentCourseId ? ' selected' : ''}>${U.esc(c.name || c.courseId)}</option>`).join('') || '<option value="">（暂无课程）</option>'}</select></div>
+          <div><p class="fz-12 t-dim" style="margin-bottom:6px">报告标题</p>
+            <input class="input" id="rgTitle" type="text" maxlength="256" value="${U.esc(presetTitle)}" placeholder="${U.esc(presetTitle || '学情分析报告')}">
+            <p class="fz-12 t-dim" style="margin-top:6px">按当前课程生成，可改标题；章节与学情数据不会混入其他课。</p></div>
           <div>
-            <p class="fz-12 t-dim" style="margin-bottom:6px">统计范围（可多选章节，默认全选）</p>
-            <div class="report-scope-list" id="rgScope">
-              ${scopeOptions.map(c => `<label class="report-scope-option" title="${U.esc(c.label)}">
-                <input type="checkbox" name="rgCourse" value="${U.esc(c.value)}" checked>
-                <span>${U.esc(c.label)}</span>
-              </label>`).join('')}
+            <div class="report-scope-head">
+              <p class="fz-12 t-dim" style="margin:0">统计范围（可多选章节）</p>
+              <label class="report-scope-all"><input type="checkbox" id="rgScopeAll" checked><span>全选</span></label>
             </div>
-            <div class="report-scope-foot"><span id="rgScopeCount">已选 ${scopeOptions.length} 个章节</span><span>可多选</span></div>
+            <div class="report-scope-list" id="rgScope"></div>
+            <div class="report-scope-foot"><span id="rgScopeCount">加载章节…</span></div>
           </div>
           <div class="grid g-2 report-date-grid"><div>
             <p class="fz-12 t-dim" style="margin-bottom:6px">开始日期</p>
@@ -231,16 +241,53 @@
         footer: `<button class="btn" data-close>取消</button><button class="btn btn--primary" id="rgGo">${icon('sparkle')} 生成</button>`,
         onMount(ov, close) {
           U.$$('#rgSec .chip', ov).forEach(c => c.addEventListener('click', () => c.classList.toggle('is-active')));
-          const scopeInputs = U.$$('#rgScope input[name="rgCourse"]', ov);
+          const titleInput = U.$('#rgTitle', ov);
           const startInput = U.$('#rgStart', ov);
           const endInput = U.$('#rgEnd', ov);
           let generating = false;
+          let scopeSeq = 0;
+          const scopeInputs = () => U.$$('#rgScope input[name="rgChapter"]', ov);
+          const allBox = U.$('#rgScopeAll', ov);
           const updateScopeCount = () => {
-            const count = scopeInputs.filter(input => input.checked).length;
+            const all = scopeInputs();
+            const count = all.filter(input => input.checked).length;
             const countEl = U.$('#rgScopeCount', ov);
             const generateButton = U.$('#rgGo', ov);
             if (countEl) countEl.textContent = `已选 ${count} 个章节`;
             if (generateButton) generateButton.disabled = generating || count === 0;
+            if (allBox) {
+              allBox.disabled = all.length === 0;
+              allBox.checked = all.length > 0 && count === all.length;
+              allBox.indeterminate = count > 0 && count < all.length;
+            }
+          };
+          const paintChapters = (options, emptyHint) => {
+            const box = U.$('#rgScope', ov);
+            if (!box) return;
+            if (!options.length) {
+              const waiting = emptyHint && emptyHint.indexOf('正在加载') >= 0;
+              box.innerHTML = `<div class="t-dim fz-12" style="padding:8px 0">${U.esc(emptyHint || '该课程还没有章节，将按全课程统计。')}</div>` +
+                (waiting ? '' : `<label class="report-scope-option"><input type="checkbox" name="rgChapter" value="全课程" checked><span>全课程</span></label>`);
+            } else {
+              box.innerHTML = options.map(c => `<label class="report-scope-option" title="${U.esc(c.label)}">
+                <input type="checkbox" name="rgChapter" value="${U.esc(c.value)}" checked>
+                <span>${U.esc(c.label)}</span>
+              </label>`).join('');
+            }
+            scopeInputs().forEach(input => input.addEventListener('change', updateScopeCount));
+            updateScopeCount();
+          };
+          const loadChapters = (courseId) => {
+            const seq = ++scopeSeq;
+            paintChapters([], '正在加载该课程的章节…');
+            if (!courseId) {
+              paintChapters([], '请先选择课程');
+              return;
+            }
+            chaptersOf(courseId).then(kps => {
+              if (seq !== scopeSeq || !isCurrent()) return;
+              paintChapters(chapterOptions(kps));
+            });
           };
           const syncDateRange = () => {
             if (!startInput || !endInput) return;
@@ -250,30 +297,39 @@
               endInput.value = startInput.value;
             }
           };
-          scopeInputs.forEach(input => input.addEventListener('change', updateScopeCount));
+          if (allBox) {
+            allBox.addEventListener('change', () => {
+              const on = allBox.checked;
+              allBox.indeterminate = false;
+              scopeInputs().forEach(input => { input.checked = on; });
+              updateScopeCount();
+            });
+          }
           startInput && startInput.addEventListener('change', syncDateRange);
           endInput && endInput.addEventListener('change', syncDateRange);
-          updateScopeCount();
+          loadChapters(currentCourseId);
           syncDateRange();
           U.$('#rgGo', ov).addEventListener('click', () => {
             if (generating || reportView._generating || !isCurrent() || courseAtOpen !== API.config.activeCourseId) return;
-            const selectedCourses = scopeInputs.filter(input => input.checked).map(input => input.value);
+            const selectedChapters = scopeInputs().filter(input => input.checked).map(input => input.value);
             const startDate = startInput && startInput.value;
             const endDate = endInput && endInput.value;
-            if (!selectedCourses.length) return Toast.warn('请至少选择一个统计章节');
+            const title = ((titleInput && titleInput.value) || '').trim();
+            if (!title) return Toast.warn('请填写报告标题');
+            if (!selectedChapters.length) return Toast.warn('请至少选择一个统计章节');
             if (!startDate || !endDate) return Toast.warn('请选择完整的日期范围');
             if (startDate > endDate) return Toast.warn('开始日期不能晚于结束日期');
             if (startDate < minDate || endDate > maxDate) return Toast.warn('请选择最近一年内的日期');
             const sections = U.$$('#rgSec .chip.is-active', ov).map(c => c.textContent);
             if (!sections.length) return Toast.warn('请至少选择一个报告部分');
-            const courseId = U.$('#rgCourse', ov).value || currentCourseId;
+            const courseId = currentCourseId;
             if (!courseId) return Toast.warn('请先选择或创建课程');
-            if (API.setActiveCourse) API.setActiveCourse(courseId);
             generating = true;
             const button = U.$('#rgGo', ov), original = button.innerHTML;
             button.disabled = true; button.textContent = '生成中…';
             reportView._generating = API.report.generate({
-              classIds: [courseId], chapter: selectedCourses.join('、'),
+              courseId, classIds: [courseId], title,
+              chapter: selectedChapters.join('、'),
               startDate, endDate, sections
             }).then(async r => {
               const error = r && r.detail && r.detail.error;

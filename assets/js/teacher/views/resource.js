@@ -22,7 +22,7 @@
           </div>
           <button class="btn btn--primary" id="trUpload" type="button">${icon('upload')} 上传资源</button>
         </div>
-        <div class="card__body" style="min-height:0;overflow-y:auto">
+        <div class="card__body" style="min-height:0;overflow-x:hidden;overflow-y:auto">
           <div class="res-grid" id="trGrid">${U.skeleton(200)}</div>
         </div>
       </div>`;

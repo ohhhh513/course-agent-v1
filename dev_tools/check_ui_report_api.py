@@ -61,7 +61,29 @@ def main():
             archive = client.get('/api/v1/report/list', headers=headers['wangjg']).json()['data']['list']
             assert any(r['reportId'] == teacher_id for r in archive) and all(r['reportId'] != student_id for r in archive)
             assert client.post('/api/v1/report/generate', json={}, headers=headers['stu07']).status_code == 403
-            print('PASS 教师生成 +1 份当前课程报告；教师归档排除学生个人报告、学生教师接口403')
+            assert client.get('/api/v1/report/' + student_id, headers=headers['wangjg']).status_code == 403
+            other_course = None
+            with sqlite3.connect(copy) as db:
+                uid = db.execute("SELECT user_id FROM users WHERE username='wangjg'").fetchone()[0]
+                courses = [row[0] for row in db.execute(
+                    'SELECT course_id FROM user_courses WHERE user_id=? AND role_in_course=?',
+                    (uid, 'teacher'))]
+            current = headers['wangjg']['X-Course-Id']
+            other_course = next((c for c in courses if c != current), None)
+            if other_course:
+                wrong = dict(headers['wangjg'])
+                wrong['X-Course-Id'] = other_course
+                assert client.get('/api/v1/report/' + teacher_id, headers=wrong).status_code == 403
+                mismatched = client.post('/api/v1/report/generate', json={'courseId': current}, headers=wrong)
+                assert mismatched.status_code == 200 and mismatched.json().get('code') == 400
+            named = client.post('/api/v1/report/generate', json={'title': '自定义学情报告标题'}, headers=headers['wangjg'])
+            assert named.status_code == 200, named.text
+            named_data = named.json()['data']
+            named_id = named_data['reportId']
+            assert named_data.get('detail', {}).get('title') == '自定义学情报告标题'
+            named_detail = client.get('/api/v1/report/' + named_id, headers=headers['wangjg']).json()['data']
+            assert named_detail.get('title') == '自定义学情报告标题'
+            print('PASS 教师生成 +1 份当前课程报告；自定义标题写入 reports.title；教师归档排除学生个人报告、跨课程详情 403、学生教师接口403')
             before = state()
             current = client.get('/api/v1/practice/sessions/current', params={'mode': 'wrong'}, headers=headers['stu07'])
             assert current.status_code == 200, current.text

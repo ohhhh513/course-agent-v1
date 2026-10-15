@@ -54,7 +54,7 @@ window.API = (function () {
    * @param {object} payload   GET 为 query，其余为 body
    * @param {function} resolver mock 模式下的数据解析函数
    */
-  function request(method, path, payload, resolver) {
+  function request(method, path, payload, resolver, opts) {
     if (config.mode === 'http') {
       const isGet = method === 'GET';
       let url = config.baseURL + path;
@@ -68,7 +68,8 @@ window.API = (function () {
       const headers = isFormData
         ? { Authorization: config.token }
         : { 'Content-Type': 'application/json', Authorization: config.token };
-      if (config.activeCourseId) headers['X-Course-Id'] = config.activeCourseId;
+      const courseId = (opts && opts.courseId) || config.activeCourseId;
+      if (courseId) headers['X-Course-Id'] = courseId;
       return fetch(url, {
         method,
         headers,
@@ -305,6 +306,30 @@ window.API = (function () {
     importPreview: (fd) => request('POST', '/admin/users/import/preview', fd),
     /** POST /admin/users/import/commit  真正落库（FormData: file, role, defaultPassword, rowIndexes?） */
     importCommit: (fd) => request('POST', '/admin/users/import/commit', fd),
+    /** GET /admin/courses  课程列表（含成员数、邀请码、实时内容计数） */
+    listCourses: () => request('GET', '/admin/courses'),
+    /** POST /admin/courses  新建课程 {name, term?, code?, classNo?, teacherUserId} */
+    createCourse: (p) => request('POST', '/admin/courses', p),
+    /** PUT /admin/courses/{courseId}  修改课程；未传的字段保持不变 */
+    updateCourse: (courseId, p) => request('PUT', `/admin/courses/${courseId}`, p),
+    /** DELETE /admin/courses/{courseId}  删除空课程（仍有教学内容时拒绝） */
+    deleteCourse: (courseId) => request('DELETE', `/admin/courses/${courseId}`),
+    /** GET /admin/courses/{courseId}/members  课程成员 */
+    courseMembers: (courseId) => request('GET', `/admin/courses/${courseId}/members`),
+    /** DELETE /admin/courses/{courseId}/members/{userId}  移出一名成员（不能移出负责人） */
+    unbindMember: (courseId, userId) => request('DELETE', `/admin/courses/${courseId}/members/${userId}`),
+    /** GET /admin/courses/{courseId}/classes  按学生班级归组，并标出已在本课的人数 */
+    courseClasses: (courseId) => request('GET', `/admin/courses/${courseId}/classes`),
+    /** POST /admin/courses/{courseId}/bind-classes  按班级绑定学生 {classKeys:[]} */
+    bindClasses: (courseId, p) => request('POST', `/admin/courses/${courseId}/bind-classes`, p),
+    /** POST /admin/courses/{courseId}/unbind-classes  按班级移出学生 {classKeys:[]} */
+    unbindClasses: (courseId, p) => request('POST', `/admin/courses/${courseId}/unbind-classes`, p),
+    /** GET /admin/courses/roster/template  下载选课名单模板 */
+    rosterTemplate: () => download('GET', '/admin/courses/roster/template'),
+    /** POST /admin/courses/{courseId}/roster/preview  解析选课名单（不写库） */
+    rosterPreview: (courseId, fd) => request('POST', `/admin/courses/${courseId}/roster/preview`, fd),
+    /** POST /admin/courses/{courseId}/roster/commit  按名单绑定学生 */
+    rosterCommit: (courseId, fd) => request('POST', `/admin/courses/${courseId}/roster/commit`, fd),
   };
 
   // ---- 管理员智能体（平台治理流）：/admin/agent/* ----
@@ -770,8 +795,8 @@ window.API = (function () {
     /** GET /teacher/resources  教师资源管理列表  params: { keyword } */
     resources: (p) => request('GET', '/teacher/resources', p),
 
-    /** GET /teacher/resources/kps  上传时可选择的知识点（按章节分组） */
-    resourceKps: () => request('GET', '/teacher/resources/kps'),
+    /** GET /teacher/resources/kps  上传时可选择的知识点（按章节分组）；可传 {courseId} 只读另一门已加入的课 */
+    resourceKps: (p) => request('GET', '/teacher/resources/kps', null, undefined, p && p.courseId ? { courseId: p.courseId } : undefined),
 
     /** POST /teacher/resources/upload  上传资源  body: FormData { file, title, kp, category, tagIds? } */
     uploadResource: (formData) => request('POST', '/teacher/resources/upload', formData),
@@ -960,7 +985,7 @@ window.API = (function () {
 
     /**
      * POST /report/generate  一键生成报告
-     * body: { classIds[], chapter?|kpIds[], startDate, endDate, sections[] }
+     * body: { courseId?, title?, chapter?|kpIds[], startDate, endDate, sections[] }
      */
     generate: (p) => request('POST', '/report/generate', p, () =>
       ({ reportId: 'RP' + Date.now(), status: 'ready', detail: M().reportDetail })),

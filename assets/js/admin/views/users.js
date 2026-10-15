@@ -90,7 +90,7 @@ const AdminUsers = {
             <div>将删除以下 <b>${ids.length}</b> 个账号，并级联清理其练习、进度、AI 会话、预警消息、草稿与课程成员关系。<br>
             <b>不会</b>删除课程本身、资源文件与题库；管理员账号、你自己、以及课程创建者（owner）会被拒绝并列入结果。</div>
           </div>
-          <div style="max-height:180px;overflow:auto;border:1px solid var(--border-soft);border-radius:var(--r-sm)">
+          <div style="max-height:180px;overflow-x:hidden;overflow-y:auto;border:1px solid var(--border-soft);border-radius:var(--r-sm)">
             <table class="tbl"><thead><tr><th>用户名</th><th>姓名</th><th>班级/部门</th></tr></thead>
               <tbody>${brief}</tbody></table>
           </div>
@@ -339,7 +339,7 @@ const AdminUsers = {
             <span class="badge badge--warn">重复 ${p.dup || 0}</span>
             <span class="badge badge--danger">错误 ${p.error || 0}</span>
           </div>
-          <div style="max-height:46vh;overflow:auto">
+          <div style="max-height:46vh;overflow-x:hidden;overflow-y:auto">
             <table class="tbl" style="font-size:13px">
               <thead><tr><th>#</th><th>用户名</th><th>姓名</th><th>状态</th><th>说明</th></tr></thead>
               <tbody>${shown.map(r => `
@@ -388,7 +388,7 @@ const AdminUsers = {
               <span class="badge badge--warn">跳过 ${r.skipped}</span>
               <span class="badge badge--danger">失败 ${r.failed}</span>
             </div>
-            ${failed.length ? `<div style="max-height:40vh;overflow:auto">
+            ${failed.length ? `<div style="max-height:40vh;overflow-x:hidden;overflow-y:auto">
               <div class="t-dim fz-12" style="margin-bottom:6px">失败明细：</div>
               <table class="tbl" style="font-size:13px">
                 <thead><tr><th>#</th><th>用户名</th><th>原因</th></tr></thead>

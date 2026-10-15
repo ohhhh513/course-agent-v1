@@ -48,7 +48,7 @@ const TeacherStructure = {
           <button class="btn btn--primary btn--sm" id="stNewCh" type="button">${icon('plus')} 新建章节</button>
           <button class="btn btn--outline btn--sm" id="stUpload" type="button">${icon('upload')} 上传到目录</button>
         </div>
-        <div class="card__body" id="stTree" style="overflow:auto;min-height:0;flex:1">${tree}</div>
+        <div class="card__body" id="stTree" style="overflow-x:hidden;overflow-y:auto;min-height:0;flex:1">${tree}</div>
       </div>
       <style>
         #view-structure .st-link{cursor:pointer;border-bottom:1px dashed transparent}
@@ -188,7 +188,7 @@ const TeacherStructure = {
           <input class="input" type="text" id="trTitle" placeholder="默认使用文件名"></label>
         <div class="stack" style="gap:6px">
           <span class="fz-12 t-dim">KP 标签（可多选；标签=知识点）</span>
-          <div id="trKpTags" class="stack" style="gap:10px;max-height:190px;overflow:auto">
+          <div id="trKpTags" class="stack" style="gap:10px;max-height:190px;overflow-x:hidden;overflow-y:auto">
             <span class="fz-11 t-dim">加载中…</span>
           </div>
         </div>
@@ -318,7 +318,7 @@ const TeacherStructure = {
           </select></label>
         <div class="stack" style="gap:6px">
           <span class="fz-12 t-dim">KP 标签（点击选中 / 取消）</span>
-          <div id="erKpTags" class="chips" style="max-height:140px;overflow:auto">
+          <div id="erKpTags" class="chips" style="max-height:140px;overflow-x:hidden;overflow-y:auto">
             ${kps.map(k => `<button type="button" class="chip" data-kp="${U.esc(k.id)}">${U.esc(k.name)}</button>`).join('')
               || '<span class="fz-11 t-dim">当前课程暂无知识点</span>'}
           </div>

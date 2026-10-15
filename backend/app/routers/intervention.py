@@ -21,7 +21,7 @@ from ..models.practice import AnswerRecord
 from ..models.question import Question
 from ..middleware.auth import get_current_user
 from ..dependencies import get_current_course_id, require_teacher
-from ..schemas.common import ok, list_response
+from ..schemas.common import ok, fail, list_response
 from ..utils import loads, fmt_dt
 
 # 角色闸门：这两个前缀目前只服务教师端页面（学生页只调用 /student、/practice、
@@ -51,6 +51,7 @@ class GenerateReportReq(BaseModel):
     classIds: List[str] = []
     # 兼容旧版前端字段；当前课程仍以 X-Course-Id 为准。
     courseId: Optional[str] = None
+    title: Optional[str] = None
     chapter: Optional[str] = None
     kpIds: Optional[List[str]] = None
     startDate: str = ""
@@ -473,6 +474,11 @@ def generate_report(
     course_id: str = Depends(get_current_course_id),
 ):
     """一键生成学情分析报告 — 按当前课程成员真实统计"""
+    claimed = (req.courseId or "").strip()
+    if not claimed:
+        claimed = next((str(x).strip() for x in (req.classIds or []) if str(x).strip()), "")
+    if claimed and claimed != course_id:
+        return fail("报告只能按当前课程生成。请先在顶栏切换到对应课程，或在弹窗里选对课程。", 400)
     from ..models.user_course import UserCourse as _UC
     from ..models.course import Course as _Course
     students = (
@@ -650,8 +656,13 @@ def generate_report(
     period_text = ""
     if req.startDate or req.endDate:
         period_text = f"{req.startDate or ''} ~ {req.endDate or ''}".strip(" ~")
+    default_title = f"{class_name} · 学情分析报告 {datetime.now().strftime('%Y-%m-%d')}"
+    custom_title = (req.title or "").strip()
+    if len(custom_title) > 256:
+        custom_title = custom_title[:256]
+    report_title = custom_title or default_title
     detail = {
-        "title": f"{class_name} · 学情分析报告 {datetime.now().strftime('%Y-%m-%d')}",
+        "title": report_title,
         "sections": selected_sections,
         "meta": {
             "courseId": course_id,
@@ -695,14 +706,26 @@ def _get_class_info_for_report(db: Session, class_id: str):
     return class_name, students
 
 
+def _load_class_report(db: Session, course_id: str, report_id: str):
+    """教师班组报告：必须属于当前课程，且不是学生个人报告。"""
+    r = db.query(Report).filter(Report.report_id == report_id).first()
+    if r is None:
+        return None
+    meta = (loads(r.detail_json) or {}).get("meta") or {}
+    if meta.get("scope") == "self" or meta.get("courseId") != course_id:
+        raise HTTPException(status_code=403, detail="该报告不属于当前课程")
+    return r
+
+
 # ====== 报告详情 ======
 @report_router.get("/{report_id}")
 def report_detail(
     report_id: str,
     db: Session = Depends(get_db),
     user=Depends(get_current_user),
+    course_id: str = Depends(get_current_course_id),
 ):
-    r = db.query(Report).filter(Report.report_id == report_id).first()
+    r = _load_class_report(db, course_id, report_id)
     if not r:
         return ok({"reportId": report_id, "detail": {"error": "报告不存在"}})
     return ok({
@@ -995,9 +1018,10 @@ def export_report(
     req: ExportReportReq,
     db: Session = Depends(get_db),
     user=Depends(get_current_user),
+    course_id: str = Depends(get_current_course_id),
 ):
     """教师端导出：把报告渲染成 .pdf / .html / .docx 直接交给浏览器下载"""
-    r = db.query(Report).filter(Report.report_id == report_id).first()
+    r = _load_class_report(db, course_id, report_id)
     if not r:
         return ok({"url": "", "format": (req.format or "docx").lower(), "error": "报告不存在"})
     return render_report_file(r, req.format)

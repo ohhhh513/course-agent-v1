@@ -226,8 +226,8 @@ const AgentUI = (() => {
       return MyReport.generate();
     },
     'teacher-report-create': async (plan, ctx) => {
-      const course = await wait(() => find('#rgCourse'), '报告配置', ctx.guard);
-      if (course.value !== plan.courseId) throw new Error('报告课程已变化，请重新提出生成请求');
+      await wait(() => find('#rgTitle') && find('#rgGo'), '报告配置', ctx.guard);
+      if (currentCourse() !== plan.courseId) throw new Error('报告课程已变化，请重新提出生成请求');
       for (const key of ['startDate', 'endDate']) {
         if (plan.values[key] && find(key === 'startDate' ? '#rgStart' : '#rgEnd').value !== plan.values[key]) {
           throw new Error('日期范围未能按要求设置，请在弹窗核对后生成');

@@ -5,8 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>管理员 · 课程智能体系统</title>
   <link rel="stylesheet" href="assets/css/base.css">
-  <link rel="stylesheet" href="assets/css/app.css?v=20261014-tr1">
-  <link rel="stylesheet" href="assets/css/refresh.css?v=20261014-tr1">
+  <link rel="stylesheet" href="assets/css/app.css?v=20261015-noscrollx">
+  <link rel="stylesheet" href="assets/css/refresh.css?v=20261015-noscrollx">
   <script src="assets/js/ui-enhancements.js" defer></script>
 </head>
 <body>
@@ -21,6 +21,7 @@
         <div class="nav-group__label">管理</div>
         <button class="nav-item" data-view="assistant" data-icon="bot"><span class="nav-item__text">智能助手</span></button>
         <button class="nav-item" data-view="users" data-icon="users"><span class="nav-item__text">账号管理</span></button>
+        <button class="nav-item" data-view="courses" data-icon="book"><span class="nav-item__text">课程管理</span></button>
       </div>
     </nav>
     <div class="sidebar__foot">
@@ -57,13 +58,35 @@
               <input class="input" id="fKey" placeholder="搜索用户名 / 姓名">
             </div>
           </div>
-          <div class="card__body" style="min-height:0;overflow:auto">
+          <div class="card__body" style="min-height:0;overflow-x:hidden;overflow-y:auto">
             <table class="tbl" id="userTable">
               <thead><tr>
                 <th style="width:32px"><input type="checkbox" id="pickAll" title="全选"></th>
                 <th>用户名</th><th>姓名</th><th>角色</th><th>班级/部门</th><th>用户ID</th><th>操作</th>
               </tr></thead>
               <tbody><tr><td colspan="7" class="t-dim">加载中…</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- 课程管理 -->
+      <section class="view" id="view-courses">
+        <div class="card" style="height:100%;display:flex;flex-direction:column;min-height:0">
+          <div class="card__head">
+            <h3>课程</h3>
+            <span class="spacer"></span>
+            <button class="btn btn--primary btn--sm" id="btnCourseCreate" type="button">新建课程</button>
+            <div class="search" style="width:220px">
+              <input class="input" id="fCourse" placeholder="搜索课程名 / 代码 / 教师">
+            </div>
+          </div>
+          <div class="card__body" style="min-height:0;overflow:auto">
+            <table class="tbl tbl--compact" id="courseTable">
+              <thead><tr>
+                <th>课程</th><th>负责人</th><th>成员</th><th>内容</th><th>邀请码</th>
+              </tr></thead>
+              <tbody><tr><td colspan="5" class="t-dim">加载中…</td></tr></tbody>
             </table>
           </div>
         </div>
@@ -82,6 +105,7 @@
 <script src="assets/js/shared/agent-chat.js?v=20261014-chat1"></script>
 <script src="assets/js/shared/agent-ui.js"></script>
 <script src="assets/js/admin/views/users.js"></script>
+<script src="assets/js/admin/views/courses.js?v=20261015-course-select"></script>
 <script src="assets/js/admin/views/assistant.js?v=20261013-composer"></script>
 <script src="assets/js/admin/app.js?v=20261013-assistant-mark"></script>
 </body>

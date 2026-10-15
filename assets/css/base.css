@@ -500,11 +500,12 @@ a.badge--outline:hover { border-color: var(--brand-400); color: var(--brand-300)
 .tbl--compact td { padding: 8px 12px; }
 
 /* ---------- 11. List ---------- */
-.list { display: flex; flex-direction: column; }
+.list { display: flex; flex-direction: column; min-width: 0; overflow-x: hidden; }
 .list__item {
   display: flex; align-items: flex-start; gap: 12px;
   padding: 13px 18px; border-bottom: 1px solid var(--border-soft);
   transition: background var(--t-fast); position: relative;
+  min-width: 0; max-width: 100%;
 }
 .list__item:last-child { border-bottom: none; }
 .list__item:hover { background: var(--surface-2); }

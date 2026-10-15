@@ -55,7 +55,7 @@
 .dash-live-empty,
 .dash-live-picker__empty { min-height: 100%; display: flex; align-items: center; justify-content: center; color: var(--text-3); font-size: 14px; }
 .dash-live-picker { height: 100%; position: relative; background: var(--surface-2); padding: 8px 10px; }
-.dash-live-picker__options { height: 100%; min-height: 0; display: flex; flex-wrap: wrap; align-content: flex-start; gap: 6px; overflow-y: auto; }
+.dash-live-picker__options { height: 100%; min-height: 0; display: flex; flex-wrap: wrap; align-content: flex-start; gap: 6px; overflow-x: hidden; overflow-y: auto; }
 .dash-live-student-option { width: auto; flex: 0 0 auto; display: flex; align-items: center; padding: 7px 12px; border: 1px solid transparent; border-radius: var(--r-sm); background: transparent; color: var(--text); text-align: left; cursor: pointer; }
 .dash-live-student-option:hover { background: var(--surface); border-color: var(--border); }
 .dash-live-student-option.is-active { background: var(--brand-soft); border-color: var(--brand-300, var(--brand-500)); }
@@ -266,7 +266,7 @@
   background: var(--surface-2); font-size: 13px; color: var(--text-2); cursor: pointer;
 }
 .kp-tabs button.on { background: rgba(15,118,110,.12); border-color: #5eead4; color: var(--brand); font-weight: 600; }
-.kp-side__body { flex: 1; min-height: 0; overflow-y: auto; padding: 12px 14px 16px; }
+.kp-side__body { flex: 1; min-height: 0; overflow-x: hidden; overflow-y: auto; padding: 12px 14px 16px; }
 .kp-sec { margin-bottom: 16px; }
 .kp-sec__t {
   display: flex; align-items: center; gap: 7px; font-size: 13px; font-weight: 700;
@@ -1106,13 +1106,51 @@
 /* 异常预警列表：只展示 4 条，其余在卡内滚动
    （可见高度由 monitor.js 按首张卡片真实高度算出，这里只负责滚动条与卡片对齐） */
 .card--alerts { align-self: start; }
-#alList.alert-list--scroll { overflow-y: auto; }
+#stuList, #alList { overflow-x: hidden; min-width: 0; }
+#alList.alert-list--scroll { overflow-x: hidden; overflow-y: auto; }
 #alList.alert-list--scroll::-webkit-scrollbar { width: 6px; }
 #alList.alert-list--scroll::-webkit-scrollbar-track { background: var(--surface-3); border-radius: var(--r-full); }
 #alList.alert-list--scroll::-webkit-scrollbar-thumb { background: var(--brand-300); border-radius: var(--r-full); }
 #alList.alert-list--scroll::-webkit-scrollbar-thumb:hover { background: var(--brand-400); }
 
 /* ---------- 教师端：热力图辅助 ---------- */
+.card__head--heat { flex-wrap: wrap; row-gap: 8px; }
+.heat-stu-search[hidden] { display: none !important; }
+.heat-bar-meta {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  margin-bottom: 10px; min-height: 28px;
+}
+.heat-bar-meta[hidden] { display: none !important; }
+.heat-bar-meta__name { font-size: 15px; font-weight: 650; }
+.heat-bar-stage { position: relative; padding: 0 28px; }
+.heat-bar-nav {
+  position: absolute; top: 50%; transform: translateY(-50%);
+  z-index: 4; width: 42px; height: 42px; padding: 0;
+  border: none; border-radius: var(--r-full);
+  background: transparent; color: var(--text);
+  cursor: pointer; display: grid; place-items: center;
+  filter: drop-shadow(0 0 3px rgba(255,255,255,.95));
+  transition: background var(--t-fast), box-shadow var(--t-fast), color var(--t-fast), filter var(--t-fast);
+}
+.heat-bar-nav[hidden] { display: none !important; }
+.heat-bar-nav--prev { left: 0; }
+.heat-bar-nav--next { right: 0; }
+.heat-bar-nav svg { width: 22px; height: 22px; }
+.heat-bar-nav:hover {
+  background: rgba(15, 42, 74, .14);
+  color: var(--text);
+  filter: none;
+  box-shadow: 0 2px 12px rgba(15, 42, 74, .18);
+}
+.hm-axis-tip {
+  position: absolute; z-index: 8; pointer-events: none;
+  padding: 5px 9px; max-width: 240px;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 8px; box-shadow: 0 8px 28px rgba(0,0,0,.18);
+  font-size: 12px; color: var(--text); line-height: 1.4;
+  white-space: nowrap;
+}
+.hm-axis-tip[hidden] { display: none !important; }
 .hm-legend { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--text-3); }
 .hm-legend__bar {
   width: 132px; height: 10px; border-radius: var(--r-full);
@@ -1176,7 +1214,7 @@
 .gen-kp__list { margin-top: 8px; }
 .gen-kp__list[hidden] { display: none; }
 .gen-material-list {
-  max-height: 148px; overflow-y: auto; margin-top: 8px;
+  max-height: 148px; overflow-x: hidden; overflow-y: auto; margin-top: 8px;
   scrollbar-width: thin; scrollbar-color: var(--brand-300) var(--surface-3);
 }
 .gen-material-list .file-item { width: 100%; text-align: left; font: inherit; color: inherit; cursor: pointer; }
@@ -1190,7 +1228,7 @@
 .upload--compact b { display: block; font-size: 13px; line-height: 1.3; }
 .upload--compact .upload__text span { font-size: 11.5px; }
 .gen-kp-scroll {
-  max-height: 148px; overflow-y: auto; padding: 2px 7px 2px 0;
+  max-height: 148px; overflow-x: hidden; overflow-y: auto; padding: 2px 7px 2px 0;
   scrollbar-width: thin; scrollbar-color: var(--brand-300) var(--surface-3);
 }
 .gen-kp-scroll::-webkit-scrollbar { width: 6px; }
@@ -1202,7 +1240,7 @@
   border-radius: var(--r-xs); background: var(--surface);
 }
 .gen-result-scroll {
-  max-height: min(70vh, 720px); overflow-y: auto; padding-right: 8px;
+  max-height: min(70vh, 720px); overflow-x: hidden; overflow-y: auto; padding-right: 8px;
   scrollbar-width: thin; scrollbar-color: var(--brand-300) var(--surface-3);
   display: flex; flex-direction: column;
 }
@@ -1228,7 +1266,7 @@
 
 /* ---------- 题库管理滚动区域 ---------- */
 .bank-table-scroll {
-  max-height: min(62vh, 640px); overflow: auto;
+  max-height: min(62vh, 640px); overflow-x: hidden; overflow-y: auto;
   scrollbar-width: thin; scrollbar-color: var(--brand-300) var(--surface-3);
 }
 .bank-table-scroll::-webkit-scrollbar { width: 6px; height: 6px; }
@@ -1238,7 +1276,7 @@
 /* 教师试卷工作区 */
 .exam-workspace { display: flex; flex-direction: column; min-height: 0; }
 .exam-workspace h3, .exam-workspace h4 { margin: 0; }
-.exam-list-body, .exam-editor-body { min-height: 0; overflow: auto; }
+.exam-list-body, .exam-editor-body { min-height: 0; overflow-x: hidden; overflow-y: auto; }
 .exam-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 14px; margin-top: 18px; }
 .exam-list-card, .exam-question { border: 1px solid var(--border); border-radius: var(--r-md); padding: 16px; background: var(--surface); }
 .exam-list-card { display: flex; flex-direction: column; gap: 10px; }
@@ -1257,7 +1295,7 @@
 .exam-question-detail img { max-width: 100%; max-height: 280px; object-fit: contain; }
 .exam-footer { display: flex; align-items: center; gap: 12px; padding: 14px 18px; border-top: 1px solid var(--border); flex-wrap: wrap; }
 .exam-footer > div { flex: 1 1 250px; line-height: 1.8; }
-.exam-bank-list { max-height: 55vh; overflow: auto; margin: 12px 0; }
+.exam-bank-list { max-height: 55vh; overflow-x: hidden; overflow-y: auto; margin: 12px 0; }
 .exam-bank-item { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 12px; padding: 14px; border-bottom: 1px solid var(--border); }
 .exam-bank-question { display: flex; flex-direction: column; align-items: flex-start; gap: 7px; min-width: 0; width: 100%; padding: 0; border: 0; background: transparent; color: inherit; text-align: left; cursor: pointer; }
 .exam-bank-question:focus-visible { outline: 2px solid var(--brand-500); outline-offset: 4px; border-radius: var(--r-sm); }
@@ -1453,9 +1491,18 @@
 .report__meta { display: flex; gap: 22px; flex-wrap: wrap; justify-content: center; font-size: 13px; color: var(--text-3); }
 
 /* ---------- 学情报告生成表单 ---------- */
+.report-scope-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  margin-bottom: 6px;
+}
+.report-scope-all {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 13px; color: var(--text-2); cursor: pointer; user-select: none; white-space: nowrap;
+}
+.report-scope-all input { width: 15px; height: 15px; accent-color: var(--brand-500); }
 .report-scope-list {
   display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px;
-  max-height: 190px; overflow-y: auto; padding: 2px 4px 2px 0;
+  max-height: 190px; overflow-x: hidden; overflow-y: auto; padding: 2px 4px 2px 0;
   scrollbar-width: thin; scrollbar-color: var(--brand-300) var(--surface-3);
 }
 .report-scope-option {
@@ -1681,7 +1728,7 @@ html.auth-skin body {
 /* ==========================================================================
    资源聚合 · 章节标签 + 点击展开 popup
    ========================================================================== */
-.chips-grouped { display: flex; flex-direction: column; gap: 8px; max-height: 300px; overflow-y: auto; padding-right: 2px; }
+.chips-grouped { display: flex; flex-direction: column; gap: 8px; max-height: 300px; overflow-x: hidden; overflow-y: auto; padding-right: 2px; }
 .chips-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 
 /* 章节 chip：紧凑徽章样式 */
@@ -1761,6 +1808,7 @@ html.auth-skin body {
 #view-resource #pathList {
   flex: 1 1 auto;
   min-height: 0;
+  overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior: contain;
 }
@@ -1768,6 +1816,7 @@ html.auth-skin body {
 #view-resource #resGrid {
   flex: 1 1 auto;
   min-height: 0;
+  overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior: contain;
 }
@@ -1796,6 +1845,7 @@ html.auth-skin body {
 #view-mastery #matrixBox {
   max-height: min(52vh, 560px);
   min-height: 240px;
+  overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior: contain;
 }
@@ -1980,6 +2030,7 @@ html.auth-skin body {
 .sr-empty p { color: var(--text-3); margin: 8px 0 16px; line-height: 1.7; max-width: 360px; }
 .report-archive-list {
   max-height: none;
+  overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior: contain;
 }

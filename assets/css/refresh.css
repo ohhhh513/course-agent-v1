@@ -355,8 +355,8 @@ svg.ico {
   border-color: var(--brand-400);
   box-shadow: 0 0 0 3px rgba(13, 148, 136, .13);
 }
-.list__item { transition: background var(--t-fast), transform var(--t-fast), border-color var(--t-fast); }
-.list__item:hover { background: #f5fafb; transform: translateX(2px); }
+.list__item { transition: background var(--t-fast), border-color var(--t-fast); }
+.list__item:hover { background: #f5fafb; }
 .list__item--clickable.is-active { background: var(--brand-soft); border-left-color: var(--brand-500); }
 .callout { border-radius: 6px; }
 .callout--brand { background: var(--brand-soft); border-color: rgba(13, 148, 136, .26); }
