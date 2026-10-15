@@ -13,7 +13,7 @@ from urllib.parse import urlparse
 from fastapi import APIRouter, Depends, Query, Body, Form, UploadFile, File, HTTPException, BackgroundTasks
 from starlette.concurrency import run_in_threadpool
 from sqlalchemy.orm import Session
-from sqlalchemy import func, desc
+from sqlalchemy import func, desc, case
 from pydantic import BaseModel
 from typing import Optional, List, Union
 
@@ -476,8 +476,11 @@ def teacher_dashboard(
             "type": "alert",
             "title": a.title or f"「{kp_name}」{a.type or '学习预警'}",
             "desc": f"{stu_name} · {a.desc or kp_name or ''}",
-            "action": "去处理",
-            "target": "alerts",
+            "action": "查看详情" if a.type in ("mastery_low", "error_cluster") else "去处理",
+            "target": "student-wrong-questions" if a.type in ("mastery_low", "error_cluster") else "alerts",
+            "userId": a.user_id,
+            "userName": stu_name,
+            "kpId": a.kp_id or "",
         })
     # 2) 进度滞后的学生（completion < 50%）
     low_students = [sid for sid, lp in lp_stats.items() if lp["total"] and lp["done"] / lp["total"] < 0.5]
@@ -740,6 +743,96 @@ def heatmap(
         "startedMask": started_mask,
         "kpAvg": kp_avg,
         "weakest": weakest,
+    })
+
+
+@router.get("/students/{user_id}/wrong-questions")
+def student_wrong_questions(
+    user_id: str,
+    kpIds: str = Query("", max_length=8192),
+    page: int = Query(1, ge=1),
+    size: int = Query(10, ge=1, le=50),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+    course_id: str = Depends(get_current_course_id),
+):
+    """教师查看本课程学生曾答错的题目；知识点多选取并集，按题去重。"""
+    stu = db.query(User).join(UserCourse, UserCourse.user_id == User.user_id).filter(
+        User.user_id == user_id,
+        User.role == "student",
+        UserCourse.course_id == course_id,
+    ).first()
+    if not stu:
+        raise HTTPException(status_code=404, detail="该学生不在当前课程中")
+
+    wrong_count = func.sum(case((AnswerRecord.is_correct == 0, 1), else_=0))
+    rows = db.query(
+        Question.q_id, Question.kp_id, Question.kp_ids,
+        wrong_count.label("wrong_count"),
+        func.max(AnswerRecord.id).label("latest_id"),
+        func.max(case((AnswerRecord.is_correct == 0, AnswerRecord.id), else_=None)).label("wrong_id"),
+    ).join(AnswerRecord, AnswerRecord.q_id == Question.q_id).filter(
+        Question.course_id == course_id,
+        AnswerRecord.course_id == course_id,
+        AnswerRecord.user_id == user_id,
+    ).group_by(Question.q_id, Question.kp_id, Question.kp_ids).having(wrong_count > 0).all()
+    # 不截断 Top 5：保留全部错题知识点；多标签题归入每个相关知识点。
+    names = _kp_name_map(db, course_id)
+    summary = {}
+    tags_by_question = {}
+    for row in rows:
+        tags = _question_kp_ids(row) or ["__unassigned__"]
+        tags_by_question[row.q_id] = tags
+        for kid in tags:
+            item = summary.setdefault(kid, {
+                "kpId": kid,
+                "name": names.get(kid, "未标注知识点" if kid == "__unassigned__" else "未命名知识点"),
+                "questionCount": 0, "wrongCount": 0,
+            })
+            item["questionCount"] += 1
+            item["wrongCount"] += int(row.wrong_count)
+    knowledge_points = sorted(summary.values(), key=lambda item: (-item["wrongCount"], item["kpId"]))
+    selected = {kid.strip() for kid in kpIds.split(",") if kid.strip()}
+    filtered = [row for row in rows if not selected or selected.intersection(tags_by_question[row.q_id])]
+    filtered.sort(key=lambda row: (-int(row.wrong_count), -row.wrong_id, row.q_id))
+    total = len(filtered)
+    page = min(page, max(1, (total + size - 1) // size))
+    page_rows = filtered[(page - 1) * size:page * size]
+    question_ids = [row.q_id for row in page_rows]
+    questions = {q.q_id: q for q in db.query(Question).filter(
+        Question.course_id == course_id, Question.q_id.in_(question_ids),
+    ).all()}
+    record_ids = {record_id for row in page_rows for record_id in (row.latest_id, row.wrong_id)}
+    records = {a.id: a for a in db.query(AnswerRecord).filter(
+        AnswerRecord.id.in_(record_ids), AnswerRecord.course_id == course_id,
+        AnswerRecord.user_id == user_id,
+    ).all()}
+    result = []
+    for row in page_rows:
+        q = questions[row.q_id]
+        last_wrong, latest = records[row.wrong_id], records[row.latest_id]
+        options = loads(q.options) or []
+        answer = q.answer or ""
+        if is_blank_type(q.type):
+            answer = pack_blank(q.stem, answer, options)["display"]
+        result.append({
+            "qId": q.q_id, "type": q.type, "stem": q.stem,
+            "chapter": q.chapter or "", "difficulty": q.difficulty,
+            "knowledgePoints": [summary[kid] for kid in tags_by_question[q.q_id]],
+            "options": _options_with_right(options, answer, q.type),
+            "answer": answer, "analysis": q.analysis or "",
+            "figureJson": loads(q.figure_json) if q.figure_json else None,
+            "wrongCount": int(row.wrong_count),
+            "myAnswer": last_wrong.my_answer or "",
+            "lastWrongAt": format_china_time(last_wrong.created_at),
+            "latestCorrect": bool(latest.is_correct),
+            "latestAnswer": latest.my_answer or "",
+            "latestAt": format_china_time(latest.created_at),
+        })
+    return ok({
+        "userId": stu.user_id, "userName": stu.name,
+        "knowledgePoints": knowledge_points,
+        "total": total, "page": page, "size": size, "list": result,
     })
 
 
@@ -1811,6 +1904,7 @@ def question_bank(
     kpId: str = Query(None),
     chapterId: str = Query(None),
     knowledgeId: str = Query(None),
+    knowledgeIds: str = Query(None, max_length=8192),
     type: str = Query(None),
     status: str = Query("all"),
     difficulty: int = Query(None),
@@ -1843,8 +1937,9 @@ def question_bank(
         if chapter_name:
             chapter_filters.append(Question.chapter == chapter_name)
         q = q.filter(or_(*chapter_filters))
-    if knowledgeId:
-        kp_filter = _question_kp_clause(Question, [knowledgeId])
+    knowledge_ids = _parse_kp_ids(knowledgeIds) if knowledgeIds else ([knowledgeId] if knowledgeId else [])
+    if knowledge_ids:
+        kp_filter = _question_kp_clause(Question, knowledge_ids)
         if kp_filter is not None:
             q = q.filter(kp_filter)
     if type: q = q.filter(Question.type == type)

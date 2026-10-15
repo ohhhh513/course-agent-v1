@@ -135,6 +135,7 @@ const AdminCourses = {
       )).join('');
       Modal.open({
         title: isEdit ? '编辑课程' : '新建课程',
+        closeOnBackdrop: false,
         body: `
           <form class="stack" style="gap:12px" id="courseForm">
             <label class="stack" style="gap:4px"><span class="fz-12 t-dim">课程名称</span>
@@ -194,6 +195,7 @@ const AdminCourses = {
     const blocked = (course.chapters || 0) + (course.knowledgePoints || 0) + (course.resources || 0) + (course.questions || 0);
     Modal.open({
       title: '删除课程',
+      closeOnBackdrop: false,
       body: `
         <div class="stack" style="gap:12px">
           <div class="callout ${blocked ? 'callout--warn' : 'callout--danger'}">${icon('alert')}
@@ -239,6 +241,7 @@ const AdminCourses = {
 
     Modal.open({
       title: '课程学生 · ' + course.name,
+      closeOnBackdrop: false,
       size: 'full',
       body: `
         <div class="stack" style="gap:14px">

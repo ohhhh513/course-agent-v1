@@ -181,8 +181,13 @@
             t.appendChild(ign);
 
             const btn = t.querySelector('.btn');
-            // 「发消息」按钮：单独阻止冒泡并打开发送私信弹窗
-            if (t.dataset.action === '发消息' && btn) {
+            // 低正确率待办直接查看错题；进度滞后待办保留发送私信。
+            if (t.dataset.action === '查看详情' && t.dataset.userId) {
+              t.addEventListener('click', e => {
+                if (e.target.closest('.dash-todo-ignore')) return;
+                Dash.openWrongQuestions(t.dataset.userId, t.dataset.userName);
+              });
+            } else if (t.dataset.action === '发消息' && btn) {
               btn.addEventListener('click', e => {
                 e.stopPropagation();
                 Dash.openMessageModal(t.dataset.userId, t.dataset.userName);
@@ -276,6 +281,129 @@
       });
     },
 
+    openWrongQuestions(userId, userName, initialKpIds = null) {
+      const courseId = API.config.activeCourseId;
+      let generation = 0, selected = initialKpIds ? new Set(initialKpIds) : null, points = [], currentPage = 1;
+      const types = { single: '单选题', multi: '多选题', judge: '判断题', blank: '填空题', code: '编程题' };
+      const answerText = (value, type) => {
+        if (type === 'blank') {
+          try {
+            const parsed = JSON.parse(value);
+            if (Array.isArray(parsed)) return parsed.map((v, i) => `第 ${i + 1} 空：${v || '未作答'}`).join('；');
+          } catch (e) { /* 旧记录以分号分隔，直接展示。 */ }
+        }
+        return value || '未作答';
+      };
+      Modal.open({
+        title: `${U.esc(userName || '学生')} · 错题详情`, size: 'wide',
+        body: `<div class="dash-wrong-detail">
+          <div class="dash-wrong-filter">
+            <div class="row row--wrap"><b>高频错误知识点</b><span class="spacer"></span>
+              <button type="button" class="btn btn--sm btn--ghost" data-wrong-all disabled>全选</button>
+              <button type="button" class="btn btn--sm btn--ghost" data-wrong-clear disabled>清空</button></div>
+            <p class="fz-12 t-dim">按累计答错次数排序，可多选；下方按题合并展示历史错题，最近已答对的题会标注。</p>
+            <div class="dash-wrong-kps" data-wrong-kps></div>
+          </div>
+          <div class="fz-12 t-dim" data-wrong-count aria-live="polite"></div>
+          <div class="stack" style="gap:14px" data-wrong-list></div>
+          <div class="row row--wrap" data-wrong-pages></div>
+        </div>`,
+        onMount: ov => {
+          const kpBox = ov.querySelector('[data-wrong-kps]');
+          const listBox = ov.querySelector('[data-wrong-list]');
+          const countBox = ov.querySelector('[data-wrong-count]');
+          const pageBox = ov.querySelector('[data-wrong-pages]');
+          const allButton = ov.querySelector('[data-wrong-all]');
+          const clearButton = ov.querySelector('[data-wrong-clear]');
+          const valid = () => ov.isConnected && API.config.activeCourseId === courseId;
+          const paintFilters = () => {
+            kpBox.innerHTML = points.map(k => `<label class="dash-wrong-kp ${selected.has(k.kpId) ? 'is-selected' : ''}">
+              <input type="checkbox" value="${U.esc(k.kpId)}" ${selected.has(k.kpId) ? 'checked' : ''}>
+              <span>${U.esc(k.name)}<small>${k.questionCount} 道错题 · 答错 ${k.wrongCount} 次</small></span></label>`).join('')
+              || '<span class="fz-12 t-dim">暂无错题知识点</span>';
+            allButton.disabled = !points.length;
+            clearButton.disabled = !points.length;
+          };
+          const load = async (page = 1) => {
+            const ticket = ++generation;
+            pageBox.innerHTML = '';
+            if (selected && !selected.size) {
+              countBox.textContent = '已选择 0 个知识点';
+              listBox.innerHTML = '<div class="empty">请选择上方知识点查看错题</div>';
+              return;
+            }
+            listBox.innerHTML = U.skeleton(160);
+            countBox.textContent = '正在读取错题…';
+            try {
+              const data = await API.teacher.studentWrongQuestions({ userId,
+                kpIds: selected ? [...selected].join(',') : '', page, size: 10 });
+              if (!valid() || ticket !== generation) return;
+              points = data.knowledgePoints || [];
+              if (selected === null) selected = new Set(points.map(k => k.kpId));
+              paintFilters();
+              currentPage = data.page;
+              countBox.textContent = `已选择 ${selected.size} 个知识点 · 共 ${data.total} 道错题`;
+              listBox.innerHTML = (data.list || []).map((q, index) => {
+                const options = q.type === 'blank' ? '' : (q.options || []).map(o => `<div class="opt ${o.right ? 'is-right' : ''}">
+                  <span class="opt__key">${U.esc(o.key || '')}</span><span style="flex:1;white-space:pre-wrap">${U.esc(o.text || '')}</span>
+                  ${o.right ? '<span class="badge badge--ok">正确答案</span>' : ''}</div>`).join('');
+                return `<article class="card dash-wrong-question">
+                  <div class="card__body stack" style="gap:12px">
+                    <div class="row row--wrap"><b>第 ${(data.page - 1) * data.size + index + 1} 题</b>
+                      <span class="badge badge--outline">${U.esc(types[q.type] || '题目')}</span>
+                      <span class="badge badge--outline">${U.esc(q.chapter || '未分章')}</span>
+                      <span class="spacer"></span><span class="badge badge--danger">累计答错 ${q.wrongCount} 次</span>
+                      <span class="badge ${q.latestCorrect ? 'badge--ok' : 'badge--warn'}">${q.latestCorrect ? '最近已答对' : '最近仍答错'}</span></div>
+                    <div class="row row--wrap">${(q.knowledgePoints || []).map(k => `<span class="badge badge--brand">${U.esc(k.name)}</span>`).join('')}</div>
+                    <div class="dash-wrong-text">${U.esc(q.stem)}</div>
+                    <div data-wrong-figure="${index}"></div>
+                    ${options ? `<div class="opts opts--readonly">${options}</div>` : ''}
+                    <div class="dash-wrong-answers">
+                      <div>最近一次错误作答：<b class="t-danger">${U.esc(answerText(q.myAnswer, q.type))}</b></div>
+                      <div>正确答案：<b class="t-ok">${U.esc(q.answer || '暂无答案')}</b></div>
+                      ${q.latestCorrect ? `<div>最近作答：<b class="t-ok">${U.esc(answerText(q.latestAnswer, q.type))}</b></div>` : ''}
+                    </div>
+                    <div><b class="fz-12">题目解析</b><div class="dash-wrong-text fz-13" style="margin-top:6px">${U.esc(q.analysis || '暂无解析')}</div></div>
+                    <div class="fz-11 t-dim">最近答错：${U.esc(q.lastWrongAt || '暂无时间')} · 最近作答：${U.esc(q.latestAt || '暂无时间')}</div>
+                  </div></article>`;
+              }).join('') || '<div class="empty">暂无对应错题</div>';
+              (data.list || []).forEach((q, index) => {
+                const figure = q.figureJson, box = listBox.querySelector(`[data-wrong-figure="${index}"]`);
+                if (!figure || !box) return;
+                if (figure.imageUrl || figure.image_url) U.mountQuestionImage(box, figure.imageUrl || figure.image_url);
+                else if (window.DsFigure) {
+                  if (figure.graph) DsFigure.mount(box, figure.graph);
+                  if (figure.options_graph) DsFigure.mountOptions(box, figure.options_graph);
+                }
+              });
+              const pages = Math.max(1, Math.ceil(data.total / data.size));
+              if (pages > 1) pageBox.innerHTML = `<button type="button" class="btn btn--sm" data-wrong-prev ${data.page <= 1 ? 'disabled' : ''}>上一页</button>
+                <span class="fz-12 t-dim">第 ${data.page} / ${pages} 页</span>
+                <button type="button" class="btn btn--sm" data-wrong-next ${data.page >= pages ? 'disabled' : ''}>下一页</button>`;
+            } catch (err) {
+              if (!valid() || ticket !== generation) return;
+              countBox.textContent = '';
+              listBox.innerHTML = `<div class="callout callout--danger">错题加载失败：${U.esc(err.message || err)}</div>
+                <button type="button" class="btn btn--sm" data-wrong-retry>重试</button>`;
+            }
+          };
+          kpBox.addEventListener('change', e => {
+            if (e.target.type !== 'checkbox') return;
+            if (e.target.checked) selected.add(e.target.value); else selected.delete(e.target.value);
+            paintFilters(); load(1);
+          });
+          allButton.addEventListener('click', () => { selected = new Set(points.map(k => k.kpId)); paintFilters(); load(1); });
+          clearButton.addEventListener('click', () => { selected = new Set(); paintFilters(); load(1); });
+          pageBox.addEventListener('click', e => {
+            if (e.target.closest('[data-wrong-prev]')) load(currentPage - 1);
+            if (e.target.closest('[data-wrong-next]')) load(currentPage + 1);
+          });
+          listBox.addEventListener('click', e => { if (e.target.closest('[data-wrong-retry]')) load(currentPage); });
+          load();
+        }
+      });
+    },
+
     openMessageModal(userId, userName) {
       const body = `
         <div class="stack" style="gap:12px;min-width:360px">
@@ -285,6 +413,7 @@
         </div>`;
         Modal.open({
         title: '发送私信',
+        closeOnBackdrop: false,
         body,
         footer: '<button class="btn" data-close>取消</button><button class="btn btn--primary" id="sendMsgBtn">发送</button>',
         onMount(ov, close) {

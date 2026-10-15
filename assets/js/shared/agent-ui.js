@@ -245,6 +245,7 @@ const AgentUI = (() => {
     let selectedKps = new Set(values.kpIds || []);
     const modal = Modal.open({
       title: '导入题目 · 预览与核对', size: 'wide',
+      closeOnBackdrop: false,
       body: `<div class="stack" style="gap:12px"><label>选择题目文件<input class="input" id="qiFile" type="file" accept=".txt,.md,.json,.csv,.xlsx,.docx,.pdf"></label><label>题目文字／JSON（题干、A/B 选项、答案、解析）<textarea class="input" id="qiText" style="min-height:100px"></textarea></label><label>统一归属章节（可选）<select class="select" id="qiChapter"><option value="">保留各题原有归属</option></select></label><div>统一知识点标签（可选，选择后覆盖各题标签）<div class="chips" id="qiKps"></div></div><button class="btn" id="qiParse" type="button">解析预览</button><p id="qiStatus" class="t-dim"></p><div id="qiRows" class="stack"></div></div>`,
       footer: `<button class="btn btn--primary" id="qiCommit" disabled type="button">确认导入题库</button><button class="btn" data-close>取消</button>`,
     });

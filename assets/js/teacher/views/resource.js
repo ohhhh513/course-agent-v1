@@ -104,6 +104,7 @@
       const footer = `<button class="btn btn--primary" id="trESave" type="button">${icon('check')} 保存</button><button class="btn" data-close>取消</button>`;
       Modal.open({
         title: '编辑资源',
+        closeOnBackdrop: false,
         body,
         footer,
         onMount(ov, close) {
@@ -197,6 +198,7 @@
 
       Modal.open({
         title: '上传学习资源',
+        closeOnBackdrop: false,
         body,
         footer,
         onMount(ov, close) {

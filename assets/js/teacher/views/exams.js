@@ -279,7 +279,7 @@ const TeacherExams = {
   back() {
     if (this.busy) return;
     if (!this.dirty) { this.paper = null; this.list(); return; }
-    Modal.open({title: '有未保存的修改', body: '<p>保存草稿后返回列表，或放弃本次尚未保存的修改。</p>',
+    Modal.open({title: '有未保存的修改', closeOnBackdrop: false, body: '<p>保存草稿后返回列表，或放弃本次尚未保存的修改。</p>',
       footer: '<button class="btn" data-close>继续编辑</button><button class="btn" id="examDiscard">放弃修改</button><button class="btn btn--primary" id="examSaveBack">保存并返回</button>',
       onMount: (ov, close) => {
         ov.querySelector('#examDiscard').onclick = () => { close(); this.paper = null; this.dirty = false; this.list(); };
@@ -323,32 +323,49 @@ const TeacherExams = {
   pick() {
     const epoch = this.epoch, paper = this.paper;
     let page = 1, generation = 0, structureData = null;
+    const selectedKps = new Set();
     const existing = new Set(paper.items.map(i => i.sourceQId).filter(Boolean));
-    Modal.open({title: '从当前课程题库选题', size: 'wide',
+    Modal.open({title: '从当前课程题库选题', closeOnBackdrop: false, size: 'wide',
       body: `<form class="row row--wrap" id="examBankSearch">
         <input class="input" id="examBankKeyword" placeholder="搜索题干、章节或知识点" aria-label="搜索题库" style="flex:1;min-width:200px">
         <select class="select select--visible-arrow" id="examBankChapter" aria-label="筛选章节"><option value="">全部章节</option></select>
-        <select class="select select--visible-arrow" id="examBankKp" aria-label="筛选知识点"><option value="">全部知识点</option></select>
+        <details class="exam-kp-picker" id="examBankKp">
+          <summary class="select exam-kp-picker__toggle" aria-label="筛选知识点（可多选）"><span data-exam-kp-label>全部知识点</span>${icon('chevronDown')}</summary>
+          <div class="exam-kp-picker__panel">
+            <div class="row fz-12"><b>知识点（可多选）</b><span class="spacer"></span><button class="btn btn--ghost btn--xs" type="button" data-exam-kp-clear disabled>清空</button></div>
+            <div class="exam-kp-picker__options" data-exam-kp-options>正在加载知识点…</div>
+          </div>
+        </details>
         <select class="select select--visible-arrow" id="examBankType" aria-label="筛选题型"><option value="">全部题型</option>${Object.entries(this.types).map(([key, text]) => `<option value="${key}">${text}</option>`).join('')}</select>
         <button class="btn" type="submit">搜索</button></form>
         <div class="exam-bank-list" id="examBankList"></div><div class="row" id="examBankPages"></div>`,
       footer: '<span class="t-dim fz-12" id="examPickCount">点击题目查看详情，使用右侧按钮加入试卷。</span><button class="btn" data-close>完成</button>',
       onMount: ov => {
-        const chapterSelect = ov.querySelector('#examBankChapter'), kpSelect = ov.querySelector('#examBankKp');
+        const chapterSelect = ov.querySelector('#examBankChapter'), kpPicker = ov.querySelector('#examBankKp');
+        const syncKpLabel = () => {
+          kpPicker.querySelector('[data-exam-kp-label]').textContent = selectedKps.size ? `已选 ${selectedKps.size} 个知识点` : '全部知识点';
+          kpPicker.querySelector('[data-exam-kp-clear]').disabled = selectedKps.size === 0;
+        };
         const renderKpOptions = () => {
           if (!structureData) return;
           const chapter = (structureData.chapterOptions || []).find(ch => ch.id === chapterSelect.value);
-          const current = kpSelect.value;
           const options = (structureData.kpOptions || []).filter(kp => !chapter || kp.chapter === chapter.name);
-          kpSelect.innerHTML = '<option value="">全部知识点</option>' + options.map(kp => `<option value="${U.esc(kp.id)}">${U.esc(kp.name)}</option>`).join('');
-          kpSelect.value = options.some(kp => kp.id === current) ? current : '';
+          const allowedIds = new Set(options.map(kp => String(kp.id)));
+          for (const id of selectedKps) if (!allowedIds.has(id)) selectedKps.delete(id);
+          kpPicker.querySelector('[data-exam-kp-options]').innerHTML = options.map(kp => `<label><input type="checkbox" data-exam-kp value="${U.esc(kp.id)}" ${selectedKps.has(String(kp.id)) ? 'checked' : ''}><span>${U.esc(kp.name)}</span></label>`).join('') || '<span class="t-dim fz-12">当前章节暂无知识点</span>';
+          syncKpLabel();
         };
         API.teacher.structure().then(data => {
           if (!ov.isConnected || !this.active(epoch)) return;
           structureData = data;
           chapterSelect.innerHTML = '<option value="">全部章节</option>' + (data.chapterOptions || []).map(ch => `<option value="${U.esc(ch.id)}">${U.esc(ch.name)}</option>`).join('');
           renderKpOptions();
-        }).catch(err => { if (ov.isConnected) Toast.warn(err.message || '章节与知识点加载失败'); });
+        }).catch(err => {
+          if (ov.isConnected) {
+            kpPicker.querySelector('[data-exam-kp-options]').textContent = '知识点加载失败，请重新打开选题';
+            Toast.warn(err.message || '章节与知识点加载失败');
+          }
+        });
         const addQuestion = (question, button) => {
           if (!this.active(epoch) || this.paper !== paper) { Toast.warn('试卷已切换，请重新打开选题'); return; }
           if (existing.has(question.qId)) return;
@@ -367,7 +384,7 @@ const TeacherExams = {
           try {
             const keyword = ov.querySelector('#examBankKeyword').value.trim();
             const result = await API.question.bank({page, size: 10, status: 'published', type: ov.querySelector('#examBankType').value, keyword,
-              chapterId: chapterSelect.value, knowledgeId: kpSelect.value});
+              chapterId: chapterSelect.value, knowledgeIds: [...selectedKps].join(',')});
             if (!ov.isConnected || request !== generation || !this.active(epoch)) return;
             const allowed = result.list.filter(q => this.types[q.type]);
             const kpById = new Map((structureData?.kpOptions || []).map(kp => [String(kp.id), kp.name]));
@@ -402,7 +419,16 @@ const TeacherExams = {
         };
         ov.querySelector('#examBankSearch').onsubmit = e => { e.preventDefault(); page = 1; load(); };
         chapterSelect.onchange = () => { renderKpOptions(); page = 1; load(); };
-        kpSelect.onchange = () => { page = 1; load(); };
+        kpPicker.addEventListener('change', e => {
+          if (!e.target.matches('[data-exam-kp]')) return;
+          if (e.target.checked) selectedKps.add(e.target.value);
+          else selectedKps.delete(e.target.value);
+          syncKpLabel(); page = 1; load();
+        });
+        kpPicker.querySelector('[data-exam-kp-clear]').onclick = () => {
+          selectedKps.clear(); renderKpOptions(); page = 1; load();
+        };
+        ov.addEventListener('click', e => { if (!kpPicker.contains(e.target)) kpPicker.open = false; });
         ov.querySelector('#examBankType').onchange = () => { page = 1; load(); };
         load();
       }});

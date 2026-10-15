@@ -131,6 +131,7 @@
       joinBtn.addEventListener('click', () => {
         Modal.open({
           title: '加入新课程',
+          closeOnBackdrop: false,
           body: `<div class="stack" style="gap:14px">
             <label class="stack" style="gap:4px"><span class="fz-12 t-dim">课程邀请码</span><input class="input" id="jcCode" placeholder="向授课教师索取，8 位字符" style="text-transform:uppercase"></label>
           </div>`,

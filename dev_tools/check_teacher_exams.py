@@ -78,6 +78,17 @@ def main():
         assert [q["qId"] for q in bank({"status": "published", "keyword": "第二章验收"})["list"]] == ["EXAM_CHECK_Q2"]
         assert bank({"status": "published", "chapterId": "EXAM_CHECK_CH", "knowledgeId": "EXAM_CHECK_KP2"})["total"] == 0
 
+        multi = {"status": "published", "knowledgeIds": "EXAM_CHECK_KP,EXAM_CHECK_KP2"}
+        combined = bank(multi)
+        assert {q["qId"] for q in combined["list"]} == {"EXAM_CHECK_Q", "EXAM_CHECK_Q2"}
+        assert combined["total"] == 2  # 同时命中主知识点与多标签的题目不重复。
+        assert [q["qId"] for q in bank({**multi, "chapterId": "EXAM_CHECK_CH2", "type": "single", "keyword": "组合"})["list"]] == ["EXAM_CHECK_Q2"]
+        pages = [bank({**multi, "page": page, "size": 1}) for page in (1, 2)]
+        assert all(result["total"] == 2 and len(result["list"]) == 1 for result in pages)
+        assert {q["qId"] for result in pages for q in result["list"]} == {"EXAM_CHECK_Q", "EXAM_CHECK_Q2"}
+        assert bank({"knowledgeIds": "not-a-kp,not-another-kp"})["total"] == 0
+        print("PASS: 题库知识点多选并集、去重、组合筛选与分页，兼容单选")
+
         def call(method, path="", body=None, *, token=teacher_token, course="EXAM_CHECK_C", expected=200):
             response = client.request(method, "/api/v1/teacher/exams" + path, json=body,
                                       headers={"Authorization": "Bearer " + token, "X-Course-Id": course})

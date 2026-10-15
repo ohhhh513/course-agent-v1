@@ -184,6 +184,7 @@
     openGenMaterialUpload() {
       Modal.open({
         title: '上传出题素材',
+        closeOnBackdrop: false,
         body: `
           <div class="stack" style="gap:10px">
             <label class="stack" style="gap:4px"><span class="fz-12 t-dim">素材类型</span>
@@ -705,6 +706,7 @@
       const chapterText = d.chapterName || '';
       Modal.open({
         title: icon('pencil') + ' 编辑草稿 · ' + U.esc(d.draftId), size: 'wide',
+        closeOnBackdrop: false,
         body: `
         <div class="question-edit">
           <div class="question-edit__summary">
@@ -1219,6 +1221,7 @@
   function _openEditModal(qId, q) {
     Modal.open({
       title: icon('file') + ' 编辑习题 · ' + U.esc(qId), size: 'wide',
+      closeOnBackdrop: false,
       body: `
       <div class="question-edit">
         <div class="question-edit__summary">
@@ -1689,6 +1692,7 @@ function openNewQuestionModal(onDone, editor = {}) {
 
   Modal.open({
     title: editor.title || "新建题目", size: "wide",
+    closeOnBackdrop: false,
     body: `
       <div class="stack" style="gap:12px">
         <div style="display:grid;grid-template-columns:1fr 1fr 110px 110px;gap:10px">

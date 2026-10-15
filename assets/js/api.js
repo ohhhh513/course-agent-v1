@@ -769,6 +769,10 @@ window.API = (function () {
     /** GET /teacher/students/{userId}/profile  个体学情详情（画像 + 轨迹 + 答题明细） */
     studentProfile: (p) => request('GET', `/teacher/students/${p.userId}/profile`, p, () => M().studentProfile),
 
+    /** GET /teacher/students/{userId}/wrong-questions  本课程错题详情；kpIds 为逗号分隔的多选知识点。 */
+    studentWrongQuestions: (p) => request('GET', `/teacher/students/${encodeURIComponent(p.userId)}/wrong-questions`,
+      { kpIds: p.kpIds, page: p.page, size: p.size }),
+
     /** GET /teacher/alerts  预警列表  params: { classId, level, status, type, kpId, page } */
     alerts: (p) => request('GET', '/teacher/alerts', p, (q) => {
       let list = M().teacherAlerts.slice();
@@ -915,9 +919,10 @@ window.API = (function () {
     /** POST /question/drafts/{draftId}/publish  发布草稿 → 正式题库 */
     draftPublish: (p) => request('POST', '/question/drafts/' + p.draftId + '/publish', p, () => ({ published: true })),
 
-    /** GET /question/bank  题库列表  params: { kpId, chapterId, knowledgeId, type, difficulty, keyword, page, sort, dir }
+    /** GET /question/bank  题库列表  params: { kpId, chapterId, knowledgeId, knowledgeIds, type, difficulty, keyword, page, sort, dir }
      *  2026-09-24：去掉 status 维度，改为按正确率/难度/知识点/默认 排序（sort=correctRate|difficulty|kp|default, dir=asc|desc）。
-     *  chapterId + knowledgeId 为试卷选题筛选，可组合使用；keyword 同时匹配题号、题干、章节与知识点名称。
+     *  chapterId + knowledgeIds 为试卷选题筛选，可组合使用；knowledgeIds 为逗号分隔的知识点并集，兼容原 knowledgeId 单选。
+     *  keyword 同时匹配题号、题干、章节与知识点名称。
      *  mock 数据不可用（questionBank 为空数组），仅保留兜底空结果。 */
     bank: (p) => request('GET', '/question/bank', p, () => ({ total: 0, list: [] })),
 

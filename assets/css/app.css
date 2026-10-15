@@ -1107,6 +1107,13 @@
    （可见高度由 monitor.js 按首张卡片真实高度算出，这里只负责滚动条与卡片对齐） */
 .card--alerts { align-self: start; }
 #stuList, #alList { overflow-x: hidden; min-width: 0; }
+.monitor-student-grid > .card--alerts { align-self: stretch; }
+.monitor-student-card > .card__body { position: relative; min-height: 0; }
+.monitor-student-card #stuList { position: absolute; inset: 0; overflow-y: auto; }
+@media (max-width: 1280px) {
+  .monitor-student-card > .card__body { position: static; }
+  .monitor-student-card #stuList { position: static; max-height: min(52vh,560px); }
+}
 #alList.alert-list--scroll { overflow-x: hidden; overflow-y: auto; }
 #alList.alert-list--scroll::-webkit-scrollbar { width: 6px; }
 #alList.alert-list--scroll::-webkit-scrollbar-track { background: var(--surface-3); border-radius: var(--r-full); }
@@ -1295,6 +1302,16 @@
 .exam-question-detail img { max-width: 100%; max-height: 280px; object-fit: contain; }
 .exam-footer { display: flex; align-items: center; gap: 12px; padding: 14px 18px; border-top: 1px solid var(--border); flex-wrap: wrap; }
 .exam-footer > div { flex: 1 1 250px; line-height: 1.8; }
+.exam-kp-picker { position: relative; min-width: 160px; }
+#examBankSearch > .select { width: auto; flex: 0 1 170px; min-width: 130px; }
+.exam-kp-picker__toggle { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding-right: 11px; background-image: none; list-style: none; cursor: pointer; }
+.exam-kp-picker__toggle::-webkit-details-marker { display: none; }
+.exam-kp-picker__toggle svg { width: 14px; height: 14px; flex-shrink: 0; }
+.exam-kp-picker__panel { position: absolute; top: calc(100% + 6px); left: 0; z-index: 20; width: min(300px, 75vw); padding: 10px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-sm); box-shadow: var(--shadow); }
+.exam-kp-picker__options { display: flex; flex-direction: column; gap: 2px; max-height: 240px; overflow-y: auto; margin-top: 6px; }
+.exam-kp-picker__options label { display: flex; align-items: center; gap: 8px; padding: 7px 5px; cursor: pointer; font-size: 13px; overflow-wrap: anywhere; }
+.exam-kp-picker__options label:hover { background: var(--surface-2); }
+.exam-kp-picker__options input { flex: 0 0 auto; accent-color: var(--brand-500); }
 .exam-bank-list { max-height: 55vh; overflow-x: hidden; overflow-y: auto; margin: 12px 0; }
 .exam-bank-item { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 12px; padding: 14px; border-bottom: 1px solid var(--border); }
 .exam-bank-question { display: flex; flex-direction: column; align-items: flex-start; gap: 7px; min-width: 0; width: 100%; padding: 0; border: 0; background: transparent; color: inherit; text-align: left; cursor: pointer; }
@@ -1304,6 +1321,8 @@
 .exam-bank-question .row { gap: 6px; }
 .exam-bank-item > .btn { flex-shrink: 0; }
 @media (max-width: 700px) {
+  .exam-kp-picker { flex: 1 1 100%; min-width: 0; }
+  .exam-kp-picker__panel { width: 100%; }
   .exam-settings { grid-template-columns: 1fr 1fr; }
   .exam-settings > label:first-child { grid-column: 1 / -1; }
   .exam-footer .btn { flex: 1; }
@@ -2075,22 +2094,31 @@ html.auth-skin body {
   }
 }
 /* 2026-10-14 学生端试卷测验 */
+.exam-filters { overflow: visible; position: relative; z-index: 1; }
+.exam-filters > .card__head { border-radius: var(--r-lg) var(--r-lg) 0 0; }
 .exam-filter-row { align-items: end; gap: 14px; flex-wrap: wrap; }
 .exam-search { position: relative; display: flex; flex: 1 1 280px; align-items: center; min-width: 220px; }
 .exam-search__icon { position: absolute; left: 12px; display: inline-flex; color: var(--text-3); pointer-events: none; }
 .exam-search__icon svg { width: 17px; height: 17px; }
 .exam-search input { width: 100%; min-height: 40px; padding: 8px 12px 8px 38px; border: 1px solid var(--border); border-radius: var(--r-sm); background: var(--surface); color: var(--text); }
 .exam-search input:focus { outline: 2px solid color-mix(in srgb, var(--brand-500) 22%, transparent); border-color: var(--brand-500); }
-.exam-kp-select { display: grid; gap: 5px; min-width: 220px; }
+.exam-kp-select, .exam-state-select { display: grid; gap: 5px; min-width: 0; }
+.exam-kp-select { flex: 0 1 240px; }
+.exam-state-select { flex: 0 1 160px; }
+.exam-kp-select .exam-kp-picker { min-width: 0; }
+.exam-kp-toggle { min-height: 40px; padding: 8px 36px 8px 12px; border: 1px solid var(--border); border-radius: var(--r-sm); background: var(--surface); color: var(--text); list-style: none; cursor: pointer; }
+.exam-kp-toggle::-webkit-details-marker { display: none; }
+.exam-kp-toggle:focus-visible { outline: 2px solid var(--brand-500); outline-offset: 2px; }
+.exam-kp-hint { margin: 6px 0; }
 .exam-select-wrap { position: relative; display: block; }
 .exam-select-wrap select { width: 100%; min-height: 40px; padding: 8px 36px 8px 12px; appearance: none; border: 1px solid var(--border); border-radius: var(--r-sm); background: var(--surface); color: var(--text); }
-.exam-select-wrap > span { position: absolute; top: 50%; right: 11px; display: inline-flex; transform: translateY(-50%); pointer-events: none; color: var(--text-3); }
+.exam-select-wrap > svg { position: absolute; top: 50%; right: 11px; display: inline-flex; transform: translateY(-50%); pointer-events: none; color: var(--text-3); }
 .exam-select-wrap svg { width: 16px; height: 16px; }
-.exam-paper-list { display: grid; gap: 12px; margin-top: 14px; }
-.exam-paper-card { display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 18px 20px; }
+.exam-paper-list { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; margin-top: 14px; }
+.exam-paper-card { display: flex; flex-direction: row; width: 100%; align-items: center; justify-content: space-between; gap: 18px; padding: 18px 20px; }
 .exam-paper-card__main { min-width: 0; flex: 1; }
-.exam-paper-card__title { gap: 10px; align-items: center; }
-.exam-paper-card__title h3 { margin: 0; font-size: 16px; font-weight: 700; }
+.exam-paper-card__title { gap: 10px; align-items: center; flex-wrap: wrap; }
+.exam-paper-card__title h3 { margin: 0; font-size: 16px; font-weight: 700; overflow-wrap: anywhere; }
 .exam-paper-card__meta { display: flex; gap: 7px; margin-top: 7px; color: var(--text-3); font-size: 12px; }
 .exam-kp-tags, .exam-paper-card__result { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 10px; }
 .exam-paper-card__result { align-items: center; }
@@ -2137,6 +2165,8 @@ html.auth-skin body {
 .exam-course-result strong { color: var(--brand-600); font-size: 22px; }
 .exam-course-result span { color: var(--text-3); }
 @media (max-width: 700px) {
+  .exam-filter-row > .exam-search { flex-basis: 100%; min-width: 0; }
+  .exam-kp-select, .exam-state-select { flex: 1 1 180px; }
   .exam-paper-card { align-items: stretch; flex-direction: column; padding: 15px; }
   .exam-start { width: 100%; }
   .exam-session__head { align-items: flex-start; flex-wrap: wrap; }
@@ -2145,3 +2175,17 @@ html.auth-skin body {
   .exam-result-summary { padding: 20px 14px; }
   .exam-result-actions .btn { flex: 1 1 auto; }
 }
+/* ---------- 教师待办 · 学生错题详情 ---------- */
+.dash-wrong-detail { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.dash-wrong-filter { padding-bottom: 12px; border-bottom: 1px solid var(--border); }
+.dash-wrong-filter p { margin: 8px 0 12px; }
+.dash-wrong-kps { display: flex; flex-wrap: wrap; gap: 8px; max-height: 190px; overflow-y: auto; padding: 2px; }
+.dash-wrong-kp { display: flex; align-items: center; gap: 8px; padding: 9px 12px; border: 1px solid var(--border); border-radius: 10px; cursor: pointer; font-size: 13px; max-width: 100%; overflow-wrap: anywhere; }
+.dash-wrong-kp.is-selected { border-color: var(--brand); background: var(--brand-soft); }
+.dash-wrong-kp input { flex: 0 0 auto; accent-color: var(--brand); }
+.dash-wrong-kp small { display: block; color: var(--text-3); margin-top: 3px; font-size: 11px; }
+.dash-wrong-question { min-width: 0; }
+.dash-wrong-text, .dash-wrong-answers { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.8; }
+.dash-wrong-answers { padding: 10px 12px; background: var(--bg); border-radius: 8px; font-size: 13px; }
+.profile-wrong-link { width: 100%; font: inherit; text-align: left; color: inherit; cursor: pointer; }
+.profile-wrong-link:hover, .profile-wrong-link:focus-visible { border-color: var(--brand-400); background: var(--surface-3); }

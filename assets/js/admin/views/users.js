@@ -84,6 +84,7 @@ const AdminUsers = {
 
     Modal.open({
       title: '批量删除账号',
+      closeOnBackdrop: false,
       body: `
         <div class="stack" style="gap:12px">
           <div class="callout callout--danger">${icon('alert')}
@@ -145,6 +146,7 @@ const AdminUsers = {
     const isTeacher = u.role === 'teacher';
     Modal.open({
       title: '编辑账号',
+      closeOnBackdrop: false,
       body: `
         <form class="stack" style="gap:12px" id="euForm">
           <div class="stack" style="gap:4px"><span class="fz-12 t-dim">角色（不可修改）</span>
@@ -207,6 +209,7 @@ const AdminUsers = {
   confirmDelete(userId, username) {
     Modal.open({
       title: '删除账号',
+      closeOnBackdrop: false,
       body: `
         <div class="stack" style="gap:12px">
           <div class="callout callout--danger">${icon('alert')}
@@ -265,6 +268,7 @@ const AdminUsers = {
     const step1 = () => {
       Modal.open({
         title: '批量导入 · 第 1 步 / 选角色与模板',
+        closeOnBackdrop: false,
         body: `
           <div class="stack" style="gap:14px">
             <label class="stack" style="gap:4px"><span class="fz-12 t-dim">导入角色</span>
@@ -294,6 +298,7 @@ const AdminUsers = {
     const step2 = () => {
       Modal.open({
         title: '批量导入 · 第 2 步 / 上传文件',
+        closeOnBackdrop: false,
         body: `
           <div class="stack" style="gap:14px">
             <div class="callout callout--info">当前角色：<b>${S.role === 'student' ? '学生' : '教师'}</b>。将解析文件并预览，不会立即写入。</div>
@@ -356,6 +361,7 @@ const AdminUsers = {
         </div>`;
       Modal.open({
         title: '批量导入 · 第 3 步 / 预览确认',
+        closeOnBackdrop: false,
         body: bodyHtml,
         footer: `<button class="btn btn--primary" id="go" type="button">导入 ${p.valid || 0} 条</button><button class="btn" id="back2" type="button">上一步</button><button class="btn" data-close>取消</button>`,
         onMount(ov, close) {
@@ -426,6 +432,7 @@ Router.register('users', {
     U.$('#btnCreate').addEventListener('click', () => {
       Modal.open({
         title: '新建账号',
+        closeOnBackdrop: false,
         body: `
           <form class="stack" style="gap:12px" id="cuForm">
             <label class="stack" style="gap:4px"><span class="fz-12 t-dim">角色</span>

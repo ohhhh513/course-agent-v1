@@ -2,7 +2,7 @@
 
 /* 学生端试卷测验。作答通过既有试卷接口保存，结算后复用普通 AnswerRecord。 */
 const StudentExams = {
-  papers: [], query: '', kpFilter: '',
+  papers: [], query: '', kpFilters: [], testFilter: 'all',
   attempt: null, result: null, index: 0,
   answers: {}, durations: {},
   saveQueue: Promise.resolve(), saveTimer: null, clockTimer: null,
@@ -16,7 +16,8 @@ const StudentExams = {
     clearTimeout(this.saveTimer);
     this.papers = [];
     this.query = '';
-    this.kpFilter = '';
+    this.kpFilters = [];
+    this.testFilter = 'all';
     this.attempt = null;
     this.result = null;
     this.index = 0;
@@ -47,15 +48,27 @@ const StudentExams = {
       this.papers.forEach(paper => (paper.knowledgePoints || []).forEach(kp => {
         if (kp.kpId) points.set(kp.kpId, kp.name || kp.kpId);
       }));
+      this.kpFilters = this.kpFilters.filter(id => points.has(id));
       box.innerHTML = `
         <div class="card exam-filters">
           <div class="card__head"><h3>${icon('file')} 试卷测验</h3><span class="badge badge--outline">${data.total || 0} 份已发布试卷</span></div>
           <div class="card__body row exam-filter-row">
             <label class="exam-search"><span class="exam-search__icon">${icon('search2')}</span>
               <input id="examSearch" type="search" value="${U.esc(this.query)}" placeholder="搜索试卷名称或知识点" aria-label="搜索试卷名称或知识点" autocomplete="off"></label>
-            <label class="exam-kp-select"><span class="fz-12 t-dim">按知识点筛选</span><span class="exam-select-wrap"><select id="examKpFilter">
-              <option value="">全部知识点</option>
-              ${[...points.entries()].sort((a, b) => a[1].localeCompare(b[1], 'zh')).map(([id, name]) => `<option value="${U.esc(id)}" ${this.kpFilter === id ? 'selected' : ''}>${U.esc(name)}</option>`).join('')}
+            <div class="exam-kp-select"><span class="fz-12 t-dim">按知识点筛选（可多选）</span>
+              <details class="exam-kp-picker" id="examKpFilter">
+                <summary class="exam-select-wrap exam-kp-toggle" aria-label="筛选试卷知识点（可多选）"><span data-exam-kp-label>${this.kpFilters.length ? `已选 ${this.kpFilters.length} 个知识点` : '全部知识点'}</span>${icon('chevronDown')}</summary>
+                <div class="exam-kp-picker__panel">
+                  <div class="row fz-12"><b>知识点（可多选）</b><span class="spacer"></span><button class="btn btn--ghost btn--xs" type="button" data-exam-kp-clear ${this.kpFilters.length ? '' : 'disabled'}>清空</button></div>
+                  <p class="fz-12 t-dim exam-kp-hint">试卷须同时包含全部已选知识点</p>
+                  <div class="exam-kp-picker__options">${[...points.entries()].sort((a, b) => a[1].localeCompare(b[1], 'zh')).map(([id, name]) => `<label><input type="checkbox" data-exam-kp value="${U.esc(id)}" ${this.kpFilters.includes(id) ? 'checked' : ''}><span>${U.esc(name)}</span></label>`).join('') || '<span class="fz-12 t-dim">暂无可选知识点</span>'}</div>
+                </div>
+              </details>
+            </div>
+            <label class="exam-state-select"><span class="fz-12 t-dim">测验状态</span><span class="exam-select-wrap"><select id="examStateFilter" aria-label="筛选测验状态">
+              <option value="all" ${this.testFilter === 'all' ? 'selected' : ''}>全部状态</option>
+              <option value="tested" ${this.testFilter === 'tested' ? 'selected' : ''}>已测验</option>
+              <option value="pending" ${this.testFilter === 'pending' ? 'selected' : ''}>待测验</option>
             </select>${icon('chevronDown')}</span></label>
           </div>
         </div>
@@ -64,8 +77,25 @@ const StudentExams = {
         this.query = event.target.value.trim();
         this.renderPaperCards();
       });
-      U.$('#examKpFilter', box).addEventListener('change', event => {
-        this.kpFilter = event.target.value;
+      const kpPicker = U.$('#examKpFilter', box);
+      const syncKpSelection = () => {
+        kpPicker.querySelector('[data-exam-kp-label]').textContent = this.kpFilters.length ? `已选 ${this.kpFilters.length} 个知识点` : '全部知识点';
+        kpPicker.querySelector('[data-exam-kp-clear]').disabled = this.kpFilters.length === 0;
+        this.renderPaperCards();
+      };
+      kpPicker.addEventListener('change', event => {
+        if (!event.target.matches('[data-exam-kp]')) return;
+        this.kpFilters = [...kpPicker.querySelectorAll('[data-exam-kp]:checked')].map(input => input.value);
+        syncKpSelection();
+      });
+      kpPicker.querySelector('[data-exam-kp-clear]').addEventListener('click', () => {
+        this.kpFilters = [];
+        kpPicker.querySelectorAll('[data-exam-kp]').forEach(input => { input.checked = false; });
+        syncKpSelection();
+      });
+      U.$('.exam-filters', box).addEventListener('click', event => { if (!kpPicker.contains(event.target)) kpPicker.open = false; });
+      U.$('#examStateFilter', box).addEventListener('change', event => {
+        this.testFilter = event.target.value;
         this.renderPaperCards();
       });
       this.renderPaperCards();
@@ -84,12 +114,14 @@ const StudentExams = {
     const needle = this.query.toLocaleLowerCase();
     const items = this.papers.filter(paper => {
       const kps = paper.knowledgePoints || [];
-      const matchesKp = !this.kpFilter || kps.some(kp => kp.kpId === this.kpFilter);
+      const matchesKp = this.kpFilters.every(id => kps.some(kp => kp.kpId === id));
+      const tested = Number(paper.attemptCount) > 0;
+      const matchesState = this.testFilter === 'all' || (this.testFilter === 'tested' ? tested : !tested);
       const text = [paper.title, ...kps.map(kp => kp.name)].join(' ').toLocaleLowerCase();
-      return matchesKp && (!needle || text.includes(needle));
+      return matchesKp && matchesState && (!needle || text.includes(needle));
     });
     if (!items.length) {
-      list.innerHTML = `<div class="card"><div class="card__body">${R.empty(this.papers.length ? '没有匹配的试卷' : '暂无已发布试卷', this.papers.length ? '换个名称或知识点试试' : '教师发布试卷后会显示在这里', 'search2')}</div></div>`;
+      list.innerHTML = `<div class="card"><div class="card__body">${R.empty(this.papers.length ? '没有匹配的试卷' : '暂无已发布试卷', this.papers.length ? '请调整搜索词、知识点或测验状态' : '教师发布试卷后会显示在这里', 'search2')}</div></div>`;
       return;
     }
     list.innerHTML = items.map(paper => {

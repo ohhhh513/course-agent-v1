@@ -61,13 +61,13 @@
         </div>
       </div>
 
-      <div class="grid g-12">
-        <div class="card">
+      <div class="grid g-12 monitor-student-grid">
+        <div class="card monitor-student-card">
           <div class="card__head"><h3>${icon('users')} 学生学情列表</h3><span class="spacer"></span>
             <div class="search" style="width:160px">${icon('search2')}<input class="input" id="stuSearch" placeholder="姓名 / 学号"></div>
             <div class="seg" id="stuSeg"><button data-l="all" class="is-active">全部</button><button data-l="red">红</button><button data-l="yellow">黄</button><button data-l="green">绿</button></div>
           </div>
-          <div class="card__body card__body--flush"><div class="list" id="stuList" style="max-height:min(52vh,560px);overflow-x:hidden;overflow-y:auto">${U.skeleton(300)}</div></div>
+          <div class="card__body card__body--flush"><div class="list" id="stuList">${U.skeleton(300)}</div></div>
         </div>
 
         <div class="card card--alerts">
@@ -362,7 +362,9 @@
     },
 
     openProfile(userId) {
+      const courseId = API.config.activeCourseId;
       API.teacher.studentProfile({ userId }).then(p => {
+        if (API.config.activeCourseId !== courseId) return;
         Modal.drawer({
           title: '个体学情详情 · ' + p.name,
           body: `
@@ -380,22 +382,44 @@
             </div>
           </div>
           <div style="padding:18px">
-            <p class="fz-12 t-dim" style="margin-bottom:8px">学习时间表（本周各时段活跃度）</p>
-            <div class="chart chart--sm" id="stuTimeChart"></div>
-            <p class="fz-12 t-dim" style="margin:14px 0 8px">学习活跃度趋势（学习时长 / AI 提问）</p>
-            <div class="chart chart--sm" id="stuTrendChart"></div>
+            <p class="fz-12 t-dim" style="margin-bottom:8px">学习时长趋势</p>
+            <div class="chart chart--sm" id="stuStudyTrendChart"></div>
+            <p class="fz-12 t-dim" style="margin:14px 0 8px">AI 提问次数趋势</p>
+            <div class="chart chart--sm" id="stuAiTrendChart"></div>
             <p class="fz-12 t-dim" style="margin:14px 0 8px">知识点答题明细</p>
             <div class="tbl-wrap"><table class="tbl tbl--compact" id="stuKpTbl"></table></div>
-            <p class="fz-12 t-dim" style="margin:14px 0 8px">高频错题</p>
-            <div class="stack" style="gap:8px">${(p.wrongDetail || []).map(w => `
-              <div class="file-item">${icon('alert')}<b>${U.esc(w.kp)}</b>
-                <span class="fz-11 t-dim nowrap">错 ${w.count} 次</span></div>`).join('') || '<span class="fz-12 t-dim">暂无高频错题</span>'}</div>
+            <p class="fz-12 t-dim" style="margin:14px 0 8px">高频错题 Top 5</p>
+            <div class="stack" style="gap:8px" data-profile-wrong>${U.skeleton(80)}</div>
           </div>`,
           footer: `<button class="btn" data-close>关闭</button>
             <button class="btn btn--outline" id="prMsg">${icon('message')} 发送私信</button>
             <button class="btn btn--primary" id="prReport">${icon('file')} 学情报告</button>`,
           onMount(ov, close) {
-            Charts.bar('#stuTimeChart', p.studyTimeDist.data.map((v, i) => ({ name: p.studyTimeDist.xAxis[i], value: v })), { color: Charts.tokens().brand });
+            const wrongBox = ov.querySelector('[data-profile-wrong]');
+            const loadWrongPoints = async () => {
+              wrongBox.innerHTML = U.skeleton(80);
+              try {
+                const data = await API.teacher.studentWrongQuestions({ userId, size: 1 });
+                if (!ov.isConnected || API.config.activeCourseId !== courseId) return;
+                // 接口已按累计答错次数降序排列，看板仅展示前五项。
+                wrongBox.innerHTML = (data.knowledgePoints || []).slice(0, 5).map(k => `
+                  <button type="button" class="file-item profile-wrong-link" data-profile-wrong-kp="${U.esc(k.kpId)}">
+                    ${icon('alert')}<b>${U.esc(k.name)}</b>
+                    <span class="fz-11 t-dim">${k.questionCount} 道题 · 错 ${k.wrongCount} 次</span>
+                    <span class="fz-12 t-brand nowrap">查看错题</span>${icon('chevronRight')}
+                  </button>`).join('') || '<span class="fz-12 t-dim">暂无高频错题</span>';
+              } catch (err) {
+                if (!ov.isConnected || API.config.activeCourseId !== courseId) return;
+                wrongBox.innerHTML = `<div class="callout callout--danger">高频错题加载失败：${U.esc(err.message || err)}</div>
+                  <button type="button" class="btn btn--sm" data-profile-wrong-retry>重试</button>`;
+              }
+            };
+            wrongBox.addEventListener('click', e => {
+              const button = e.target.closest('[data-profile-wrong-kp]');
+              if (button) Dash.openWrongQuestions(userId, p.name, [button.dataset.profileWrongKp]);
+              else if (e.target.closest('[data-profile-wrong-retry]')) loadWrongPoints();
+            });
+            loadWrongPoints();
             const studyMinutes = (p.activityTrend.minutes || []).map(v => Number(v) || 0);
             const minutePeak = Math.max(...studyMinutes, 0);
             let minuteInterval = 20;
@@ -407,17 +431,25 @@
             let aiInterval = 1;
             while (aiPeak > aiInterval * 4) aiInterval *= 2;
             const aiMax = aiInterval * 4;
-            Charts.line('#stuTrendChart', {
+            Charts.line('#stuStudyTrendChart', {
               xAxis: p.activityTrend.xAxis,
               series: [
                 // 学习时长：接口单位为分钟，提示框按 分'秒'' 展示（与表格口径一致）
-                { name: '学习时长', data: studyMinutes, color: Charts.tokens().brand, yAxisIndex: 0,
-                  valueFormatter: (v) => U.durMin(v) },
-                { name: 'AI 提问', data: aiQuestions, color: Charts.tokens().warn, yAxisIndex: 1 }
+                { name: '学习时长', data: studyMinutes, color: Charts.tokens().brand,
+                  valueFormatter: (v) => U.durMin(v) }
               ]
             }, {
               yAxes: [
-                { name: '分钟', min: 0, max: minuteMax, interval: minuteInterval, color: Charts.tokens().brand },
+                { name: '分钟', min: 0, max: minuteMax, interval: minuteInterval, color: Charts.tokens().brand }
+              ]
+            });
+            Charts.line('#stuAiTrendChart', {
+              xAxis: p.activityTrend.xAxis,
+              series: [
+                { name: 'AI 提问次数', data: aiQuestions, color: Charts.tokens().warn }
+              ]
+            }, {
+              yAxes: [
                 { name: '次', min: 0, max: aiMax, interval: aiInterval, color: Charts.tokens().warn }
               ]
             });
@@ -432,6 +464,7 @@
             U.$('#prMsg', ov).addEventListener('click', () => {
               Modal.open({
                 title: '向学生发送私信',
+                closeOnBackdrop: false,
                 body: `<div class="kv" style="margin-bottom:12px">
                     <div class="kv__row"><span>收件人</span><span>${U.esc(p.name)}（${p.no}）</span></div></div>
                   <textarea class="code-edit" id="msgBody" placeholder="输入改进建议 / 提醒内容…"></textarea>`,
@@ -568,6 +601,7 @@
           const a = r.list.find(x => x.alertId === b.dataset.review);
           Modal.open({
             title: '复核预警 · ' + a.student,
+            closeOnBackdrop: false,
             body: `<div class="kv" style="margin-bottom:12px">
                 <div class="kv__row"><span>预警类型</span><span>${U.esc(a.type)}</span></div>
                 <div class="kv__row"><span>关联知识点</span><span>${U.esc(a.kp)}</span></div>

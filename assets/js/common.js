@@ -308,6 +308,7 @@ const Toast = {
 
 /* ---------------- 5. Modal ---------------- */
 const Modal = {
+  // 编辑或待提交的弹窗设置 closeOnBackdrop: false，点击遮罩时静默保持打开。
   open(opts) {
     const ov = document.createElement('div');
     ov.className = 'overlay';
@@ -330,7 +331,7 @@ const Modal = {
       }
     };
     ov.addEventListener('click', e => {
-      if (e.target === ov || e.target.closest('[data-close]')) close();
+      if (e.target.closest('[data-close]') || (e.target === ov && opts.closeOnBackdrop !== false)) close();
     });
     if (opts.onMount) opts.onMount(ov, close);
     return { el: ov, close };
@@ -349,7 +350,7 @@ const Modal = {
     document.body.appendChild(ov);
     const close = () => ov.remove();
     ov.addEventListener('click', e => {
-      if (e.target === ov || e.target.closest('[data-close]')) close();
+      if (e.target.closest('[data-close]') || (e.target === ov && opts.closeOnBackdrop !== false)) close();
     });
     if (opts.onMount) opts.onMount(ov, close);
     return { el: ov, close };

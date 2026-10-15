@@ -103,6 +103,7 @@ window.__courseReady.then(() => {
   btn.addEventListener('click', () => {
     Modal.open({
       title: '新建课程',
+      closeOnBackdrop: false,
       body: `
         <div class="stack" style="gap:14px">
           <label class="stack" style="gap:4px"><span class="fz-12 t-dim">课程名称</span><input class="input" id="ncName" placeholder="如：Python 程序设计"></label>

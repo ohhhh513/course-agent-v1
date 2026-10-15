@@ -215,6 +215,7 @@
       const presetTitle = defaultReportTitle(currentCourse && currentCourse.name, maxDate);
       Modal.open({
         title: '生成学情分析报告',
+        closeOnBackdrop: false,
         body: `<div class="stack" style="gap:14px">
           <div><p class="fz-12 t-dim" style="margin-bottom:6px">报告标题</p>
             <input class="input" id="rgTitle" type="text" maxlength="256" value="${U.esc(presetTitle)}" placeholder="${U.esc(presetTitle || '学情分析报告')}">

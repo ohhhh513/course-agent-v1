@@ -8,7 +8,7 @@
           （前者只是把掌握率最低的 3 个知识点摆成"链路"，后者是 error_type 的
           GROUP BY + 硬编码文案表），详见 最新bug修改9.23.md 第十三节；
        2) 保留下来的三块（高频错题 / 共性薄弱 / 个性异常）重排为
-          「范围条 + 概览指标 + 错题排行 + 双栏明细 + 口径脚注」，避免页面空简。
+          「错题排行与标题统计 + 双栏明细」，避免页面空简。
      数值全部来自 GET /analysis/errors 的真实统计（后端未改动）；
      课程名取自 GET /course/my，仅用于展示。
      ================================================================ */
@@ -35,14 +35,13 @@
         const common = Array.isArray(commonVsIndividual.common) ? commonVsIndividual.common : [];
         const individual = Array.isArray(commonVsIndividual.individual) ? commonVsIndividual.individual : [];
 
-        /* 概览指标：全部由本页返回的数据现算，口径写在每张卡的 hint 里 */
+        /* 高频错题标题右侧的三项统计，沿用本页返回的数据口径。 */
         const wrongTimes = topWrongQuestions.reduce((sum, q) => sum + (Number(q.count) || 0), 0);
         const kpCount = new Set(topWrongQuestions.map(q => q.kpId || q.kp).filter(Boolean)).size;
         const stats = [
-          { k: '高频错题', v: topWrongQuestions.length, u: '道', hint: '按答错次数降序取前 5', c: 'var(--danger)' },
-          { k: '累计答错', v: wrongTimes, u: '次', hint: '仅统计上述这几道题', c: 'var(--warn)' },
-          { k: '涉及知识点', v: kpCount, u: '个', hint: '来自上述错题', c: 'var(--brand-500)' },
-          { k: '待关注学生', v: individual.length, u: '人', hint: '命中个体异常判定', c: 'var(--accent-500)' },
+          { k: '累计答错', v: wrongTimes, u: '次', c: 'var(--warn)' },
+          { k: '涉及知识点', v: kpCount, u: '个', c: 'var(--brand-500)' },
+          { k: '待关注学生', v: individual.length, u: '人', c: 'var(--accent-500)' },
         ];
 
         const wrongItem = (q, i) => {
@@ -108,6 +107,12 @@
 
         el.innerHTML = `
         <style>
+          #view-analysis .an-ranking-head{flex-wrap:wrap;gap:12px}
+          #view-analysis .an-summary{display:flex;flex-wrap:wrap;align-items:center;gap:12px 24px;margin-left:auto}
+          #view-analysis .an-summary__item{display:flex;align-items:baseline;gap:6px;white-space:nowrap;font-size:13px;color:var(--text-3)}
+          #view-analysis .an-summary__item b{font-family:var(--font-num);font-size:20px;line-height:1.2}
+          #view-analysis .an-summary__item small{font-size:12px}
+          @media(max-width:720px){#view-analysis .an-summary{width:100%;margin-left:0;justify-content:space-between;gap:10px}}
           #view-analysis .an-item{display:flex;gap:12px;align-items:flex-start;padding:13px 16px;border-bottom:1px solid var(--border-soft);cursor:pointer}
           #view-analysis .an-item:last-child{border-bottom:none}
           #view-analysis .an-item:hover{background:var(--surface-2)}
@@ -140,20 +145,12 @@
           #view-analysis .an-scroll::-webkit-scrollbar-thumb{background:var(--brand-300);border-radius:var(--r-full)}
         </style>
 
-        <div class="grid g-4" style="margin-bottom:16px">
-          ${stats.map(s => `
-            <div class="stat" style="--_c:${s.c}">
-              <div class="stat__label">${s.k}</div>
-              <div class="stat__value"><span data-cnt="${s.v}">0</span><small>${s.u}</small></div>
-              <div class="stat__hint">${s.hint}</div>
-            </div>`).join('')}
-        </div>
-
         <div class="card" style="margin-bottom:16px">
-          <div class="card__head">
+          <div class="card__head an-ranking-head">
             <h3>${icon('alert')} 高频错题 Top 5</h3>
-            <span class="spacer"></span>
-            <span class="badge ${topWrongQuestions.length ? 'badge--danger' : 'badge--ok'}">${topWrongQuestions.length ? topWrongQuestions.length + ' 道' : '无错题'}</span>
+            <div class="an-summary" aria-label="错题分析统计">
+              ${stats.map(s => `<div class="an-summary__item"><span>${s.k}</span><b style="color:${s.c}" data-cnt="${s.v}">0</b><small>${s.u}</small></div>`).join('')}
+            </div>
           </div>
           <div class="card__body card__body--flush">
             ${topWrongQuestions.length

@@ -197,6 +197,7 @@ const TeacherStructure = {
 
     Modal.open({
       title: '上传资源到章节目录',
+      closeOnBackdrop: false,
       body,
       footer: `<button class="btn btn--primary" id="trSubmit" type="button">${icon('upload')} 开始上传</button><button class="btn" data-close>取消</button>`,
       onMount(ov, close) {
@@ -328,6 +329,7 @@ const TeacherStructure = {
       </form>`;
     Modal.open({
       title: '编辑资源',
+      closeOnBackdrop: false,
       body,
       footer: `<button class="btn btn--primary" id="erSave" type="button">保存</button><button class="btn" data-close>取消</button>`,
       onMount(ov, close) {
@@ -387,6 +389,7 @@ const TeacherStructure = {
     const ch = id ? (this.data.chapters || []).find(c => c.id === id) : null;
     Modal.open({
       title: ch ? '修改章节' : '新建章节',
+      closeOnBackdrop: false,
       body: `
         <label class="stack" style="gap:4px"><span class="fz-12 t-dim">章节名称</span>
           <input class="input" id="chName" value="${U.esc(ch ? ch.name : '')}" placeholder="如：第1章 绪论"></label>
@@ -427,6 +430,7 @@ const TeacherStructure = {
     const kps = ch.kps || [];
     Modal.open({
       title: '章节详情',
+      closeOnBackdrop: false,
       body: `
         <div class="stack" style="gap:12px">
           <label class="stack" style="gap:4px"><span class="fz-12 t-dim">章节名称</span>
@@ -504,6 +508,7 @@ const TeacherStructure = {
 
     Modal.open({
       title: '知识点详情',
+      closeOnBackdrop: false,
       body: `
         <div class="stack" style="gap:12px">
           <label class="stack" style="gap:4px"><span class="fz-12 t-dim">知识点名称</span>
@@ -575,6 +580,7 @@ const TeacherStructure = {
     const ch = (this.data.chapters || []).find(c => c.id === chapterId);
     Modal.open({
       title: '新增知识点',
+      closeOnBackdrop: false,
       body: `
         <div class="stack" style="gap:12px">
           <label class="stack" style="gap:4px"><span class="fz-12 t-dim">所属章节（主知识点归属）</span>
