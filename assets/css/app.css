@@ -1,4 +1,4 @@
-/* ==========================================================================
+﻿/* ==========================================================================
    课程智能体系统 · 业务组件样式
    ========================================================================== */
 
@@ -641,7 +641,7 @@
   background: var(--surface-3); border-radius: var(--r-xs);
 }
 .msg__meta { display: flex; align-items: center; gap: 8px; margin-top: 6px; font-size: 12px; color: var(--text-3); }
-.msg__acts { display: flex; gap: 2px; }
+.msg__acts { display: flex; gap: 4px; }
 /* AI 建议的界面动作按钮（工具 suggest_action → 前端渲染，点击才生效） */
 .msg__agent-acts { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
 /* 只读建议的标识：与「待批准写操作」卡片（.confirm-card）在文案 + 样式上双重区分 */
@@ -650,12 +650,50 @@
   font-size: 12px; color: var(--text-3);
 }
 .msg__acts-tag svg { width: 12px; height: 12px; }
+/* 2026-10-15 第二轮调整：参考用户提供的扁平设计图重做样式
+   ① 外围方框再缩（36→28）、svg 缩（20→16），贴近图里的紧凑间距；
+   ② 默认态完全透明、无描边——只有 hover 时浮现 surface-3 底色；
+   ③ 点赞/点踩激活态：实心品牌色（绿/红）作底 + 拇指 path 填白色 0.92（正确填充示范）；
+   ④ copy 图标也具备"激活后填色"语义（点过之后短暂高亮）；
+   ⑤ 取消点赞不再弹反馈 Toast、也不再打后端（已在 agent-chat.js 处理）；
+   ⑥ Toast 改为只在「没帮助」时弹出；
+   ⑦ 默认态显式声明 [data-fb-fill] 无填充、stroke 跟随 currentColor，
+      取消点赞/点踩时去掉 .is-on 后级联自动回到描边态（无填充）。 */
 .msg__acts button {
-  width: 24px; height: 24px; border-radius: var(--r-xs); color: var(--text-3);
+  width: 28px; height: 28px; border-radius: var(--r-sm); color: var(--text-3);
   display: grid; place-items: center; transition: all var(--t-fast);
+  background: transparent; border: none; cursor: pointer; padding: 0;
 }
 .msg__acts button:hover { background: var(--surface-3); color: var(--text); }
-.msg__acts svg { width: 13px; height: 13px; }
+.msg__acts svg { width: 16px; height: 16px; }
+/* 默认/取消态：[data-fb-fill] 标记的 path 保持描边（fill:none），
+   这样取消点赞/点踩时去掉 .is-on 即可让内部矩形自动回归「无填充」的默认描边态 */
+.msg__acts svg [data-fb-fill] { fill: none; }
+/* 点赞/点踩激活：实心品牌色底，拇指 path 内部填白（不是半透明） */
+.msg__acts button[data-fb="up"].is-on,
+.msg__acts button[data-fb="down"].is-on {
+  color: #fff;
+  animation: thumb-pop .42s var(--ease, ease-out);
+}
+.msg__acts button[data-fb="up"].is-on { background: var(--brand-500, #22c55e); }
+.msg__acts button[data-fb="down"].is-on { background: #ef4444; }
+/* 正确填充示范：data-fb-fill 标记的 path（拇指主体/copy 内矩形）在激活态
+   填白色 0.92，让"实心拇指"在彩色底里清晰可见，不再只是描边。 */
+.msg__acts button[data-fb="up"].is-on svg [data-fb-fill],
+.msg__acts button[data-fb="down"].is-on svg [data-fb-fill] {
+  fill: #ffffff;
+  fill-opacity: 0.92;
+  stroke: #ffffff;
+  stroke-opacity: 0.92;
+}
+.msg__acts button[data-fb="up"].is-on svg,
+.msg__acts button[data-fb="down"].is-on svg { fill-opacity: 1; }
+@keyframes thumb-pop {
+  0%   { transform: scale(1); }
+  35%  { transform: scale(1.28); }
+  60%  { transform: scale(.94); }
+  100% { transform: scale(1); }
+}
 /* 用户气泡内的附件 chips（随消息展示，历史会话从 toolLog 重建） */
 .bubble__atts { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
 .msg--me .att-chip { background: rgba(255,255,255,.16); border-color: rgba(255,255,255,.32); color: #fff; }
@@ -2189,3 +2227,128 @@ html.auth-skin body {
 .dash-wrong-answers { padding: 10px 12px; background: var(--bg); border-radius: 8px; font-size: 13px; }
 .profile-wrong-link { width: 100%; font: inherit; text-align: left; color: inherit; cursor: pointer; }
 .profile-wrong-link:hover, .profile-wrong-link:focus-visible { border-color: var(--brand-400); background: var(--surface-3); }
+
+/* ===== 2026-10-15 v4：侧边栏拉出 —— 真正修复版 =====
+   【根因】HTML 加载顺序之前是 base → app → refresh，导致 refresh.css 在最后加载，
+          它的 .sidebar { --sidebar-w: 244px; position: relative; }、.content { max-width: 1640px }
+          全部覆盖了 app.css v2/v3 块，所以"修了很多次都没生效"。
+   【本次】三端 HTML 已把 refresh.css 移到 app.css 之前，app.css 现在最后加载，v2 块真正生效。
+          本块再针对 refresh.css 的覆盖做精确补强（确保 sidebar-w 用真实 244px、无中间缝）。
+
+   ① sidebar 拉出/收起统一 0.28s transform 过渡 + visibility 延迟隐藏，不会突然消失；
+   ② 收起时 .main 填满全屏（margin-left:0; width:100%），.content 取消 max-width:1640px 限制；
+   ③ 拉出时 .main 整体右移 = var(--sidebar-w, 244px) 让出侧边栏，0 间隙；
+   ④ 拉出时 topbar/content 内左 padding 减半（24px → 14px），消除视觉缝；
+   ⑤ 拉出按钮白底 + 品牌色描边 + 呼吸光圈，删除涟漪动画。*/
+:root { --sidebar-dur: 280ms; }
+
+/* 让 .app 形成定位上下文，并恢复宽度撑满（refresh.css 的 height:100dvh 仍生效） */
+.app { position: relative; min-width: 0; }
+
+/* sidebar：固定在屏外、transform 推走 + visibility 延迟隐藏 */
+.sidebar {
+  position: fixed; left: 0; top: 0; bottom: 0;
+  width: var(--sidebar-w, 244px);          /* refresh.css 设定为 244px */
+  height: 100vh;
+  z-index: 50;
+  transform: translateX(-100%);
+  box-shadow: none;
+  visibility: hidden;
+  will-change: transform;
+  transition:
+    transform var(--sidebar-dur) cubic-bezier(.4,0,.2,1),
+    visibility 0s linear var(--sidebar-dur);
+}
+.sidebar.is-open {
+  transform: translateX(0);
+  box-shadow: 6px 0 24px rgba(15,23,42,.18);
+  visibility: visible;
+  transition:
+    transform var(--sidebar-dur) cubic-bezier(.4,0,.2,1),
+    visibility 0s linear 0s;
+}
+
+/* 主区：收起时占满全宽；拉出时让出真实 sidebar 宽（紧贴 sidebar 右边，0 间隙） */
+.main {
+  margin-left: 0;
+  width: 100%;
+  min-width: 0;
+  position: relative;
+  z-index: 1;
+  transition: margin-left var(--sidebar-dur) cubic-bezier(.4,0,.2,1);
+}
+.app.sidebar-open .main { margin-left: var(--sidebar-w, 244px); }
+
+/* 关键：取消 refresh.css .content { max-width: 1640px; margin: 0 auto } 的居中限制。
+   .app.sidebar-open .content 选择器优先级 (0,2,0) > .content (0,1,0) → 直接覆盖。
+   收起时也取消居中：让主区真正填满 .main 容器，不再左右留白。*/
+.content { max-width: none; margin: 0; width: 100%; }
+.app.sidebar-open .content { max-width: none; margin: 0; }
+
+/* 关键②：拉出时减小 topbar / content 内部左 padding（24px → 14px），
+   消除"main 容器已 0 间隙，但 topbar 内部 padding 24px 看起来还有缝"的视觉错位。*/
+.app.sidebar-open .topbar { padding-left: 14px; }
+.app.sidebar-open .content { padding-left: 14px; }
+
+/* 半圆拉出按钮：白底 + 品牌色描边 + 呼吸光圈 */
+.sidebar__handle {
+  position: fixed;
+  left: 0; top: 50%;
+  transform: translate(-50%, -50%);
+  width: 44px; height: 44px;
+  border-radius: 50%;
+  background: #ffffff;
+  color: var(--brand-500, #6366f1);
+  display: grid; place-items: center;
+  cursor: pointer;
+  z-index: 60;
+  border: none;
+  box-shadow:
+    0 4px 14px rgba(15,23,42,.12),
+    0 0 0 0 rgba(99,102,241,.35),
+    inset 0 0 0 1.5px rgba(99,102,241,.55);
+  transition: left var(--sidebar-dur) cubic-bezier(.4,0,.2,1),
+              background var(--t-fast, 150ms);
+  animation: handle-breathe 2.6s ease-in-out infinite;
+}
+.sidebar__handle:hover {
+  box-shadow:
+    0 6px 18px rgba(99,102,241,.20),
+    0 0 0 0 rgba(99,102,241,.45),
+    inset 0 0 0 1.5px rgba(99,102,241,.75);
+}
+.sidebar__handle:focus-visible {
+  outline: 3px solid rgba(99,102,241,.45);
+  outline-offset: 2px;
+}
+.sidebar__handle svg {
+  width: 18px; height: 18px;
+  transition: transform var(--sidebar-dur) cubic-bezier(.4,0,.2,1);
+}
+.app.sidebar-open .sidebar__handle { left: var(--sidebar-w, 244px); }
+.app.sidebar-open .sidebar__handle svg { transform: rotate(180deg); }
+
+@keyframes handle-breathe {
+  0%, 100% {
+    box-shadow:
+      0 4px 14px rgba(15,23,42,.12),
+      0 0 0 0 rgba(99,102,241,.35),
+      inset 0 0 0 1.5px rgba(99,102,241,.55);
+  }
+  50% {
+    box-shadow:
+      0 4px 14px rgba(15,23,42,.12),
+      0 0 0 12px rgba(99,102,241,0),
+      inset 0 0 0 1.5px rgba(99,102,241,.55);
+  }
+}
+
+/* 窄屏：常驻显示 + 按钮隐藏 + 还原 content 居中（refresh.css 自己的窄屏规则更细） */
+@media (max-width: 900px) {
+  .sidebar {
+    position: sticky; transform: none; visibility: visible;
+    transition: none;
+  }
+  .sidebar__handle { display: none; }
+  .app.sidebar-open .content { max-width: 1640px; margin: 0 auto; }
+}

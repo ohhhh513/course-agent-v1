@@ -63,9 +63,13 @@ const ICONS = {
   edit: '<path d="M11 4H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-5"/><path d="M18.5 2.5a2.1 2.1 0 0 1 3 3L12 15l-4 1 1-4Z"/>',
   trash: '<path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14"/>',
   plus: '<path d="M12 5v14M5 12h14"/>',
-  copy: '<rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v1"/>',
-  thumbUp: '<path d="M7 21V10l4-8a2 2 0 0 1 2.8 1.8V9h4.4a2 2 0 0 1 2 2.4l-1.4 7A2 2 0 0 1 16.8 20H7Z"/><path d="M7 10H4v11h3"/>',
-  thumbDown: '<path d="M17 3v11l-4 8a2 2 0 0 1-2.8-1.8V15H5.8a2 2 0 0 1-2-2.4l1.4-7A2 2 0 0 1 7.2 4H17Z"/><path d="M17 14h3V3h-3"/>',
+  // 2026-10-15 还原：thumbUp/Down/copy/refresh 全部恢复为原版（实心拇指+独立手腕竖线、双矩形 copy、原版 refresh 圆环）
+  copy: '<rect x="9" y="9" width="12" height="12" rx="2" data-fb-fill="1"/><path d="M5 15H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v1"/>',
+  // 2026-10-15 重画：thumbUp/Down 改为"外描边 + 内部实心拇指"双 path，
+  // 激活态用 CSS 给「实心拇指」path 单独上色（fill=品牌色 0.85），
+  // 形成「带半透明色块的实心拇指」视觉——参考用户提供的扁平设计样图。
+  thumbUp: '<path d="M7 21V10l4-8a2 2 0 0 1 2.8 1.8V9h4.4a2 2 0 0 1 2 2.4l-1.4 7A2 2 0 0 1 16.8 20H7Z" data-fb-fill="1"/><path d="M7 10H4v11h3"/>',
+  thumbDown: '<path d="M17 3v11l-4 8a2 2 0 0 1-2.8-1.8V15H5.8a2 2 0 0 1-2-2.4l1.4-7A2 2 0 0 1 7.2 4H17Z" data-fb-fill="1"/><path d="M17 14h3V3h-3"/>',
   route: '<circle cx="6" cy="19" r="3"/><circle cx="18" cy="5" r="3"/><path d="M9 19h5a4 4 0 0 0 0-8H8a4 4 0 0 1 0-8h4"/>',
   network: '<rect x="9" y="2" width="6" height="5" rx="1"/><rect x="2" y="17" width="6" height="5" rx="1"/><rect x="16" y="17" width="6" height="5" rx="1"/><path d="M12 7v5M5 17v-2h14v2"/>',
   sparkle: '<path d="m12 3 1.9 5.6L19.5 10l-5.6 1.9L12 17.5l-1.9-5.6L4.5 10l5.6-1.4Z"/><path d="M19 15.5l.8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8Z"/>',
@@ -81,12 +85,92 @@ function icon(name, cls) {
   return `<svg class="ico ${cls || ''}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${path}</svg>`;
 }
 
-/** 课程智能助手标识（书本 + 助手 + 引导箭头）。独立 SVG 文件，避免渐变 id 冲突。 */
+/** 课程智能助手标识（书本 + 助手 + 引导箭头）。独立 SVG 文件，避免渐变 id 冲突。
+ *  hover 时切换到 *-wink.svg（左眼眯线版）。两份 SVG 内容静态，<img src=...> 直接加载。 */
 const ASSISTANT_MARK_SRC = 'assets/img/course-assistant.svg';
+const ASSISTANT_MARK_WINK_SRC = 'assets/img/course-assistant-wink.svg';
 
 function assistantMark(cls) {
   const c = cls ? ` class="${cls}"` : '';
-  return `<img${c} src="${ASSISTANT_MARK_SRC}" alt="" draggable="false">`;
+  // 序列化唯一 id，避免同一页多个 mark 共享 hover 状态
+  const uid = 'mk' + Math.random().toString(36).slice(2, 9);
+  return `<img${c} id="${uid}" src="${ASSISTANT_MARK_SRC}" data-default-src="${ASSISTANT_MARK_SRC}" data-wink-src="${ASSISTANT_MARK_WINK_SRC}" alt="" draggable="false">`;
+}
+
+// 页面加载后，给所有「课程智能助手 SVG 图片」绑定 hover 切换 wink。
+// 1) 自动给所有 <img src="assets/img/course-assistant.svg"> 补上 data 属性；
+// 2) 用 document 级事件委托（mouseover/mouseout 冒泡）一次性覆盖：
+//    - 静态 brand 区域（HTML 直接写的 <img>）
+//    - 动态注入的 nav-item（teacher/student/admin 的 app.js 调 navIcon('bot')）
+//    - 聊天面板 AI 头像（agent-chat.js 多次调 assistantMark()）
+// capture 阶段触发，抢在粒子动画之前，确保「悬浮触发粒子」的同时表情一定切换。
+function bindAssistantMarkHover() {
+  if (bindAssistantMarkHover._bound) return;
+  bindAssistantMarkHover._bound = true;
+
+  // 把所有「指向默认 mark svg」的 <img> 标记为可切换对象。
+  // 静态 HTML 里的 <img> 没 data 属性，这里统一补上；动态生成的
+  // assistantMark() 已经在 HTML 模板里写好了 data-*，无需重复处理。
+  const defaultSrc = ASSISTANT_MARK_SRC;
+  const winkSrc = ASSISTANT_MARK_WINK_SRC;
+  const markImgs = document.querySelectorAll('img');
+  markImgs.forEach((img) => {
+    const src = img.getAttribute('src') || '';
+    if (src !== defaultSrc) return;
+    if (!img.dataset.defaultSrc) img.dataset.defaultSrc = defaultSrc;
+    if (!img.dataset.winkSrc)    img.dataset.winkSrc    = winkSrc;
+  });
+
+  const swap = (img, toWink) => {
+    if (!img || !img.dataset) return;
+    const target = toWink ? img.dataset.winkSrc : img.dataset.defaultSrc;
+    if (!target || img.dataset._src === target) return;
+    img.dataset._src = target;
+    img.src = target;
+  };
+  const handle = (e) => {
+    const t = e.target;
+    if (!t || t.tagName !== 'IMG' || !t.dataset || !t.dataset.winkSrc) return;
+    const related = e.relatedTarget;
+    if (e.type === 'mouseover') {
+      // mouseover 也会因进入子元素触发，relatedTarget 是来自的父/兄弟；用 contains 过滤抖动
+      if (related && t.contains && t.contains(related)) return;
+      swap(t, true);
+    } else {
+      if (related && t.contains && t.contains(related)) return;
+      swap(t, false);
+    }
+  };
+  document.addEventListener('mouseover', handle, true);
+  document.addEventListener('mouseout', handle, true);
+
+  // 后续动态注入的 mark 也要补 data 属性；用 MutationObserver 兜底。
+  // 性能开销：仅监听 attribute 变化，命中 src 等于 defaultSrc 的 img 才处理。
+  if (typeof MutationObserver !== 'undefined') {
+    const mo = new MutationObserver((muts) => {
+      muts.forEach((m) => {
+        m.addedNodes.forEach((n) => {
+          if (!n || n.nodeType !== 1) return;
+          if (n.tagName === 'IMG') {
+            const src = n.getAttribute('src') || '';
+            if (src === defaultSrc) {
+              if (!n.dataset.defaultSrc) n.dataset.defaultSrc = defaultSrc;
+              if (!n.dataset.winkSrc)    n.dataset.winkSrc    = winkSrc;
+            }
+          } else if (n.querySelectorAll) {
+            n.querySelectorAll('img').forEach((img) => {
+              const src = img.getAttribute('src') || '';
+              if (src === defaultSrc) {
+                if (!img.dataset.defaultSrc) img.dataset.defaultSrc = defaultSrc;
+                if (!img.dataset.winkSrc)    img.dataset.winkSrc    = winkSrc;
+              }
+            });
+          }
+        });
+      });
+    });
+    mo.observe(document.documentElement, { childList: true, subtree: true });
+  }
 }
 
 function navIcon(name) {
@@ -584,3 +668,76 @@ window.TagPicker = {
     return { getTagIds: () => [...selected] };
   }
 };
+
+/* ---------------- 7. 侧边栏拉出（2026-10-15） ----------------
+   三端（teacher / student / admin）共享：
+   ① 默认收起：aside.sidebar translateX(-100%)；
+   ② 点击 .sidebar__handle → 在 .app 上加 sidebar-open，sidebar 滑入；
+   ③ 点击 .main / .topbar / 任意非侧边栏区域 → 自动收起；
+   ④ 拉出时 .app::before 播放一次性涟漪动画（CSS 配合）。 */
+const Sidebar = {
+  /** 注入拉出按钮并绑定事件。appRoot = `.app` 元素。 */
+  init(appRoot) {
+    if (!appRoot) return;
+    if (appRoot.dataset.sidebarInited === '1') return;
+    appRoot.dataset.sidebarInited = '1';
+
+    // 注入半圆拉出按钮（避免每个 HTML 文件都改一遍）
+    let handle = appRoot.querySelector(':scope > .sidebar__handle');
+    if (!handle) {
+      handle = document.createElement('button');
+      handle.type = 'button';
+      handle.className = 'sidebar__handle';
+      handle.title = '展开 / 收起侧边栏';
+      handle.setAttribute('aria-label', '展开 / 收起侧边栏');
+      handle.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 6 15 12 9 18"/></svg>';
+      appRoot.appendChild(handle);
+    }
+
+    const sidebar = appRoot.querySelector(':scope > .sidebar');
+    if (!sidebar) return;
+
+    const setOpen = (open) => {
+      if (open) {
+        appRoot.classList.add('sidebar-open');
+        sidebar.classList.add('is-open');
+      } else {
+        appRoot.classList.remove('sidebar-open');
+        sidebar.classList.remove('is-open');
+      }
+      handle.setAttribute('aria-expanded', open ? 'true' : 'false');
+    };
+
+    handle.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const willOpen = !appRoot.classList.contains('sidebar-open');
+      setOpen(willOpen);
+    });
+
+    // 点击侧边栏内部不冒泡到 appRoot，但**不再监听「点其他区域收起」**：
+    // 用户要求只有按钮 / Esc 触发切换。
+    sidebar.addEventListener('click', (e) => e.stopPropagation());
+
+    // Esc 收起
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && appRoot.classList.contains('sidebar-open')) {
+        setOpen(false);
+      }
+    });
+  }
+};
+
+/* 自启动：DOM 就绪后扫所有 .app 容器初始化（teacher / student / admin 三端零改动） */
+if (typeof document !== 'undefined') {
+  const boot = () => {
+    if (typeof U === 'undefined' || !U.$$) return;
+    U.$$('.app').forEach((el) => Sidebar.init(el));
+    // 智能助手标识：给所有 mark 绑定 hover 切换 wink
+    if (typeof bindAssistantMarkHover === 'function') bindAssistantMarkHover();
+  };
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', boot, { once: true });
+  } else {
+    boot();
+  }
+}

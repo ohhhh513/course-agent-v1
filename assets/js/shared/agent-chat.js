@@ -918,7 +918,8 @@ window.AgentChatView = (function () {
         }
         const mName = { lecture: '讲授法', guided: '引导式', case: '案例式', heuristic: '启发式', fun: '趣味式' }[m.method] || '';
         const cites = (m.citations || []);
-        return `<div class="msg msg--ai"><div class="msg__av msg__av--mark">${assistantMark()}</div>
+        const toolLogJson = U.esc(JSON.stringify(m.toolLog || []));
+        return `<div class="msg msg--ai" data-tool-log="${toolLogJson}"><div class="msg__av msg__av--mark">${assistantMark()}</div>
           <div class="msg__wrap">
             <div class="bubble">${this.toolsPanelHtml(m.toolLog, false)}<div class="bubble__body">${mdToHtml(m.content)}</div>
               ${cites.length ? `
@@ -947,9 +948,10 @@ window.AgentChatView = (function () {
               <span>${now}</span>
               <span class="spacer"></span>
               <span class="msg__acts">
-                <button data-fb="up" title="有帮助">${icon('thumbUp')}</button>
-                <button data-fb="down" title="没帮助">${icon('thumbDown')}</button>
-                <button data-copy="1" title="复制回答">${icon('copy')}</button>
+                <button data-fb="up" title="有帮助" aria-label="有帮助">${icon('thumbUp')}</button>
+                <button data-fb="down" title="没帮助" aria-label="没帮助">${icon('thumbDown')}</button>
+                <button data-copy="1" title="复制回答" aria-label="复制回答">${icon('copy')}</button>
+                <button data-regen="1" title="重新生成回答并回滚已执行动作" aria-label="重新生成">${icon('refresh')}</button>
               </span>
             </div>
           </div></div>`;
@@ -1085,8 +1087,68 @@ window.AgentChatView = (function () {
           if (b.dataset.bound) return;
           b.dataset.bound = '1';
           b.addEventListener('click', () => {
-            API.ai.feedback({ type: b.dataset.fb });
-            Toast.ok('反馈已提交', '将用于 AI 知识库迭代优化');
+            // 2026-10-15：纯前端点赞状态（不写后端）；互斥：同消息内 up/down 二选一
+            const wrap = b.closest('.msg__acts');
+            const isUp = b.dataset.fb === 'up';
+            const otherSel = isUp ? '[data-fb="down"]' : '[data-fb="up"]';
+            const other = wrap && wrap.querySelector(otherSel);
+            const wasOn = b.classList.contains('is-on');
+            if (wasOn) {
+              // 取消点赞/点踩：仅清状态，不打后端、不弹反馈 Toast、内部矩形填充同步回归默认（2026-10-15 用户反馈）
+              b.classList.remove('is-on');
+              return;
+            }
+            b.classList.add('is-on');
+            if (other) other.classList.remove('is-on');
+            // 仍打后端（占位 TODO 端点 + 字段对齐 messageId/feedback）
+            const msgEl = b.closest('.msg');
+            const mid = msgEl && (msgEl.dataset.msgId || '');
+            try {
+              API.ai.feedback({ messageId: mid, feedback: isUp ? 1 : -1 });
+            } catch (_) { /* 旧占位端点失败不打扰用户 */ }
+            // 2026-10-15 调整：反馈 Toast 改为只在「没帮助」时弹出，帮助性反馈不打扰用户
+            if (!isUp) {
+              Toast.ok('反馈已提交', '将用于 AI 知识库迭代优化');
+            }
+          });
+        });
+        // 2026-10-15：重新生成 —— 删除当前 AI 消息的 DOM 节点 + 回滚 save_question_draft 产生的草稿，
+        // 复用 ask() 重新发起同一问题（用户消息文本从最近的 .msg--me 取）。
+        U.$$('[data-regen]', U.$('#chatLog')).forEach(b => {
+          if (b.dataset.bound) return;
+          b.dataset.bound = '1';
+          b.addEventListener('click', async () => {
+            if (b.dataset.loading === '1' || this.busy) {
+              Toast.info('正在生成中', '请等待当前回答完成');
+              return;
+            }
+            const aiMsg = b.closest('.msg');
+            if (!aiMsg) return;
+            const userMsg = aiMsg.previousElementSibling;
+            const textEl = userMsg && userMsg.classList.contains('msg--me')
+              ? userMsg.querySelector('.msg__user-text') : null;
+            const question = textEl ? textEl.textContent.trim() : '';
+            if (!question) { Toast.warn('无法重新生成', '没有找到原问题文本'); return; }
+
+            // 1) 从 tool_log 提取所有 save_question_draft 成功调用的 draft_id，回滚
+            const toolLog = JSON.parse(aiMsg.dataset.toolLog || '[]');
+            const draftIds = toolLog
+              .filter(x => x && x.kind === 'tool' && x.name === 'save_question_draft' && x.ok === true)
+              .map(x => x.draft_id || x.result && x.result.draft_id)
+              .filter(Boolean);
+            for (const did of draftIds) {
+              try { await API.question.draftDelete({ draftId: did }); }
+              catch (_) { /* 删除失败不阻塞重新生成 */ }
+            }
+
+            // 2) 删除当前 AI 消息 DOM
+            aiMsg.remove();
+
+            // 3) 重新发起 ask：会渲染新 user + 流式 AI 气泡
+            this.ask(question);
+            if (draftIds.length) {
+              Toast.info('已回滚', `回滚 ${draftIds.length} 个由本轮产生的草稿`);
+            }
           });
         });
         // 复制回答（此前是死按钮：渲染了图标但没有任何事件与剪贴板调用）

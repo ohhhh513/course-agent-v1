@@ -583,7 +583,8 @@ window.API = (function () {
     rejectAction: (p) => request('POST', `/agent/actions/${p.actionId}/reject`, {},
       () => ({ actionId: p.actionId, status: 'rejected', idempotent: false })),
 
-    /** POST /ai/feedback  对回答点赞/点踩，用于知识库迭代 */
+    /** POST /ai/feedback  对回答点赞/点踩，用于知识库迭代
+     *  后端 ai.py 的 FeedbackReq 契约：{messageId: str, feedback: 1|-1} */
     feedback: (p) => request('POST', '/ai/feedback', p, () => ({ accepted: true }))
   };
 

@@ -70,9 +70,15 @@
     fill="url(#agent)"
   />
   <rect x="189" y="160" width="132" height="77" rx="32" fill="#FFFFFF"/>
+
+  <!-- 默认眼：两个圆角矩形 -->
   <rect x="212" y="183" width="16" height="27" rx="8" fill="#0751A0"/>
   <rect x="284" y="183" width="16" height="27" rx="8" fill="#0751A0"/>
+
+  <!-- 嘴：微笑弧 -->
   <path d="M243 216 Q256 228 269 216" fill="none" stroke="#0751A0" stroke-width="7" stroke-linecap="round"/>
+
+  <!-- 天线：两条斜线 -->
   <path
     d="
        M211 99 L229 117

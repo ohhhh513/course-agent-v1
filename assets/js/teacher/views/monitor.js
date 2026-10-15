@@ -31,11 +31,11 @@
         <div class="card__head card__head--heat">
           <h3 id="heatTitle">${icon('grid')} 知识点 × 学生 学习完成热力图</h3>
           <span class="spacer"></span>
+          <div class="search heat-stu-search" id="heatStuSearchWrap" hidden style="width:188px">${icon('search2')}<input class="input" id="heatStuSearch" placeholder="搜索学生姓名 / 学号"></div>
           <div class="seg" id="heatModeSeg">
             <button type="button" data-mode="heatmap" class="is-active">热力图</button>
             <button type="button" data-mode="bar">单人柱形图</button>
           </div>
-          <div class="search heat-stu-search" id="heatStuSearchWrap" hidden style="width:188px">${icon('search2')}<input class="input" id="heatStuSearch" placeholder="搜索学生姓名 / 学号"></div>
           <select class="input select select--sm" id="heatType" style="width:164px">
             <option value="completion">学习完成热力图</option>
             <option value="mastery">知识点掌握热力图</option>
