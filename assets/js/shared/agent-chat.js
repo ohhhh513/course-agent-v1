@@ -368,7 +368,7 @@ window.AgentChatView = (function () {
       badges: '',
       placeholder: '输入你的问题',
       welcomeTitle: '今天帮你做些什么？',
-      welcomeText: '从下面的技能开始，或直接写下你的问题。',
+      welcomeText: '点击加号选择快捷询问，或直接写下你的问题。',
       applyAction: () => false,
       // 接口来源：默认走 /ai/*（学生 / 教师答疑）；管理员治理流传 { api: API.adminAgent }
       // 切到 /admin/agent/* —— 事件协议完全一致，只是端点与角色闸门不同。
@@ -378,7 +378,7 @@ window.AgentChatView = (function () {
       // 关闭的端**不渲染**上传按钮，避免出现点了没反应的占位按钮。
       // 上限与后端 services/attachments.py 保持一致。
       allowUpload: false,
-      // 输入框下方的技能按钮。选中后收成输入框里的标签，下方换成该技能的常用说法。
+      // 加号菜单中的快捷功能。选中后显示输入框标签，菜单内提供该功能的常用说法。
       // 说法只填入输入框，不自动发送。
       skills: [],
     }, config || {});
@@ -399,6 +399,8 @@ window.AgentChatView = (function () {
       _settled: false,      // 本轮是否已收尾（finish/fail），防止 abort 与 done 双重渲染
 
       render() {
+        this._closeAddMenu();
+        this._menuEvents?.abort();
         this._clearPreviewUrls();
         const el = U.$(cfg.containerId);
         if (!el) return;
@@ -425,12 +427,16 @@ window.AgentChatView = (function () {
                     <div class="skill-chip" id="skillChip" hidden></div>
                     <textarea id="chatInput" rows="3" aria-label="输入你的问题" placeholder="${U.esc(cfg.placeholder)}"></textarea>
                     <div class="composer__acts">
-                      ${cfg.allowUpload ? `<button class="composer__upload" id="chatUpload" type="button" title="上传图片或文件" aria-label="上传图片或文件">${icon('plus')}</button>` : ''}
+                      ${cfg.allowUpload || cfg.skills.length ? `<button class="composer__upload" id="chatAdd" type="button" title="添加文件或选择快捷询问" aria-label="添加文件或选择快捷询问" popovertarget="chatAddMenu" aria-controls="chatAddMenu" aria-expanded="false">${icon('plus')}</button>` : ''}
                       <button class="composer__send" id="chatSend" type="button" aria-label="发送">${icon('arrowUp')}</button>
                     </div>
                   </div>
-                  <div class="skill-row" id="skillRow" ${(cfg.skills || []).length ? '' : 'hidden'}></div>
                 </div>
+                ${cfg.allowUpload || cfg.skills.length ? `<div class="composer-menu" id="chatAddMenu" popover="auto" role="dialog" aria-label="添加文件或选择快捷询问">
+                  <h4 class="composer-menu__title">添加</h4>
+                  ${cfg.allowUpload ? `<button class="composer-menu__item" id="chatUpload" type="button">${icon('file')}<span>上传图片或文件</span></button>` : ''}
+                  <div id="chatShortcuts"></div>
+                </div>` : ''}
                 ${cfg.allowUpload ? '<input type="file" id="chatFile" multiple hidden accept=".txt,.md,.csv,.json,.xlsx,.docx,.pdf,.jpg,.jpeg,.png,.gif,.webp,image/jpeg,image/png,image/gif,image/webp">' : ''}
               </div>
             </div>
@@ -488,14 +494,7 @@ window.AgentChatView = (function () {
 
         // 附件上传（仅开启 allowUpload 的端）：选文件 → chips → 随本轮问题提交
         if (cfg.allowUpload) this._bindUpload();
-
-        // 技能按钮：点技能换成常用说法；点说法只填入输入框。
-        U.$('#skillRow')?.addEventListener('click', e => {
-          const skillBtn = e.target.closest('[data-skill]');
-          if (skillBtn) { this._selectSkill(skillBtn.dataset.skill); return; }
-          const promptBtn = e.target.closest('[data-prompt]');
-          if (promptBtn) this._applySkillPrompt(Number(promptBtn.dataset.prompt));
-        });
+        this._bindAddMenu(el);
         U.$('#skillChip')?.addEventListener('click', e => {
           if (e.target.closest('[data-skill-clear]')) this._clearSkill();
         });
@@ -650,11 +649,79 @@ window.AgentChatView = (function () {
         const btn = U.$('#chatUpload');
         const input = U.$('#chatFile');
         if (!btn || !input) return;
-        btn.addEventListener('click', () => input.click());
+        btn.addEventListener('click', () => {
+          this._closeAddMenu();
+          input.click();
+        });
         input.addEventListener('change', () => {
           const picked = Array.from(input.files || []);
           input.value = '';                  // 允许再次选择同一个文件
           this._addFiles(picked);
+        });
+      },
+
+      _closeAddMenu() {
+        const menu = U.$(cfg.containerId)?.querySelector('#chatAddMenu');
+        if (menu?.matches(':popover-open')) menu.hidePopover();
+      },
+
+      _bindAddMenu(root) {
+        const menu = root.querySelector('#chatAddMenu');
+        const trigger = root.querySelector('#chatAdd');
+        if (!menu || !trigger) return;
+        this._menuEvents = new AbortController();
+        const signal = this._menuEvents.signal;
+        const position = () => {
+          const rect = trigger.getBoundingClientRect();
+          const width = document.documentElement.clientWidth;
+          const height = document.documentElement.clientHeight;
+          const menuWidth = Math.min(340, width - 24);
+          const above = rect.top >= 180 || rect.top > height - rect.bottom;
+          menu.style.width = `${menuWidth}px`;
+          menu.style.left = `${Math.max(12, Math.min(rect.left, width - menuWidth - 12))}px`;
+          menu.style.top = above ? 'auto' : `${rect.bottom + 8}px`;
+          menu.style.bottom = above ? `${height - rect.top + 8}px` : 'auto';
+          menu.style.maxHeight = `${Math.max(60, Math.min(420, (above ? rect.top : height - rect.bottom) - 20))}px`;
+        };
+        menu.addEventListener('beforetoggle', e => { if (e.newState === 'open') position(); });
+        menu.addEventListener('toggle', e => trigger.setAttribute('aria-expanded', String(e.newState === 'open')));
+        window.addEventListener('resize', () => { if (menu.matches(':popover-open')) position(); }, {signal});
+        root.addEventListener('scroll', () => { if (menu.matches(':popover-open')) position(); }, {capture: true, signal});
+        menu.addEventListener('click', e => {
+          const skillBtn = e.target.closest('[data-skill]');
+          if (skillBtn) {
+            this._selectSkill(skillBtn.dataset.skill);
+            menu.querySelector('[data-prompt]')?.focus();
+            return;
+          }
+          const promptBtn = e.target.closest('[data-prompt]');
+          if (promptBtn) {
+            this._closeAddMenu();
+            this._applySkillPrompt(Number(promptBtn.dataset.prompt));
+            return;
+          }
+          if (e.target.closest('[data-skill-back]')) {
+            this.activeSkillId = null;
+            this._paintSkill();
+            menu.querySelector('[data-skill]')?.focus();
+          }
+        });
+        root.addEventListener('keydown', e => {
+          if (e.key === 'Escape' && menu.matches(':popover-open')) {
+            e.preventDefault(); e.stopPropagation();
+            this._closeAddMenu(); trigger.focus();
+          }
+        }, {capture: true, signal});
+        menu.addEventListener('keydown', e => {
+          if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(e.key)) {
+            const buttons = [...menu.querySelectorAll('button:not(:disabled)')];
+            if (!buttons.length) return;
+            e.preventDefault();
+            const index = buttons.indexOf(document.activeElement);
+            const next = e.key === 'Home' ? 0 : e.key === 'End' ? buttons.length - 1
+              : (index + (e.key === 'ArrowDown' ? 1 : -1) + buttons.length) % buttons.length;
+            buttons[next].focus();
+          }
         });
       },
 
@@ -884,8 +951,10 @@ window.AgentChatView = (function () {
       /** 当前登录用户头像（与顶栏 user-chip 同一数据源：Auth.currentUser） */
       _meAvatar() {
         const u = (window.Auth && Auth.currentUser) ? Auth.currentUser() : null;
+        const ch = (u && (u.avatarChar || (u.name ? u.name.charAt(0) : null))) || '我';
         return {
-          ch: (u && (u.avatarChar || (u.name ? u.name.charAt(0) : null))) || '我',
+          userId: u?.userId || '',
+          html: window.Auth && typeof Auth.avatarHtml === 'function' ? Auth.avatarHtml(u) : U.esc(ch),
           color: (u && u.avatarColor) || ''
         };
       },
@@ -899,7 +968,7 @@ window.AgentChatView = (function () {
         if (m.role === 'me') {
           const me = this._meAvatar();
           const atts = this.attachChipsOf(m);
-          return `<div class="msg msg--me"><div class="msg__av"${me.color ? ` style="background:${me.color}"` : ''}>${U.esc(me.ch)}</div>
+          return `<div class="msg msg--me"><div class="msg__av" data-user-avatar="${U.esc(me.userId)}"${me.color ? ` style="background:${U.esc(me.color)}"` : ''}>${me.html}</div>
             <div class="msg__wrap"><div class="bubble"><span class="msg__user-text">${U.esc(m.content)}</span>${atts.length ? `
               <span class="bubble__atts">${atts.map(a => {
                 if (this._isImageFile(a.name)) {
@@ -1260,18 +1329,16 @@ window.AgentChatView = (function () {
       _paintSkill() {
         const skills = cfg.skills || [];
         const skill = this._activeSkill();
-        const row = U.$('#skillRow');
+        const shortcuts = U.$('#chatShortcuts');
         const chip = U.$('#skillChip');
         const input = U.$('#chatInput');
-        if (row) {
-          row.hidden = !skills.length;
-          row.innerHTML = !skills.length ? '' : (skill
-            ? (skill.prompts || []).map((p, i) =>
-              `<button type="button" class="skill-pill skill-pill--prompt" data-prompt="${i}"><span>${U.esc(p.label)}</span>${icon('arrowRight')}</button>`
-            ).join('')
-            : skills.map(s =>
-              `<button type="button" class="skill-pill" data-skill="${U.esc(s.id)}">${icon(s.icon)}<span>${U.esc(s.label)}</span></button>`
-            ).join(''));
+        if (shortcuts) {
+          shortcuts.hidden = !skills.length;
+          shortcuts.innerHTML = !skills.length ? '' : `<div class="composer-menu__section">
+            <span>${skill ? U.esc(skill.label) : '快捷询问'}</span>
+            ${skill ? '<button type="button" class="composer-menu__back" data-skill-back>返回</button>' : ''}</div>` + (skill
+              ? (skill.prompts || []).map((p, i) => `<button type="button" class="composer-menu__item" data-prompt="${i}">${icon('message')}<span>${U.esc(p.label)}</span></button>`).join('')
+              : skills.map(s => `<button type="button" class="composer-menu__item" data-skill="${U.esc(s.id)}">${icon(s.icon)}<span>${U.esc(s.label)}</span>${icon('chevronRight')}</button>`).join(''));
         }
         if (chip) {
           if (!skill) {
@@ -1290,6 +1357,7 @@ window.AgentChatView = (function () {
           Toast.info('请先停止当前回答，再切换会话');
           return;
         }
+        this._closeAddMenu();
         this._uiNavigationRevision = (this._uiNavigationRevision || 0) + 1;
         this.sessionId = sid || 'new';
         this._attachmentRestoreToken += 1;
@@ -1612,6 +1680,9 @@ window.AgentChatView = (function () {
       },
 
       _setSendMode(busy) {
+        const add = U.$('#chatAdd');
+        if (add) add.disabled = !!busy;
+        if (busy) this._closeAddMenu();
         const btn = U.$('#chatSend');
         if (!btn) return;
         btn.innerHTML = icon(busy ? 'square' : 'arrowUp');

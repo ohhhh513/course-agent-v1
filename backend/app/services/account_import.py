@@ -23,6 +23,7 @@ from app.models.graph import LearningPath
 from app.models.practice import AnswerRecord, PracticeSession
 from app.models.user import TeacherClass, User
 from app.models.user_course import UserCourse
+from app.services.user_profiles import delete_profile
 
 MAX_IMPORT_ROWS = 5000          # 向导单次导入上限
 MAX_ASSIST_ROWS = 200           # 智能助手「上传文件 → 录入账号」单次上限（更大量走向导）
@@ -347,6 +348,7 @@ def delete_user_cascade(db, user) -> dict:
     # 课程成员 / 教师班级关联
     stats["userCourses"] = db.query(UserCourse).filter(UserCourse.user_id == uid).delete(synchronize_session=False)
     stats["teacherClasses"] = db.query(TeacherClass).filter(TeacherClass.teacher_user_id == uid).delete(synchronize_session=False)
+    stats["accountProfiles"] = delete_profile(db, uid)
 
     db.delete(user)
     return stats

@@ -8,10 +8,15 @@
    ================================================================ */
 
 const AdminUsers = {
+  refreshProfiles() {
+    if (Router.current === 'users' && !document.querySelector('.overlay') && !this.pickedIds().length) this.load();
+  },
   load() {
+    const request = this._request = (this._request || 0) + 1;
     const role = U.$('#fRole').value;
     const keyword = U.$('#fKey').value.trim();
     API.admin.listUsers({ role, keyword }).then(r => {
+      if (request !== this._request) return;
       const list = (r && r.list) || [];
       const tb = U.$('#userTable tbody');
       if (!list.length) {
@@ -23,7 +28,7 @@ const AdminUsers = {
         <tr data-uid="${U.esc(u.userId)}" data-user="${U.esc(u.username)}">
           <td><input type="checkbox" data-pick="${U.esc(u.userId)}" title="勾选后可批量删除"></td>
           <td><b>${U.esc(u.username)}</b></td>
-          <td>${U.esc(u.name)}</td>
+          <td><div class="account-person"><span class="avatar avatar--sm">${Auth.avatarHtml(u)}</span><div><b data-account-name>${U.esc(u.name)}</b>${u.signature ? `<span class="account-person__signature" title="${U.esc(u.signature)}">${U.esc(u.signature)}</span>` : ''}</div></div></td>
           <td><span class="badge ${u.role === 'teacher' ? 'badge--brand' : 'badge--outline'}">${u.role === 'teacher' ? '教师' : '学生'}</span></td>
           <td>${U.esc(u.className || u.dept || '—')}</td>
           <td class="mono fz-11">${U.esc(u.userId)}</td>
@@ -47,6 +52,7 @@ const AdminUsers = {
         });
       });
     }).catch(err => {
+      if (request !== this._request) return;
       U.$('#userTable tbody').innerHTML = `<tr><td colspan="7" class="t-danger">${U.esc(err.message || '加载失败')}</td></tr>`;
       AdminUsers.syncPickAll();
     });
@@ -78,7 +84,7 @@ const AdminUsers = {
     const brief = rows.map(tr => {
       const tds = tr.querySelectorAll('td');
       return `<tr><td class="mono fz-11">${U.esc(tr.dataset.user)}</td>
-        <td>${U.esc(tds[2] ? tds[2].innerText : '')}</td>
+        <td>${U.esc(tds[2]?.querySelector('[data-account-name]')?.textContent || '')}</td>
         <td class="t-dim">${U.esc(tds[4] ? tds[4].innerText : '')}</td></tr>`;
     }).join('');
 
@@ -412,7 +418,11 @@ const AdminUsers = {
   },
 };
 
+window.addEventListener('focus', () => AdminUsers.refreshProfiles());
+window.addEventListener('profileupdated', () => AdminUsers.refreshProfiles());
+
 Router.register('users', {
+  update: () => AdminUsers.load(),
   title: '账号管理',
   mount() {
     // 筛选与新建按钮：mount 只执行一次，事件不会重复绑定

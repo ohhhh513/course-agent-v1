@@ -55,6 +55,7 @@ desktop.ini
 *.tmp
 backend/app/data/vector/
 backend/app/data/st/uploads/
+backend/app/data/avatars/
 backend/app/data/st/system_code_index.json
 backend/.tmp_cid
 

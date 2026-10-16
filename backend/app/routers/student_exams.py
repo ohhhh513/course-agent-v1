@@ -18,6 +18,7 @@ from app.models.intervention import TeacherClassDashboard
 from app.models.practice import AnswerRecord, PracticeSession
 from app.models.question import Question
 from app.models.user import User
+from app.models.user_course import UserCourse
 from app.schemas.common import ok
 from app.services.blank_questions import clip, grade_submission, is_blank_type, student_view
 from app.services.exam_papers import DATA_TYPE as PAPER_DATA_TYPE
@@ -58,7 +59,8 @@ def _attempt_rows(db: Session, user_id: str, course_id: str):
         TeacherClassDashboard.data_type == ATTEMPT_DATA_TYPE,
         func.json_extract(TeacherClassDashboard.data_json, "$.userId") == user_id,
         func.json_extract(TeacherClassDashboard.data_json, "$.courseId") == course_id,
-    ).order_by(TeacherClassDashboard.updated_at.desc()).all()
+    ).order_by(func.json_extract(TeacherClassDashboard.data_json, "$.finishedAt").desc(),
+               TeacherClassDashboard.updated_at.desc(), TeacherClassDashboard.id.desc()).all()
 
 
 def _kp_names(db: Session, course_id: str) -> dict[str, str]:
@@ -84,7 +86,7 @@ def _paper_attempt_summary(rows: list[TeacherClassDashboard], paper_id: str) -> 
     matching = [_data(row) for row in rows if _data(row).get("paperId") == paper_id]
     if not matching:
         return {"attemptCount": 0, "lastScore": None, "lastAccuracy": None,
-                "lastAttemptAt": "", "inProgress": False}
+                "lastAttemptAt": "", "lastAttemptId": "", "inProgress": False}
     finished = [attempt for attempt in matching if attempt.get("status") == "finished"]
     running = next((attempt for attempt in matching if attempt.get("status") == "running"), None)
     latest = finished[0] if finished else {}
@@ -96,7 +98,71 @@ def _paper_attempt_summary(rows: list[TeacherClassDashboard], paper_id: str) -> 
         "lastAttemptAt": latest.get("finishedAt") or "",
         "inProgress": running is not None,
         "attemptId": running.get("attemptId", "") if running else "",
+        "lastAttemptId": latest.get("attemptId", ""),
     }
+
+
+def _class_ranking(db: Session, user: User, course_id: str, paper_id: str) -> dict:
+    """仅排名当前课程同班学生，历史重测取最近一次已完成记录。"""
+    class_name = (user.class_name or "").strip()
+    empty = {"className": class_name, "classSize": 0, "testedCount": 0, "rank": None, "list": []}
+    if not class_name:
+        return {**empty, "message": "尚未设置班级，暂时无法查看班级排名"}
+    students = db.query(User).join(UserCourse, UserCourse.user_id == User.user_id).filter(
+        User.role == "student", User.class_name == user.class_name,
+        UserCourse.course_id == course_id, UserCourse.role_in_course == "student",
+    ).order_by(User.student_no, User.user_id).all()
+    if not students:
+        return empty
+    # 使用子查询限定学生归属，避免大班级生成过多 IN 参数。
+    members = db.query(UserCourse.user_id).join(User, User.user_id == UserCourse.user_id).filter(
+        User.role == "student", User.class_name == user.class_name,
+        UserCourse.course_id == course_id, UserCourse.role_in_course == "student",
+    )
+    attempts = db.query(TeacherClassDashboard).filter(
+        TeacherClassDashboard.data_type == ATTEMPT_DATA_TYPE,
+        func.json_extract(TeacherClassDashboard.data_json, "$.courseId") == course_id,
+        func.json_extract(TeacherClassDashboard.data_json, "$.paperId") == paper_id,
+        func.json_extract(TeacherClassDashboard.data_json, "$.status") == "finished",
+        func.json_extract(TeacherClassDashboard.data_json, "$.userId").in_(members),
+    ).order_by(func.json_extract(TeacherClassDashboard.data_json, "$.finishedAt").desc(),
+               TeacherClassDashboard.updated_at.desc(), TeacherClassDashboard.id.desc()).all()
+    latest = {}
+    for row in attempts:
+        attempt = _data(row)
+        if isinstance(attempt.get("result"), dict):
+            latest.setdefault(attempt.get("userId"), attempt["result"])
+    tested, pending = [], []
+    for student in students:
+        result = latest.get(student.user_id)
+        entry = {"name": student.name, "studentNo": student.student_no or "",
+                 "isMe": student.user_id == user.user_id, "rank": None,
+                 "status": "finished" if result else "pending", "score": None,
+                 "totalScore": None, "durationSeconds": None}
+        if result:
+            entry.update(score=result.get("score", 0), totalScore=result.get("totalScore", 0),
+                         durationSeconds=result.get("durationSeconds", 0))
+            tested.append(entry)
+        else:
+            pending.append(entry)
+    tested.sort(key=lambda item: (-float(item["score"] or 0), int(item["durationSeconds"] or 0)))
+    previous, rank = None, None
+    for index, entry in enumerate(tested, 1):
+        key = (entry["score"], entry["durationSeconds"])
+        if key != previous:
+            rank = index
+        entry["rank"] = rank
+        previous = key
+    entries = tested + pending
+    mine = next((entry for entry in entries if entry["isMe"]), {})
+    return {"className": class_name, "classSize": len(students), "testedCount": len(tested),
+            "rank": mine.get("rank"), "list": entries}
+
+
+def _result_response(db: Session, user: User, course_id: str, attempt: dict) -> dict:
+    ranking = _class_ranking(db, user, course_id, attempt.get("paperId", ""))
+    return {**attempt["result"], "attemptId": attempt.get("attemptId", ""),
+            "ranking": {key: value for key, value in ranking.items() if key != "list"}}
 
 
 def _list_item(db: Session, course_id: str, paper: dict,
@@ -212,6 +278,37 @@ def list_published_exams(
     return ok({"list": items, "total": len(items)})
 
 
+@router.get("/attempts/{attempt_id}")
+def read_exam_result(
+    attempt_id: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+    course_id: str = Depends(get_current_course_id),
+):
+    _, attempt = _owned_attempt(db, attempt_id, user, course_id)
+    if attempt.get("status") != "finished" or not isinstance(attempt.get("result"), dict):
+        raise HTTPException(409, "测验尚未结算，暂时无法查看作答详情")
+    return ok(_result_response(db, user, course_id, attempt))
+
+
+@router.get("/{paper_id}/ranking")
+def read_exam_ranking(
+    paper_id: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+    course_id: str = Depends(get_current_course_id),
+):
+    paper = db.query(TeacherClassDashboard.id).filter(
+        TeacherClassDashboard.data_type == PAPER_DATA_TYPE,
+        TeacherClassDashboard.data_key == paper_id,
+        func.json_extract(TeacherClassDashboard.data_json, "$.courseId") == course_id,
+        func.json_extract(TeacherClassDashboard.data_json, "$.status") == "published",
+    ).first()
+    if not paper:
+        raise HTTPException(404, "已发布试卷不存在或不属于当前课程")
+    return ok(_class_ranking(db, user, course_id, paper_id))
+
+
 @router.post("/{paper_id}/attempts")
 def start_exam_attempt(
     paper_id: str,
@@ -229,7 +326,11 @@ def start_exam_attempt(
         raise HTTPException(404, "已发布试卷不存在或不属于当前课程")
     paper = _data(paper_row)
 
-    running_rows = [row for row in _attempt_rows(db, user.user_id, course_id)
+    previous_rows = _attempt_rows(db, user.user_id, course_id)
+    if any(_data(row).get("paperId") == paper_id and _data(row).get("status") == "finished"
+           for row in previous_rows):
+        raise HTTPException(409, "此试卷已完成，请查看作答详情，不支持重新测验")
+    running_rows = [row for row in previous_rows
                     if (lambda d: d.get("paperId") == paper_id and d.get("status") == "running")(_data(row))]
     if running_rows:
         return ok(_attempt_response(_data(running_rows[0]), _kp_names(db, course_id)))
@@ -415,7 +516,7 @@ def finish_exam_attempt(
 ):
     row, attempt = _owned_attempt(db, attempt_id, user, course_id)
     if attempt.get("status") == "finished" and attempt.get("result"):
-        return ok(attempt["result"])
+        return ok(_result_response(db, user, course_id, attempt))
     if attempt.get("status") != "running":
         raise HTTPException(409, "试卷测验状态不正确")
     result = _build_result(db, user, course_id, attempt)
@@ -442,4 +543,4 @@ def finish_exam_attempt(
     except Exception as exc:  # 答题结果已经提交，预警刷新失败不能撤销成绩。
         db.rollback()
         print(f"[alert-detect] 试卷交卷后刷新跳过（{exc}）")
-    return ok(result)
+    return ok(_result_response(db, user, course_id, attempt))

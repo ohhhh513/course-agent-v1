@@ -42,6 +42,7 @@ const TeacherExams = {
     return epoch === this.epoch && this.courseId === API.config.activeCourseId && Question.tab === 'exam';
   },
   render() {
+    window.TeacherExamResults?.close();
     if (this.courseId !== API.config.activeCourseId) {
       this.paper = null;
       this.dirty = false;
@@ -53,6 +54,7 @@ const TeacherExams = {
     if (this.paper) this.editor(); else this.list();
   },
   async list() {
+    window.TeacherExamResults?.close();
     const epoch = ++this.epoch;
     const box = U.$('#qBody');
     box.innerHTML = '<div class="card"><div class="card__body t-dim">正在加载试卷…</div></div>';
@@ -81,6 +83,7 @@ const TeacherExams = {
           <p class="t-dim fz-12">更新于 ${U.esc(new Date(p.updatedAt).toLocaleString('zh-CN', {hour12: false}))}</p>
           ${p.issues.length ? `<div class="exam-validation t-dim fz-12">${U.esc(p.issues.slice(0, 3).join('；'))}</div>` : ''}
           <div class="row"><span class="spacer"></span><button class="btn btn--sm" data-exam-edit="${U.esc(p.paperId)}">编辑试卷</button>
+          ${p.status === 'published' ? `<button class="btn btn--primary btn--sm" data-exam-results="${U.esc(p.paperId)}">作答详细</button>` : ''}
           ${p.status === 'draft' ? `<button class="btn btn--primary btn--sm" data-exam-publish="${U.esc(p.paperId)}" ${p.ready ? '' : 'disabled'} title="${p.ready ? '发布试卷' : U.esc(p.issues.join('；'))}">发布</button>` : ''}</div></article>`).join('') || '<div class="empty t-dim" style="padding:40px;text-align:center">暂无符合条件的试卷，点击“新建试卷”开始组卷。</div>';
       };
       paint();
@@ -92,6 +95,8 @@ const TeacherExams = {
         this.editor();
       };
       U.$('#examList').onclick = async e => {
+        const results = e.target.closest('[data-exam-results]');
+        if (results && !this.busy) { TeacherExamResults.open(results.dataset.examResults); return; }
         const edit = e.target.closest('[data-exam-edit]'), publish = e.target.closest('[data-exam-publish]');
         const id = edit?.dataset.examEdit || publish?.dataset.examPublish;
         if (!id || this.busy) return;

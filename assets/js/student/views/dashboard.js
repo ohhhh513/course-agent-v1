@@ -75,7 +75,7 @@
 
       el.innerHTML = `
       <!-- Hero -->
-      <div class="hero" style="margin-bottom:16px">
+      <div class="hero hero--learning" style="margin-bottom:16px">
         <div class="hero__main">
           <div class="row" style="margin-bottom:6px">
             ${R.lamp(o.status === 'danger' ? 'red' : o.status === 'warn' ? 'yellow' : 'ok', lampText[o.status])}

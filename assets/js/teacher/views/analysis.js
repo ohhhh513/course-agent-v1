@@ -9,7 +9,7 @@
           GROUP BY + 硬编码文案表），详见 最新bug修改9.23.md 第十三节；
        2) 保留下来的三块（高频错题 / 共性薄弱 / 个性异常）重排为
           「错题排行与标题统计 + 双栏明细」，避免页面空简。
-     数值全部来自 GET /analysis/errors 的真实统计（后端未改动）；
+     数值全部来自 GET /analysis/errors 按当前课程作答和学习路径计算的真实统计；
      课程名取自 GET /course/my，仅用于展示。
      ================================================================ */
 
@@ -22,14 +22,23 @@
   }
 
   const Analysis = {
+    _renderSequence: 0, _detailSequence: 0, _detailModal: null,
+    contextKey() {
+      const session = Auth.getSession();
+      return `${session?.user?.userId || ''}:${session?.loginStartedAt || ''}:${API.config.activeCourseId}`;
+    },
     render() {
       const el = U.$('#view-analysis');
+      const request = ++this._renderSequence, context = this.contextKey();
+      this._detailSequence++; this._detailModal?.close(); this._topWrong = [];
+      const current = () => request === this._renderSequence && context === this.contextKey() && U.$('#view-analysis') === el && Router.current === 'analysis';
       el.innerHTML = U.skeleton(420);
       if (!API.config.activeCourseId) {
         el.innerHTML = `<div class="card"><div class="card__body"><div class="empty" style="padding:48px;text-align:center"><b>尚未创建或选择课程</b><p class="fz-12 t-dim">请先建课后再查看归因分析。</p></div></div></div>`;
         return;
       }
       API.analysis.errors({}).then(d => {
+        if (!current()) return;
         const topWrongQuestions = Array.isArray(d.topWrongQuestions) ? d.topWrongQuestions : [];
         const commonVsIndividual = d.commonVsIndividual || { common: [], individual: [] };
         const common = Array.isArray(commonVsIndividual.common) ? commonVsIndividual.common : [];
@@ -47,6 +56,7 @@
         const wrongItem = (q, i) => {
           const rate = Number(q.wrongRate) || 0;
           const t = anTone(rate);
+          const hasChoiceOptions = Array.isArray(q.optionStats) && q.optionStats.length > 0;
           return `
           <div class="an-item" data-wrong="${i}" role="button" tabindex="0" title="查看题目">
             <span class="an-rank" style="background:${t.bg};color:${t.c}">${i + 1}</span>
@@ -55,8 +65,7 @@
               <div class="an-meta">
                 <span class="badge badge--outline">${U.esc(q.kp || '未标注知识点')}</span>
                 <span title="难度 ${Number(q.difficulty) || 0} / 5">${U.stars(Number(q.difficulty) || 0)}</span>
-                <span class="an-sep">·</span>
-                <span>主要错项 <b class="mono">${U.esc(q.mainWrongOption || '—')}</b></span>
+                ${hasChoiceOptions ? `<span class="an-sep">·</span><span>主要错项 <b class="mono">${U.esc(q.mainWrongOption || '—')}</b></span>` : ''}
                 <span class="an-qid mono">${U.esc(q.qId || '')}</span>
               </div>
             </div>
@@ -193,6 +202,7 @@
           this.openWrongDetail(this._topWrong[Number(row.dataset.wrong)]);
         }));
       }).catch(err => {
+        if (!current()) return;
         el.innerHTML = `<div class="card"><div class="card__body" style="padding:24px;text-align:center;color:var(--danger)">
           ${icon('alert')}<h3 style="margin:0">加载失败</h3><p class="fz-12 t-dim">${U.esc(err.message || err)}</p></div></div>`;
       });
@@ -201,7 +211,10 @@
     openWrongDetail(summary) {
       const qId = summary && summary.qId;
       if (!qId) return;
+      const request = ++this._detailSequence, render = this._renderSequence, context = this.contextKey();
+      const current = () => request === this._detailSequence && render === this._renderSequence && context === this.contextKey() && Router.current === 'analysis';
       API.question.bank({ keyword: qId, page: 1, size: 50 }).then(r => {
+        if (!current()) return;
         const full = ((r && r.list) || []).find(item => item.qId === qId);
         if (!full) {
           Toast.warn('题库里没有这道题', '可能已移入回收站');
@@ -210,18 +223,21 @@
         const typeName = { single: '单选题', multi: '多选题', multiple: '多选题', blank: '填空题', judge: '判断题', essay: '简答题' };
         const blank = full.type === 'blank';
         const options = Array.isArray(full.options) ? full.options : [];
+        const optionStats = new Map((Array.isArray(summary.optionStats) ? summary.optionStats : []).map(item => [String(item.key), item]));
         const optionHtml = blank
           ? `<div class="callout">参考答案：${U.esc(full.answer || '未填写')}</div>`
-          : `<div class="opts opts--readonly">${options.map(option => `
-              <div class="opt${option.right ? ' is-right' : ''}">
+          : `<div class="opts opts--readonly an-wrong-options">${options.map(option => `
+              <div class="opt ${option.right ? 'is-right' : 'is-wrong'}">
                 <span class="opt__key">${U.esc(option.key || '')}</span>
-                <span style="flex:1">${U.esc(option.text || '')}</span>
-                ${option.right ? '<span class="opt__flag badge badge--ok">正确答案</span>' : ''}
+                <span class="an-option-text">${U.esc(option.text || '')}</span>
+                <span class="an-option-stat">${U.esc(optionStats.get(String(option.key))?.count ?? '—')} 人选择 · ${U.esc(optionStats.get(String(option.key))?.percent ?? '—')}%</span>
               </div>`).join('') || '<div class="t-dim fz-13">没有选项</div>'}</div>`;
         const rate = Number(summary.wrongRate) || 0;
-        Modal.open({
-          title: '题目详情 · ' + qId,
+        this._detailModal?.close();
+        this._detailModal = Modal.open({
+          title: '题目详情 · ' + U.esc(qId),
           size: 'wide',
+          onClose: () => { this._detailModal = null; },
           body: `
             <div class="stack" style="gap:12px">
               <div class="row row--wrap fz-12 t-dim">
@@ -240,6 +256,7 @@
               <div>
                 <div class="fz-12 t-dim" style="margin-bottom:6px">${blank ? '填空答案' : '选项'}</div>
                 ${optionHtml}
+                ${!blank && options.length ? `<p class="fz-12 t-dim an-option-basis">${summary.respondentCount == null ? '选项统计暂不可用，请重新加载分析页面。' : `${U.esc(summary.respondentCount)} 人参与 · 每人取最近一次记录${['multi', 'multiple'].includes(full.type) ? ' · 多选比例可合计超过 100%' : ''}`}</p>` : ''}
               </div>
               <div>
                 <div class="fz-12 t-dim" style="margin-bottom:6px">解析</div>
@@ -254,7 +271,7 @@
             else if (figure.graph && window.DsFigure) DsFigure.mount(figEl, figure.graph);
           },
         });
-      }).catch(err => Toast.err('加载题目失败', err && err.message));
+      }).catch(err => { if (current()) Toast.err('加载题目失败', err && err.message); });
     }
   };
 

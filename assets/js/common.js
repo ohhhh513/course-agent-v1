@@ -407,6 +407,7 @@ const Modal = {
     let closed = false;
     const close = () => {
       if (closed) return;
+      if (opts.beforeClose?.(ov) === false) return;
       closed = true;
       try {
         if (opts.onClose) opts.onClose(ov);
@@ -669,14 +670,14 @@ window.TagPicker = {
   }
 };
 
-/* ---------------- 7. 侧边栏拉出（2026-10-15） ----------------
+/* ---------------- 7. 侧边栏拉出（2026-10-16） ----------------
    三端（teacher / student / admin）共享：
    ① 默认收起：aside.sidebar translateX(-100%)；
-   ② 点击 .sidebar__handle → 在 .app 上加 sidebar-open，sidebar 滑入；
-   ③ 点击 .main / .topbar / 任意非侧边栏区域 → 自动收起；
-   ④ 拉出时 .app::before 播放一次性涟漪动画（CSS 配合）。 */
+   ② 鼠标进入页面左边缘或拉出按钮时展开；
+   ③ 鼠标移出侧边栏立即开始收起；
+   ④ 按钮点击与 Esc 仍可用于键盘操作，窄屏沿用常驻布局。 */
 const Sidebar = {
-  /** 注入拉出按钮并绑定事件。appRoot = `.app` 元素。 */
+  /** 注入左边缘感应区与拉出按钮并绑定事件。 */
   init(appRoot) {
     if (!appRoot) return;
     if (appRoot.dataset.sidebarInited === '1') return;
@@ -697,6 +698,12 @@ const Sidebar = {
     const sidebar = appRoot.querySelector(':scope > .sidebar');
     if (!sidebar) return;
 
+    const edge = document.createElement('div');
+    edge.className = 'sidebar__edge';
+    edge.setAttribute('aria-hidden', 'true');
+    appRoot.appendChild(edge);
+
+    const hoverMode = window.matchMedia('(min-width: 901px) and (any-hover: hover)');
     const setOpen = (open) => {
       if (open) {
         appRoot.classList.add('sidebar-open');
@@ -706,7 +713,31 @@ const Sidebar = {
         sidebar.classList.remove('is-open');
       }
       handle.setAttribute('aria-expanded', open ? 'true' : 'false');
+      handle.title = open ? '收起侧边栏' : '展开侧边栏';
+      handle.setAttribute('aria-label', handle.title);
     };
+
+    const enter = (e) => {
+      if (hoverMode.matches && e.pointerType !== 'touch') setOpen(true);
+    };
+    const leave = (e) => {
+      if (!hoverMode.matches || e.pointerType === 'touch') return;
+      const target = e.relatedTarget;
+      if (target && [sidebar, handle, edge].some(el => el.contains(target))) return;
+      // 展开动画中鼠标仍位于侧栏最终范围内时，允许继续向导航移动。
+      if (target && e.clientX >= 0 && e.clientX < sidebar.offsetWidth) return;
+      setOpen(false);
+    };
+    [edge, sidebar, handle].forEach(el => {
+      el.addEventListener('pointerenter', enter);
+      el.addEventListener('pointerleave', leave);
+    });
+    hoverMode.addEventListener('change', () => setOpen(false));
+    document.addEventListener('pointermove', e => {
+      if (!hoverMode.matches || e.pointerType === 'touch' || !appRoot.classList.contains('sidebar-open')) return;
+      if ((e.clientX < 0 || e.clientX >= sidebar.offsetWidth) && !handle.contains(e.target)) setOpen(false);
+    }, {passive: true});
+    setOpen(appRoot.classList.contains('sidebar-open'));
 
     handle.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -714,8 +745,7 @@ const Sidebar = {
       setOpen(willOpen);
     });
 
-    // 点击侧边栏内部不冒泡到 appRoot，但**不再监听「点其他区域收起」**：
-    // 用户要求只有按钮 / Esc 触发切换。
+    // 内部操作不冒泡；自动收起由鼠标移出控制。
     sidebar.addEventListener('click', (e) => e.stopPropagation());
 
     // Esc 收起

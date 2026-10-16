@@ -384,11 +384,12 @@ window.API = (function () {
       return { token: config.token, user: toUser(acc) };
     }),
 
-    /** POST /auth/reset-password  找回密码，校验账号后重置密码（mock 模式更新本地账号表） */
+    /** POST /auth/reset-password  兼容旧入口，验证当前密码后修改本人密码。 */
     resetPassword: (p) => request('POST', '/auth/reset-password', p, (q) => {
       const list = getAccounts();
       const acc = list.find(a => a.username === q.username);
       if (!acc) throw new Error('账号不存在');
+      if (!q.currentPassword || acc.password !== q.currentPassword) throw new Error('当前密码不正确');
       if (!q.password || q.password.length < 6) throw new Error('新密码至少 6 位');
       acc.password = q.password;
       saveAccounts(list);
@@ -413,6 +414,12 @@ window.API = (function () {
       } catch (e) {}
       return M().student;
     }),
+
+    /** PUT /auth/profile  保存本人签名及裁剪后头像；FormData，不允许指定其他账号。 */
+    saveProfile: form => request('PUT', '/auth/profile', form, () => { throw new Error('个人资料保存需要连接后端'); }),
+
+    /** POST /auth/change-password  验证当前密码后修改本人密码。 */
+    changePassword: data => request('POST', '/auth/change-password', data, () => { throw new Error('修改密码需要连接后端'); }),
 
     /** GET /course/{courseId}  获取课程基本信息 */
     course: (p) => request('GET', '/course/' + (p && p.courseId), p, () => M().course)
@@ -735,6 +742,14 @@ window.API = (function () {
     /** GET /practice/exams  当前课程已发布试卷及个人最近成绩 */
     exams: (p) => request('GET', '/practice/exams', p, () => ({ list: [], total: 0 })),
 
+    /** GET /practice/exams/attempts/{attemptId}  本人已完成测验详情 */
+    examResult: (p) => request('GET', `/practice/exams/attempts/${encodeURIComponent(p.attemptId)}`, null,
+      () => { throw new Error('作答详情需要连接后端'); }),
+
+    /** GET /practice/exams/{paperId}/ranking  当前课程内同班学生成绩排名 */
+    examRanking: (p) => request('GET', `/practice/exams/${encodeURIComponent(p.paperId)}/ranking`, null,
+      () => { throw new Error('班级排名需要连接后端'); }),
+
     /** POST /practice/exams/{paperId}/attempts  开始或继续未完成的试卷测验 */
     startExam: (p) => request('POST', `/practice/exams/${encodeURIComponent(p.paperId)}/attempts`, p, () => M().examAttempt),
 
@@ -879,6 +894,9 @@ window.API = (function () {
     exams: {
       list: () => request('GET', '/teacher/exams'),
       detail: (paperId) => request('GET', '/teacher/exams/' + encodeURIComponent(paperId)),
+      results: (paperId) => request('GET', '/teacher/exams/' + encodeURIComponent(paperId) + '/results'),
+      ranking: (paperId, className) => request('GET', '/teacher/exams/' + encodeURIComponent(paperId) + '/ranking', { className }),
+      studentResult: (paperId, studentId) => request('GET', '/teacher/exams/' + encodeURIComponent(paperId) + '/students/' + encodeURIComponent(studentId) + '/result'),
       save: (p) => request(p.paperId ? 'PUT' : 'POST', '/teacher/exams' + (p.paperId ? '/' + encodeURIComponent(p.paperId) : ''), p),
       publish: (p) => request('POST', '/teacher/exams/' + encodeURIComponent(p.paperId) + '/publish', { revision: p.revision }),
     },

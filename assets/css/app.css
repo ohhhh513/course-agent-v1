@@ -16,6 +16,30 @@
 }
 
 /* ---------- 欢迎横幅 ---------- */
+/* ---------- 三端个人中心与头像裁剪 ---------- */
+.avatar img { width: 100%; height: 100%; object-fit: cover; border-radius: inherit; display: block; }
+.user-chip__info > span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.profile-center { display: grid; gap: 20px; }
+.profile-center__fields { border: 0; padding: 0; margin: 0; min-width: 0; display: grid; gap: 12px; }
+.profile-center__fields:disabled { opacity: .65; }
+.profile-center__identity { display: flex; align-items: center; gap: 14px; }
+.profile-center__identity h3 { margin: 0 0 4px; }
+.profile-center__identity p { margin: 0; overflow-wrap: anywhere; }
+.profile-center__avatar { width: 72px; height: 72px; flex: 0 0 72px; font-size: 26px; }
+.profile-center__password { padding-top: 18px; border-top: 1px solid var(--border); }
+.avatar-crop { display: grid; justify-items: center; gap: 14px; }
+.avatar-crop > p { margin: 0; line-height: 1.7; }
+.avatar-crop__frame { position: relative; width: min(320px, 100%); aspect-ratio: 1; overflow: hidden; border: 1px solid var(--border); border-radius: 8px; }
+.avatar-crop__frame canvas { display: block; width: 100%; height: 100%; cursor: grab; touch-action: none; }
+.avatar-crop__frame canvas:active { cursor: grabbing; }
+.avatar-crop__frame canvas:focus-visible { outline: 3px solid var(--brand-500); outline-offset: -3px; }
+.avatar-crop__guide { position: absolute; inset: 0; border: 1px solid rgba(255,255,255,.85); border-radius: 50%; box-shadow: 0 0 0 100px rgba(0,0,0,.35); pointer-events: none; }
+.avatar-crop__zoom { display: flex; align-items: center; gap: 12px; width: min(320px, 100%); font-size: 13px; }
+.avatar-crop__zoom input { min-width: 0; flex: 1; accent-color: var(--brand-500); }
+.account-person { display: flex; align-items: center; gap: 9px; }
+.account-person > div { min-width: 0; }
+.account-person__signature { display: block; max-width: 240px; color: var(--text-3); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
 /* 卡片头部 · 垂直堆叠 modifier（标题在上、徽章在下） */
 .card__head--col {
   flex-direction: column;
@@ -94,6 +118,16 @@
 .hero__stat { display: flex; flex-direction: column; gap: 4px; min-width: 96px; }
 /* 签到网格尽量平铺：不限制右栏宽度上限，让热力图吃满可用宽度 */
 .hero__stat--streak { min-width: 320px; max-width: 100%; width: 100%; }
+
+/* 学习驾驶舱：减少欢迎信息后的留白，让学习日历占据更多横向空间。 */
+@media (min-width: 1001px) {
+  .hero--learning {
+    display: grid;
+    grid-template-columns: minmax(260px, 1fr) minmax(0, 2.2fr);
+  }
+  .hero--learning > .hero__main,
+  .hero--learning > .hero__stats { min-width: 0; }
+}
 
 /* ---------- 学习贡献图（GitHub 风格：列 = 一周，行 = 周一…周日；
    起点为学期第 1 周（8/31），周数由后端给，未来日期用 is-future 区分）---------- */
@@ -614,6 +648,7 @@
   object-fit: contain; border-radius: 0;
 }
 .msg--me .msg__av { background: linear-gradient(135deg, var(--cyan-500), #0ea5e9); }
+.msg--me .msg__av img { width: 100%; height: 100%; object-fit: cover; border-radius: inherit; display: block; }
 .msg__wrap { min-width: 0; max-width: 82%; }
 .msg--me .msg__wrap { display: flex; flex-direction: column; align-items: flex-end; }
 .bubble {
@@ -724,7 +759,7 @@
 }
 .cite-item__meta { margin-top: 5px; font-size: 12px; color: var(--text-3); font-family: var(--font-num); }
 
-/* 输入区：圆角与阴影包住正文和技能区 */
+/* 输入区：加号菜单使用原生 popover，避免被聊天滚动区裁切。 */
 .chat__input { flex: 0 0 auto; width: 100%; max-width: 888px; margin: 0 auto; padding: 8px 24px 18px; background: var(--surface); }
 .composer {
   display: flex; flex-direction: column;
@@ -752,7 +787,7 @@
 .composer textarea:focus { outline: none; }
 .composer__acts { display: flex; gap: 8px; align-items: center; width: 100%; }
 
-/* 已有对话：矮单行输入，给回复列表让出高度；技能条收起（已选技能仍以 chip 显示）。 */
+/* 已有对话：矮单行输入，给回复列表让出高度；已选功能以 chip 显示。 */
 .chat:not(.chat--empty) .chat__input { padding: 4px 24px 10px; }
 .chat:not(.chat--empty) .composer { border-radius: 16px; }
 .chat:not(.chat--empty) .composer__body {
@@ -769,7 +804,6 @@
   min-height: 32px; max-height: 88px; padding: 5px 0;
 }
 .chat:not(.chat--empty) .composer__send { order: 3; margin-left: 0; }
-.chat:not(.chat--empty) .skill-row { display: none; }
 .composer__upload,
 .composer__send {
   display: grid; place-items: center;
@@ -785,32 +819,31 @@
   background: transparent;
   box-shadow: 0 4px 14px rgba(16, 43, 61, .18);
 }
+.composer__upload:disabled { opacity: .45; cursor: not-allowed; box-shadow: none; }
+.composer__upload[aria-expanded="true"] { background: var(--surface-2); color: var(--brand-600); }
+.composer-menu {
+  position: fixed; inset: auto; margin: 0; padding: 8px;
+  border: 1px solid var(--border); border-radius: 16px;
+  background: var(--surface); color: var(--text);
+  box-shadow: 0 10px 36px rgba(16, 43, 61, .16);
+  overflow-y: auto; overscroll-behavior: contain;
+}
+.composer-menu__title { padding: 6px 10px; margin: 0; font-size: 12px; font-weight: 500; color: var(--text-3); }
+.composer-menu__section { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 10px 10px 5px; margin-top: 5px; border-top: 1px solid var(--border-soft); color: var(--text-3); font-size: 12px; }
+.composer-menu__item { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 40px; padding: 9px 10px; border: 0; border-radius: 10px; background: transparent; color: var(--text-2); text-align: left; font-size: 13.5px; cursor: pointer; }
+.composer-menu__item:hover, .composer-menu__back:hover { background: var(--surface-2); color: var(--brand-600); }
+.composer-menu__item:focus-visible, .composer-menu__back:focus-visible { outline: 2px solid var(--brand-400); outline-offset: -2px; }
+.composer-menu__item span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.composer-menu__item svg { width: 16px; height: 16px; flex: 0 0 16px; color: var(--brand-500); }
+.composer-menu__item svg:last-child:not(:first-child) { width: 14px; height: 14px; flex-basis: 14px; color: var(--text-3); }
+.composer-menu__back { border: 0; border-radius: 6px; padding: 3px 6px; background: transparent; color: var(--text-3); font-size: 12px; cursor: pointer; }
 .composer__send { margin-left: auto; background: #e6e8eb; color: #8d939c; }
 .composer__send.is-ready { background: #2c2f33; color: #fff; }
 .composer__send.is-ready:hover { background: #1b1d20; }
 .composer__send.is-stopping { background: #e6e8eb; color: #3c4148; }
 .composer__send.is-stopping:hover { background: #d9dce1; }
 
-/* 技能放在对话框阴影内的底栏 */
-.skill-row {
-  display: flex; flex-wrap: wrap; justify-content: flex-start; gap: 8px;
-  margin: 0; padding: 10px 14px 12px;
-  background: var(--surface-2);
-  border-top: 1px solid var(--border-soft);
-}
-.skill-row[hidden] { display: none; }
-.skill-pill {
-  display: inline-flex; align-items: center; gap: 6px;
-  height: 34px; padding: 0 14px;
-  border: 1px solid var(--border); border-radius: 999px;
-  background: var(--surface); color: var(--text-2);
-  font-size: 13.5px; font-weight: 600; line-height: 1;
-  transition: border-color var(--t-fast), color var(--t-fast), background var(--t-fast);
-}
-.skill-pill:hover { border-color: var(--brand-400); color: var(--text); background: var(--surface-2); }
-.skill-pill svg { width: 15px; height: 15px; flex: 0 0 15px; color: var(--brand-500); }
-.skill-pill--prompt { padding-right: 12px; }
-.skill-pill--prompt svg { width: 14px; height: 14px; flex-basis: 14px; color: var(--text-3); }
+/* 已选择的快捷功能仍显示在输入框中。 */
 .skill-chip { display: flex; }
 .skill-chip[hidden] { display: none; }
 .skill-chip__body {
@@ -902,7 +935,6 @@
   .chat:not(.chat--empty) .chat__input { padding: 4px 14px 8px; }
   .chat__log { padding: 20px 14px; }
   .composer__body { padding: 12px 12px 8px; }
-  .skill-pill { height: 32px; padding: 0 12px; font-size: 13px; }
   .chat-shell .chat__history { height: 240px; }
 }
 
@@ -1004,6 +1036,12 @@
 /* 错题详情弹窗内的选项：只读，无交互感 */
 .opts--readonly .opt { cursor: default; }
 .opts--readonly .opt:hover { background: var(--surface); border-color: var(--border); }
+.an-wrong-options .opt.is-right:hover { background: var(--ok-soft); border-color: var(--ok); }
+.an-wrong-options .opt.is-wrong:hover { background: var(--danger-soft); border-color: var(--danger); }
+.an-wrong-options .opt { flex-wrap: wrap; }
+.an-wrong-options .an-option-text { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.an-wrong-options .an-option-stat { margin-left: auto; flex: 0 0 auto; font-size: 12px; white-space: nowrap; }
+.an-option-basis { margin: 8px 0 0; }
 
 /* ---------- 掌握矩阵 ---------- */
 .matrix { display: flex; flex-direction: column; }
@@ -2179,6 +2217,55 @@ html.auth-skin body {
 .exam-number.is-answered { background: color-mix(in srgb, var(--brand-500) 12%, var(--surface)); }
 .exam-session__actions { justify-content: flex-end; flex-wrap: wrap; gap: 8px; }
 .exam-result-summary { padding: 26px; text-align: center; }
+.exam-result-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 14px; margin-bottom: 24px; text-align: left; }
+.exam-result-header h2 { margin: 0 0 6px; }
+.exam-result-header p { margin: 0; color: var(--text-3); overflow-wrap: anywhere; }
+.exam-result-header .btn { flex-shrink: 0; }
+.exam-ranking-summary { gap: 10px; margin-bottom: 12px; }
+.exam-ranking-table { overflow: auto; max-height: 55vh; }
+.exam-ranking-table .tbl { min-width: 490px; }
+.exam-ranking-me { background: color-mix(in srgb, var(--brand-500) 10%, var(--surface)); }
+/* 教师试卷统计与学生查询 */
+.teacher-exam-results { display: grid; gap: 16px; min-width: 0; }
+.teacher-exam-results #teacherExamResultsBody { display: grid; gap: 16px; min-width: 0; }
+.teacher-exam-results__header { display: flex; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; gap: 16px; padding: 18px 20px; overflow: visible; }
+.teacher-exam-results__header h2 { margin: 10px 0 0; font-size: 18px; overflow-wrap: anywhere; }
+.teacher-exam-results__tools { display: flex; justify-content: flex-end; align-items: center; gap: 10px; flex-wrap: wrap; }
+.teacher-exam-student-search { position: relative; width: 280px; max-width: calc(100vw - 64px); }
+.teacher-exam-student-search__input { display: flex; gap: 8px; align-items: center; padding-left: 10px; border: 1px solid var(--border); border-radius: var(--r-sm); background: var(--surface); }
+.teacher-exam-student-search__input > svg { flex: 0 0 16px; width: 16px; height: 16px; color: var(--text-3); }
+.teacher-exam-student-search__input .input { border: 0; padding-left: 0; min-width: 0; box-shadow: none; }
+.teacher-exam-student-search__input:focus-within { border-color: var(--brand-500); }
+.teacher-exam-student-options { position: absolute; top: calc(100% + 5px); right: 0; width: 100%; max-height: 222px; overflow-y: auto; z-index: 40; border: 1px solid var(--border); border-radius: var(--r-sm); background: var(--surface); box-shadow: var(--shadow); }
+.teacher-exam-student-options[hidden] { display: none; }
+.teacher-exam-student-options > p { margin: 0; padding: 14px; }
+.teacher-exam-student-option { display: flex; flex-direction: column; justify-content: center; width: 100%; height: 44px; box-sizing: border-box; padding: 4px 12px; text-align: left; border: 0; border-bottom: 1px solid var(--border-soft); background: transparent; color: var(--text); cursor: pointer; }
+.teacher-exam-student-option:hover, .teacher-exam-student-option[aria-selected="true"] { background: color-mix(in srgb, var(--brand-500) 10%, var(--surface)); }
+.teacher-exam-student-option > span, .teacher-exam-student-option > small { width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.teacher-exam-student-option > small { color: var(--text-3); font-size: 11px; }
+.teacher-exam-metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; padding: 20px; }
+.teacher-exam-metrics > div { display: grid; text-align: center; gap: 6px; }
+.teacher-exam-metrics b { color: var(--brand-600); font-size: clamp(18px, 2vw, 26px); overflow-wrap: anywhere; }
+.teacher-exam-metrics span { font-size: 12px; color: var(--text-3); }
+.teacher-exam-metrics--three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.teacher-exam-individual { padding: 18px 20px; }
+.teacher-exam-results__section h3, .teacher-exam-question h3 { margin: 0; font-size: 15px; }
+.teacher-exam-question { padding: 18px 20px; }
+.teacher-exam-question .exam-stem { white-space: pre-wrap; overflow-wrap: anywhere; }
+.teacher-exam-options { display: grid; gap: 8px; margin-top: 12px; }
+.teacher-exam-option { display: flex; align-items: flex-start; gap: 10px; padding: 12px; border: 1px solid; border-radius: var(--r-sm); }
+.teacher-exam-option.is-right { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 35%, var(--border)); background: color-mix(in srgb, var(--ok) 7%, var(--surface)); }
+.teacher-exam-option.is-wrong { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 30%, var(--border)); background: color-mix(in srgb, var(--danger) 5%, var(--surface)); }
+.teacher-exam-option__text { flex: 1; min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.teacher-exam-option__count { flex-shrink: 0; font-size: 12px; }
+.teacher-exam-blank-stats { display: grid; gap: 10px; margin-top: 12px; }
+.teacher-exam-blank-stats > div { display: flex; gap: 12px; flex-wrap: wrap; padding: 10px; background: var(--surface-2); border-radius: var(--r-sm); }
+@media (max-width: 700px) {
+  .teacher-exam-results__tools { width: 100%; justify-content: flex-start; }
+  .teacher-exam-metrics:not(.teacher-exam-metrics--three) { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .teacher-exam-option { flex-wrap: wrap; }
+  .teacher-exam-option__text { flex-basis: calc(100% - 30px); }
+}
 .exam-result-summary__mark { display: inline-flex; color: var(--brand-600); }
 .exam-result-summary__mark svg { width: 36px; height: 36px; }
 .exam-result-summary h2 { margin: 9px 0 4px; }
@@ -2188,6 +2275,9 @@ html.auth-skin body {
 .exam-result-stats { display: flex; justify-content: center; gap: clamp(18px, 6vw, 70px); flex-wrap: wrap; }
 .exam-result-stats > div { display: grid; gap: 4px; }
 .exam-result-stats b { font-size: 16px; }
+.exam-result-summary .exam-result-stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.exam-result-summary .exam-result-stats > div { padding: 16px 8px; background: var(--surface-2); border: 1px solid var(--border-soft); border-radius: var(--r-md); }
+.exam-result-summary .exam-result-stats b { color: var(--brand-600); font-size: clamp(15px, 2vw, 24px); overflow-wrap: anywhere; }
 .exam-result-stats span, .exam-mastered-note { color: var(--text-3); font-size: 12px; }
 .exam-mastered-note { margin: 14px 0 0 !important; }
 .exam-result-details { display: grid; gap: 10px; margin-top: 18px; }
@@ -2228,18 +2318,10 @@ html.auth-skin body {
 .profile-wrong-link { width: 100%; font: inherit; text-align: left; color: inherit; cursor: pointer; }
 .profile-wrong-link:hover, .profile-wrong-link:focus-visible { border-color: var(--brand-400); background: var(--surface-3); }
 
-/* ===== 2026-10-15 v4：侧边栏拉出 —— 真正修复版 =====
-   【根因】HTML 加载顺序之前是 base → app → refresh，导致 refresh.css 在最后加载，
-          它的 .sidebar { --sidebar-w: 244px; position: relative; }、.content { max-width: 1640px }
-          全部覆盖了 app.css v2/v3 块，所以"修了很多次都没生效"。
-   【本次】三端 HTML 已把 refresh.css 移到 app.css 之前，app.css 现在最后加载，v2 块真正生效。
-          本块再针对 refresh.css 的覆盖做精确补强（确保 sidebar-w 用真实 244px、无中间缝）。
-
-   ① sidebar 拉出/收起统一 0.28s transform 过渡 + visibility 延迟隐藏，不会突然消失；
-   ② 收起时 .main 填满全屏（margin-left:0; width:100%），.content 取消 max-width:1640px 限制；
-   ③ 拉出时 .main 整体右移 = var(--sidebar-w, 244px) 让出侧边栏，0 间隙；
-   ④ 拉出时 topbar/content 内左 padding 减半（24px → 14px），消除视觉缝；
-   ⑤ 拉出按钮白底 + 品牌色描边 + 呼吸光圈，删除涟漪动画。*/
+/* ===== 2026-10-16：侧边栏悬停与主区自适应 =====
+   三端加载顺序为 base → refresh → app。
+   桌面侧栏、按钮及主区共享宽度，主区在剩余空间内完整排版；
+   左右留白保持一致，保留面板原有网格比例和窄屏布局。 */
 :root { --sidebar-dur: 280ms; }
 
 /* 让 .app 形成定位上下文，并恢复宽度撑满（refresh.css 的 height:100dvh 仍生效） */
@@ -2268,16 +2350,14 @@ html.auth-skin body {
     visibility 0s linear 0s;
 }
 
-/* 主区：收起时占满全宽；拉出时让出真实 sidebar 宽（紧贴 sidebar 右边，0 间隙） */
+/* 主区基础布局；桌面展开时同步调整位置与宽度。 */
 .main {
   margin-left: 0;
   width: 100%;
   min-width: 0;
   position: relative;
   z-index: 1;
-  transition: margin-left var(--sidebar-dur) cubic-bezier(.4,0,.2,1);
 }
-.app.sidebar-open .main { margin-left: var(--sidebar-w, 244px); }
 
 /* 关键：取消 refresh.css .content { max-width: 1640px; margin: 0 auto } 的居中限制。
    .app.sidebar-open .content 选择器优先级 (0,2,0) > .content (0,1,0) → 直接覆盖。
@@ -2285,10 +2365,31 @@ html.auth-skin body {
 .content { max-width: none; margin: 0; width: 100%; }
 .app.sidebar-open .content { max-width: none; margin: 0; }
 
-/* 关键②：拉出时减小 topbar / content 内部左 padding（24px → 14px），
-   消除"main 容器已 0 间隙，但 topbar 内部 padding 24px 看起来还有缝"的视觉错位。*/
-.app.sidebar-open .topbar { padding-left: 14px; }
-.app.sidebar-open .content { padding-left: 14px; }
+@media (min-width: 901px) {
+  .app { --sidebar-w: 244px; --sidebar-offset: 0px; }
+  .app.sidebar-open { --sidebar-offset: var(--sidebar-w); }
+  /* refresh.css 在侧栏上单独定义了宽度，此处继承壳层的统一值。 */
+  .sidebar { --sidebar-w: inherit; }
+  .main {
+    flex: 0 0 auto;
+    margin-left: var(--sidebar-offset);
+    width: calc(100% - var(--sidebar-offset));
+    transition:
+      margin-left var(--sidebar-dur) cubic-bezier(.4,0,.2,1),
+      width var(--sidebar-dur) cubic-bezier(.4,0,.2,1);
+  }
+  .topbar, .content { padding-inline: 24px; }
+}
+@media (min-width: 901px) and (max-width: 1024px) {
+  .app { --sidebar-w: 72px; }
+  .topbar, .content { padding-inline: 20px; }
+}
+
+/* 左边缘感应区在展开过程中保持可命中，避免鼠标未动便触发收起。 */
+.sidebar__edge { display: none; }
+@media (min-width: 901px) and (any-hover: hover) {
+  .sidebar__edge { display: block; position: fixed; left: 0; top: 0; bottom: 0; width: 10px; z-index: 60; }
+}
 
 /* 半圆拉出按钮：白底 + 品牌色描边 + 呼吸光圈 */
 .sidebar__handle {

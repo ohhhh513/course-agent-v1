@@ -8,10 +8,12 @@ const StudentExams = {
   saveQueue: Promise.resolve(), saveTimer: null, clockTimer: null,
   itemStartedAt: 0, currentDurationBase: 0, attemptStartedAt: 0,
   finishing: false, startingPaperId: '', pendingTarget: null,
+  _readSequence: 0, _rankingModal: null,
 
   get running() { return !!(this.attempt && this.attempt.status === 'running'); },
 
   resetCourseContext() {
+    this._cancelReads();
     clearInterval(this.clockTimer);
     clearTimeout(this.saveTimer);
     this.papers = [];
@@ -36,7 +38,18 @@ const StudentExams = {
     return window.StudentPractice && StudentPractice.tab === 'exam';
   },
 
+  _contextKey() {
+    const session = Auth.getSession();
+    return `${session?.user?.userId || ''}:${session?.loginStartedAt || ''}:${API.config.activeCourseId}`;
+  },
+
+  _cancelReads() {
+    this._readSequence++;
+    this._rankingModal?.close();
+  },
+
   renderList() {
+    this._cancelReads();
     const box = U.$('#pBody');
     if (!box || !this._activeTab()) return;
     const courseId = API.config.activeCourseId;
@@ -126,7 +139,8 @@ const StudentExams = {
     }
     list.innerHTML = items.map(paper => {
       const kps = paper.knowledgePoints || [];
-      const state = paper.inProgress ? '继续测验' : paper.attemptCount ? '重新测验' : '开始测验';
+      const completed = Number(paper.attemptCount) > 0;
+      const state = completed ? '查看详细' : paper.inProgress ? '继续测验' : '开始测验';
       const result = paper.lastScore == null ? '<span class="fz-12 t-dim">尚未参加</span>' :
         `<span class="badge badge--brand">上次得分 ${U.esc(paper.lastScore)} / ${U.esc(paper.totalScore)}</span>
          <span class="badge badge--outline">试卷正确率 ${U.esc(paper.lastAccuracy)}%</span>`;
@@ -138,10 +152,67 @@ const StudentExams = {
           <div class="exam-kp-tags">${kps.length ? kps.map(kp => `<span class="badge badge--outline">${this.highlight(kp.name, this.query)}</span>`).join('') : '<span class="fz-12 t-dim">未设置知识点</span>'}</div>
           <div class="exam-paper-card__result">${result}</div>
         </div>
-        <button class="btn btn--primary exam-start" data-exam-start="${U.esc(paper.paperId)}">${icon(paper.inProgress ? 'arrowRight' : paper.attemptCount ? 'refresh' : 'play')} ${state}</button>
+        <button class="btn btn--primary exam-start" ${completed ? `data-exam-result="${U.esc(paper.lastAttemptId || '')}"` : `data-exam-start="${U.esc(paper.paperId)}"`}>${icon(completed ? 'file' : paper.inProgress ? 'arrowRight' : 'play')} ${state}</button>
       </article>`;
     }).join('');
     U.$$('[data-exam-start]', list).forEach(button => button.addEventListener('click', () => this.start(button.dataset.examStart)));
+    U.$$('[data-exam-result]', list).forEach(button => button.addEventListener('click', () => this.viewResult(button.dataset.examResult, button)));
+  },
+
+  async viewResult(attemptId, button) {
+    if (!attemptId) { Toast.warn('缺少作答记录，请刷新试卷列表后重试'); return; }
+    const request = ++this._readSequence, context = this._contextKey(), box = U.$('#pBody');
+    const current = () => request === this._readSequence && context === this._contextKey() && this._activeTab() && U.$('#pBody') === box;
+    if (button) button.disabled = true;
+    try {
+      const result = await API.practice.examResult({ attemptId });
+      if (!current()) return;
+      this.attempt = null; this.pendingTarget = null; this.result = result;
+      this.renderResult();
+    } catch (error) { if (current()) Toast.error('作答详情加载失败', error.message || '请重试'); }
+    finally { if (button?.isConnected) button.disabled = false; }
+  },
+
+  rankLabel(ranking) {
+    return ranking?.rank != null && ranking.classSize > 0 ? `${ranking.rank}/${ranking.classSize}` : '暂无排名';
+  },
+
+  openRanking() {
+    if (!this.result || this._rankingModal?.el.isConnected) return;
+    const result = this.result, context = this._contextKey();
+    this._rankingModal = Modal.open({
+      title: '班级排名', size: 'wide',
+      body: '<div id="examRankingContent" aria-live="polite">加载班级排名…</div>',
+      onClose: () => { this._rankingModal = null; },
+      onMount: (ov, close) => {
+        const content = ov.querySelector('#examRankingContent');
+        const current = () => ov.isConnected && context === this._contextKey() && this.result === result && this._activeTab();
+        const load = async () => {
+          content.textContent = '加载班级排名…';
+          try {
+            const ranking = await API.practice.examRanking({ paperId: result.paperId });
+            if (!current()) { close(); return; }
+            result.ranking = ranking;
+            const rank = U.$('#examClassRank');
+            if (rank) rank.textContent = this.rankLabel(ranking);
+            content.innerHTML = `<div class="row row--wrap exam-ranking-summary"><b>${U.esc(ranking.className || '未设置班级')}</b><span class="badge badge--brand">我的排名 ${U.esc(this.rankLabel(ranking))}</span><span class="t-dim fz-12">已测验 ${ranking.testedCount || 0} / ${ranking.classSize || 0} 人</span></div>
+              <p class="fz-12 t-dim">按最近一次成绩排名，分数高的优先；同分用时短的优先，两项相同则并列。未测验的同学排在末尾。</p>
+              ${ranking.message ? `<p class="callout callout--info">${U.esc(ranking.message)}</p>` : ''}
+              <div class="exam-ranking-table"><table class="tbl"><thead><tr><th>排名</th><th>姓名</th><th>分数</th><th>时长</th><th>状态</th></tr></thead><tbody>
+              ${(ranking.list || []).map(item => `<tr ${item.isMe ? 'class="exam-ranking-me" aria-current="true"' : ''}>
+                <td>${item.rank == null ? '—' : U.esc(item.rank)}</td><td>${U.esc(item.name)}${item.isMe ? ' <span class="badge badge--brand">我</span>' : ''}</td>
+                <td>${item.status === 'finished' ? `${U.esc(item.score)} / ${U.esc(item.totalScore)}` : '—'}</td><td>${item.status === 'finished' ? this.formatDuration(item.durationSeconds) : '—'}</td>
+                <td>${item.status === 'finished' ? '已测验' : '<span class="t-dim">未测验</span>'}</td></tr>`).join('') || '<tr><td colspan="5" class="t-dim">暂无班级排名</td></tr>'}
+              </tbody></table></div>`;
+          } catch (error) {
+            if (!current()) { close(); return; }
+            content.innerHTML = `<p class="t-danger">排名加载失败：${U.esc(error.message || '请重试')}</p><button class="btn btn--outline" id="examRankingRetry">重新加载</button>`;
+            content.querySelector('#examRankingRetry').addEventListener('click', load);
+          }
+        };
+        load();
+      },
+    });
   },
 
   highlight(value, query) {
@@ -433,29 +504,21 @@ const StudentExams = {
       : target && target.kind === 'route' ? ((Router.views[target.key] || {}).title || '目标页面')
       : target && target.kind === 'logout' ? '退出登录' : '';
     box.innerHTML = `<div class="card exam-result-summary">
-      <div class="exam-result-summary__mark">${icon(result.accuracy >= 60 ? 'checkCircle' : 'target')}</div>
-      <h2>试卷已结算</h2><p>${U.esc(result.title)}</p>
-      <div class="exam-result-score"><strong>${U.esc(result.score)}</strong><span> / ${U.esc(result.totalScore)} 分</span></div>
-      <div class="exam-result-stats"><div><b>${U.esc(result.correct)} / ${U.esc(result.total)}</b><span>答对题数</span></div><div><b>${U.esc(result.accuracy)}%</b><span>试卷正确率</span></div><div><b>${this.formatDuration(result.durationSeconds)}</b><span>用时</span></div></div>
+      <header class="exam-result-header"><div><button class="btn btn--outline btn--sm" id="examBackList">${icon('arrowLeft')} 返回试卷列表</button><h2>作答详情</h2><p>${U.esc(result.title)}</p></div><button class="btn btn--outline btn--sm" id="examViewRanking">${icon('users')} 查看排名</button></header>
+      <div class="exam-result-stats"><div><b>${U.esc(result.score)} / ${U.esc(result.totalScore)}</b><span>分数</span></div><div><b>${this.formatDuration(result.durationSeconds)}</b><span>时长</span></div><div><b id="examClassRank">${U.esc(this.rankLabel(result.ranking))}</b><span>班级排名</span></div></div>
       ${result.masteredCount ? `<p class="exam-mastered-note">本次答对的 ${result.masteredCount} 道曾错题已移出待攻克列表。</p>` : ''}
     </div>
-    <div class="exam-result-details"><h3>答题情况</h3>${(result.items || []).map((item, i) => `<article class="card exam-result-item ${item.correct ? 'is-correct' : 'is-wrong'}" data-result-figure="${i}">
+    <div class="exam-result-details"><div class="row row--wrap"><h3>答题情况</h3><span class="spacer"></span><span class="t-dim fz-12">答对 ${U.esc(result.correct)} / ${U.esc(result.total)} 题 · 正确率 ${U.esc(result.accuracy)}%</span></div>${(result.items || []).map((item, i) => `<article class="card exam-result-item ${item.correct ? 'is-correct' : 'is-wrong'}" data-result-figure="${i}">
       <div class="row"><span class="badge ${item.correct ? 'badge--ok' : 'badge--danger'}">${item.correct ? '正确' : '错误'}</span><span class="badge badge--outline">${U.esc(item.score)} 分</span><span class="badge badge--outline">${U.esc(item.chapter || '未分章')}</span><span class="spacer"></span><span>第 ${i + 1} 题 · 得 ${U.esc(item.earnedScore)} 分</span></div>
       <div class="exam-result-item__stem">${U.esc(item.stem || '')}</div>
       ${item.options && item.options.length ? `<div class="exam-result-options">${item.options.map(option => `<div><b>${U.esc(option.key)}</b>　${U.esc(option.text)}${item.figure && item.figure.options_graph && item.figure.options_graph[option.key] ? `<div class="q-opt-fig" data-exam-optfig="${U.esc(option.key)}"></div>` : ''}</div>`).join('')}</div>` : ''}
       <div class="exam-result-answer"><span>你的答案：<b class="${item.correct ? 't-ok' : 't-danger'}">${U.esc(this.answerLabel(item.myAnswer, item.type) || '未作答')}</b></span><span>正确答案：<b class="t-ok">${U.esc(item.correctAnswer || '')}</b></span></div>
       ${item.analysis ? `<p class="fz-13 t-2"><b>解析：</b>${U.esc(item.analysis)}</p>` : ''}<div class="q-figure" data-result-figure-slot></div>
     </article>`).join('')}</div>
-    <div class="row exam-result-actions"><button class="btn btn--outline" id="examBackList">${icon('arrowLeft')} 返回试卷列表</button>
-      <button class="btn btn--outline" id="examRetake">${icon('refresh')} 重新测验</button>
-      ${targetLabel ? `<button class="btn btn--primary" id="examContinueTarget">继续：${U.esc(targetLabel)}</button>` : ''}</div>`;
+    ${targetLabel ? `<div class="row exam-result-actions"><button class="btn btn--primary" id="examContinueTarget">继续：${U.esc(targetLabel)}</button></div>` : ''}`;
     (result.items || []).forEach((item, i) => this._mountFigure(box.querySelectorAll('.exam-result-item')[i], item.figure));
     U.$('#examBackList', box).addEventListener('click', () => this.backToList());
-    U.$('#examRetake', box).addEventListener('click', () => {
-      const paperId = result.paperId;
-      this.attempt = null; this.result = null; this.pendingTarget = null;
-      this.start(paperId);
-    });
+    U.$('#examViewRanking', box).addEventListener('click', () => this.openRanking());
     const continueButton = U.$('#examContinueTarget', box);
     if (continueButton) continueButton.addEventListener('click', () => this.continueTarget());
     window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -500,7 +563,7 @@ const StudentExams = {
   },
 
   allowTabLeave(nextTab) {
-    if (!this.running) return true;
+    if (!this.running) { this._cancelReads(); return true; }
     this.requestExit({ kind: 'tab', tab: nextTab || 'quiz' });
     return false;
   },
@@ -510,7 +573,7 @@ const StudentExams = {
   },
 
   beforeCourseChange() {
-    if (!this.running) return Promise.resolve(true);
+    if (!this.running) { this._cancelReads(); return Promise.resolve(true); }
     return new Promise(resolve => {
       let stage = 0, completed = false;
       const finishPrompt = Modal.open({
@@ -555,6 +618,7 @@ const StudentExams = {
         StudentExams.guardRoute(key, params);
         return false;
       }
+      if (key !== this.current) StudentExams._cancelReads();
       return typeof previous === 'function' ? previous.call(this, key, params) : true;
     };
     window.addEventListener('beforeunload', event => {

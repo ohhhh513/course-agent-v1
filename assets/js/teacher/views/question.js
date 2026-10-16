@@ -45,6 +45,7 @@
       </div>
       <div id="qBody"></div>`;
       U.$$('#qTabs button', el).forEach(b => b.addEventListener('click', () => {
+        if (this.tab === 'exam' && b.dataset.t !== 'exam') window.TeacherExamResults?.close();
         U.$$('#qTabs button', el).forEach(x => x.classList.remove('is-active'));
         b.classList.add('is-active'); this.tab = b.dataset.t;
         if (this.tab === 'gen') this.renderGen();

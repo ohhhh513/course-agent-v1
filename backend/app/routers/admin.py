@@ -18,6 +18,7 @@ from ..middleware.auth import hash_password
 from ..dependencies import require_admin
 from ..schemas.common import ok, fail
 from ..utils import to_user_dict, fmt_dt, loads
+from ..services.user_profiles import profile_metadata
 # 账号治理（导入 / 删除）的解析、校验、保护规则与级联清理统一由 services.account_import
 # 提供 —— 与智能助手的「上传文件 → 录入系统」「删号」工具共用同一套口径，
 # 避免密码规则、user_id 生成、重名跳过、删除保护规则等行为出现两份实现。
@@ -82,9 +83,11 @@ def list_users(
         like = f"%{keyword}%"
         q = q.filter(User.username.like(like) | User.name.like(like))
     rows = q.order_by(User.user_id.asc()).all()
+    profiles = profile_metadata(db, [u.user_id for u in rows])
     items = []
     for u in rows:
         d = to_user_dict(u)
+        d.update(profiles[u.user_id])
         d["username"] = u.username
         d["className"] = u.class_name or ""
         d["dept"] = u.dept or ""

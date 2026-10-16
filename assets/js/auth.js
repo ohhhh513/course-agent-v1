@@ -12,6 +12,7 @@ window.Auth = (function () {
 
   const SESSION_KEY  = 'ca_session';   // 当前登录会话
   const ACCOUNTS_KEY = 'ca_accounts';  // 原型期本地账号表的键名（现已下线，仅用于清理残留）
+  let userRevision = 0, refreshSequence = 0;
 
   function getSession() {
     try { return JSON.parse(localStorage.getItem(SESSION_KEY)) || null; }
@@ -74,7 +75,7 @@ window.Auth = (function () {
       return session;
     },
 
-    /** 找回密码：校验账号后重置密码 */
+    /** 旧改密入口：必须提供当前密码。 */
     async resetPassword(data) {
       await API.auth.resetPassword(data);
       return true;
@@ -90,6 +91,31 @@ window.Auth = (function () {
     isSessionUsable,
     isLoggedIn() { return isSessionUsable(getSession()); },
     currentUser() { const s = getSession(); return isSessionUsable(s) ? s.user : null; },
+
+    /** 服务端资料保存后更新本次登录资料，保留课程与登录时间。 */
+    updateUser(user) {
+      const session = getSession();
+      if (!isSessionUsable(session) || !user || user.userId !== session.user.userId) return false;
+      session.user = Object.assign({}, session.user, user);
+      userRevision++;
+      setSession(session); this.applyUserBadge();
+      return true;
+    },
+
+    async refreshUser() {
+      const session = getSession();
+      if (!isSessionUsable(session)) return;
+      const revision = userRevision, request = ++refreshSequence;
+      const user = await API.auth.profile();
+      const current = getSession();
+      if (revision === userRevision && request === refreshSequence && current?.loginStartedAt === session.loginStartedAt && current?.user?.userId === session.user.userId) this.updateUser(user);
+    },
+
+    avatarHtml(user) {
+      const url = String(user?.avatarUrl || '');
+      if (/^\/api\/v1\/auth\/avatars\/[a-f0-9]{32}\.png$/.test(url)) return `<img src="${U.esc(url)}" alt="${U.esc(user.name || '')}的头像" data-avatar-fallback="${U.esc(user.avatarChar || user.name?.charAt(0) || '?')}">`;
+      return U.esc(user?.avatarChar || user?.name?.charAt(0) || '?');
+    },
 
     /**
      * 路由守卫：会话不可用（无 / 假 token / 残缺 / 过期）→ 清会话跳登录页；
@@ -131,14 +157,21 @@ window.Auth = (function () {
       const nameEl = U.$('#tbUserName');
       const uidEl = U.$('#tbUid');
       if (avatarEl) {
-        avatarEl.textContent = u.avatarChar || (u.name ? u.name.charAt(0) : '?');
-        if (u.avatarColor) avatarEl.style.background = u.avatarColor;
+        avatarEl.innerHTML = this.avatarHtml(u);
+        avatarEl.style.background = u.avatarColor || '';
       }
+      // 只更新头像节点，保留正在生成的回答、输入草稿与页面位置。
+      U.$$('[data-user-avatar]').forEach(el => {
+        if (el.dataset.userAvatar !== String(u.userId)) return;
+        el.innerHTML = this.avatarHtml(u);
+        el.style.background = u.avatarColor || '';
+      });
       if (nameEl) nameEl.textContent = u.name || '';
       // 副标题与后端 to_user_dict 字段对齐：学生取 className、教师取 dept
       if (uidEl) {
-        uidEl.textContent = u.className || u.dept || u.org
+        uidEl.textContent = u.signature || u.className || u.dept || u.org
           || ({ teacher: '教师', admin: '管理员', student: '学生' }[u.role] || '');
+        uidEl.title = uidEl.textContent;
       }
     }
   };

@@ -1198,6 +1198,32 @@ analysis_router = APIRouter(prefix="/api/v1/analysis", tags=["归因分析"],
                             dependencies=[Depends(require_teacher)])
 
 
+def _analysis_answer_query(db: Session, student_ids: list, course_id: str):
+    """课程成员与作答、题目归属同时校验，不能仅凭共享学生判定范围。"""
+    return db.query(AnswerRecord).join(Question, Question.q_id == AnswerRecord.q_id).filter(
+        AnswerRecord.user_id.in_(student_ids), AnswerRecord.course_id == course_id,
+        Question.course_id == course_id,
+    )
+
+
+def _analysis_option_stats(question: Question, latest_answers: dict) -> dict:
+    """按学生最近一次作答计选择人数；多选分别计入每个选项。"""
+    total = len(latest_answers)
+    if is_blank_type(question.type):
+        return {"respondentCount": total, "optionStats": []}
+    options = _options_with_right(loads(question.options) or [], question.answer or "", question.type or "")
+    keys = list(dict.fromkeys(str(option.get("key") or "") for option in options if isinstance(option, dict)))
+    counts = dict.fromkeys(keys, 0)
+    for record in latest_answers.values():
+        answer = re.sub(r"[,，、\s]", "", str(record.my_answer or "").upper())
+        chosen = set(answer) if question.type in ("multi", "multiple") else {answer}
+        for key in keys:
+            counts[key] += bool(key) and key.upper() in chosen
+    return {"respondentCount": total,
+            "optionStats": [{"key": key, "count": counts[key], "percent": round(counts[key] / total * 100, 1) if total else 0}
+                            for key in keys]}
+
+
 @analysis_router.get("/errors")
 def analysis_errors(
     classId: str = Query(None),
@@ -1225,14 +1251,14 @@ def analysis_errors(
             "causes": [],
         })
 
-    q = db.query(AnswerRecord).filter(AnswerRecord.user_id.in_(student_ids))
+    q = _analysis_answer_query(db, student_ids, course_id)
     if kpId: q = q.filter(AnswerRecord.kp_id == kpId)
     if chapter:
         lp_kps = [r[0] for r in db.query(LearningPath.kp_id).filter(
             LearningPath.user_id.in_(student_ids),
             LearningPath.course_id == course_id,
             LearningPath.chapter == chapter).distinct().all()]
-        if lp_kps: q = q.filter(AnswerRecord.kp_id.in_(lp_kps))
+        q = q.filter(AnswerRecord.kp_id.in_(lp_kps))
     if timeRange == "7d": q = q.filter(AnswerRecord.created_at >= utc_now_naive() - timedelta(days=7))
     elif timeRange == "30d": q = q.filter(AnswerRecord.created_at >= utc_now_naive() - timedelta(days=30))
 
@@ -1243,11 +1269,16 @@ def analysis_errors(
     # ----- topWrongQuestions -----
     q_cnt = defaultdict(int)
     q_total = defaultdict(int)
+    latest_answers = defaultdict(dict)
     for r in rows:
         q_total[r.q_id] += 1
         if not r.is_correct: q_cnt[r.q_id] += 1
+        previous = latest_answers[r.q_id].get(r.user_id)
+        if previous is None or r.id > previous.id:
+            latest_answers[r.q_id][r.user_id] = r
     top_q_ids = sorted(q_cnt.items(), key=lambda x: x[1], reverse=True)[:5]
-    top_q_rows = db.query(Question).filter(Question.q_id.in_([x[0] for x in top_q_ids])).all()
+    top_q_rows = db.query(Question).filter(Question.course_id == course_id,
+                                         Question.q_id.in_([x[0] for x in top_q_ids])).all()
     q_map = {x.q_id: x for x in top_q_rows}
     top_wrong = []
     for qid, wc in top_q_ids:
@@ -1263,11 +1294,13 @@ def analysis_errors(
             "mainWrongOption": "B" if wc > t * 0.6 else "C",  # 简化：无真实选项正确率时用启发式
             "wrongRate": round(wc / t * 100, 1),
             "count": wc,
+            **_analysis_option_stats(qobj, latest_answers[qid]),
         })
 
     # ----- weakChain（知识点薄弱链路 root→mid→leaf）-----
     # 取班级 mastery 最低的 3 个 kp 构成链路
-    class_lps = db.query(LearningPath).filter(LearningPath.user_id.in_(student_ids)).all()
+    class_lps = db.query(LearningPath).filter(LearningPath.user_id.in_(student_ids),
+                                             LearningPath.course_id == course_id).all()
     kp_mastery = defaultdict(list)
     for r in class_lps:
         if (r.mastery or 0) > 0: kp_mastery[r.kp_id].append(r.mastery or 0)
@@ -1394,7 +1427,7 @@ def analysis_weak_chain(
     students = _course_students(db, course_id)
     student_ids = [s.user_id for s in students]
 
-    q = db.query(AnswerRecord).filter(AnswerRecord.user_id.in_(student_ids))
+    q = _analysis_answer_query(db, student_ids, course_id)
     if kpId:
         q = q.filter(AnswerRecord.kp_id == kpId)
     wrong = [r for r in q.all() if not r.is_correct]
@@ -1430,8 +1463,8 @@ def analysis_causes(
     sids = [s.user_id for s in _course_students(db, course_id)]
     if not sids:
         return ok({"categories": []})
-    rows = db.query(AnswerRecord.error_type, func.count(AnswerRecord.id)).filter(
-        AnswerRecord.user_id.in_(sids)
+    rows = _analysis_answer_query(db, sids, course_id).with_entities(
+        AnswerRecord.error_type, func.count(AnswerRecord.id)
     ).group_by(AnswerRecord.error_type).all()
     total = sum(r[1] for r in rows)
     return ok({

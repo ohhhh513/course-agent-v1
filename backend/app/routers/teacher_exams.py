@@ -16,6 +16,7 @@ from app.services.exam_papers import (
     DATA_TYPE, normalize_paper, publish_question_snapshots, score_units,
 )
 from app.schemas.common import ok
+from app.services.exam_results import course_students, latest_submissions, paper_statistics, rank_class, student_summary
 
 router = APIRouter(prefix="/api/v1/teacher/exams", tags=["教师试卷"],
                    dependencies=[Depends(require_teacher)])
@@ -130,6 +131,51 @@ def get_paper(paper_id: str, db: Session = Depends(get_db), user=Depends(get_cur
               course_id: str = Depends(get_current_course_id)):
     _, paper = own_paper(db, user, course_id, paper_id)
     return ok(describe(db, course_id, paper))
+
+
+def result_context(db, user, course_id, paper_id):
+    _, paper = own_paper(db, user, course_id, paper_id)
+    if paper.get("status") != "published":
+        raise HTTPException(409, "草稿尚未发布，暂时无法查看作答详情")
+    students = course_students(db, course_id)
+    submissions = latest_submissions(db, course_id, paper_id)
+    return paper, students, submissions
+
+
+@router.get("/{paper_id}/results")
+def get_paper_results(paper_id: str, db: Session = Depends(get_db), user=Depends(get_current_user),
+                      course_id: str = Depends(get_current_course_id)):
+    paper, students, submissions = result_context(db, user, course_id, paper_id)
+    return ok(paper_statistics(db, course_id, paper, students, submissions))
+
+
+@router.get("/{paper_id}/ranking")
+def get_paper_ranking(paper_id: str, className: str = "", db: Session = Depends(get_db),
+                      user=Depends(get_current_user), course_id: str = Depends(get_current_course_id)):
+    _, students, submissions = result_context(db, user, course_id, paper_id)
+    classes = sorted({student.class_name for student in students if student.class_name})
+    selected = className or (classes[0] if classes else "")
+    if selected and selected not in classes:
+        raise HTTPException(404, "该班级没有当前课程的学生")
+    return ok({**rank_class(students, submissions, selected), "classes": classes})
+
+
+@router.get("/{paper_id}/students/{student_id}/result")
+def get_student_result(paper_id: str, student_id: str, db: Session = Depends(get_db),
+                       user=Depends(get_current_user), course_id: str = Depends(get_current_course_id)):
+    paper, students, submissions = result_context(db, user, course_id, paper_id)
+    student = next((student for student in students if student.user_id == student_id), None)
+    if student is None:
+        raise HTTPException(404, "该学生不属于当前课程")
+    ranking = rank_class(students, submissions, student.class_name or "")
+    mine = next((entry for entry in ranking["list"] if entry["userId"] == student_id), {})
+    attempt = submissions.get(student_id)
+    return ok({**(attempt["result"] if attempt else {"paperId": paper_id, "title": paper.get("title", ""),
+                                                  "score": None, "totalScore": paper.get("totalScore", 0),
+                                                  "durationSeconds": None, "items": []}),
+               "student": student_summary(student, submissions),
+               "ranking": {"rank": mine.get("rank"), "className": ranking["className"],
+                           "classSize": ranking["classSize"], "message": ranking.get("message", "")}})
 
 
 @router.put("/{paper_id}")
