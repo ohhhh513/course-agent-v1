@@ -33,7 +33,7 @@ def action_catalogue():
 
 def role_actions(role):
     return [dict(id=a["id"], title=a["title"], view=a["view"], entity=a["entity"],
-                 execution="明确请求才生成报告" if a.get("execute") else "打开或回填界面",
+                 execution="明确请求才生成内容" if a.get("execute") else "打开或回填界面",
                  fields={key: {k: v for k, v in field.items() if k != "selector"}
                          for key, field in a["fields"].items()})
             for a in action_catalogue().values() if a["role"] == role]
@@ -73,6 +73,26 @@ def validate_values(spec, values):
             raise ValueError(f"字段 {key} 超出范围")
         if key in ("kpIds", "chapterIds", "sections") and not all(isinstance(v, str) for v in value):
             raise ValueError(f"字段 {key} 必须是文本数组")
+        if key == "types":
+            aliases = {
+                "single": "single", "单选": "single", "单选题": "single",
+                "multi": "multi", "多选": "multi", "多选题": "multi",
+                "blank": "blank", "填空": "blank", "填空题": "blank",
+                "judge": "judge", "判断": "judge", "判断题": "judge",
+            }
+            mapped = []
+            for item in value:
+                if not isinstance(item, str):
+                    raise ValueError("题型必须是文本数组")
+                key_name = aliases.get(item.strip()) or aliases.get(item.strip().lower())
+                if not key_name:
+                    raise ValueError("题型只能是单选、多选、填空或判断")
+                if key_name not in mapped:
+                    mapped.append(key_name)
+            if not mapped:
+                raise ValueError("请至少指定一种题型")
+            cleaned[key] = mapped
+            continue
         cleaned[key] = value
     return cleaned
 
@@ -167,9 +187,11 @@ def prepare_action(ctx, target, values=None, object_id="", keyword="", auto=Fals
         if not isinstance(auto, bool) or not isinstance(use_attachments, bool):
             raise ValueError("执行方式必须是布尔值")
         if spec.get('execute') and not auto:
-            raise ValueError("生成报告必须是明确请求；询问操作请选择生成入口或配置入口")
+            raise ValueError("生成内容必须是明确请求；询问位置请选择对应配置或页面入口")
         if spec.get('execute') and not ctx.extra.get('courseId'):
-            raise ValueError("请先选择课程再生成学情报告")
+            raise ValueError("请先选择课程再生成")
+        if target == "teacher.question.create" and not ({} if values is None else values).get("kpIds"):
+            raise ValueError("请先确定要出题的知识点")
         if not isinstance(object_id, str) or not isinstance(keyword, str) or len(keyword) > 20000 or len(object_id) > 64:
             raise ValueError("对象名称或编号格式不正确")
         fields = validate_values(spec, {} if values is None else values)
@@ -209,7 +231,12 @@ def prepare_action(ctx, target, values=None, object_id="", keyword="", auto=Fals
                 "values": fields, "object": obj, "attachments": attachments}
         ctx.tool_log.append({"kind": "ui_action", "plan": plan})
         ctx.turn["system_guide"] = {"found": True}
-        note = "前端收到后将生成当前课程的学情报告并打开详情；工具本身未生成报告，不能声称已成功。" if spec.get('execute') else "前端收到后才会打开或回填；保存、发送、加入和正式导入仍需用户在目标界面确认。练习只打开题目，不选择或提交答案。"
+        if spec.get("execute") == "teacher-question-create":
+            note = "前端将在对话右侧预览生成题目草稿；尚未进入正式题库。不要声称已经发布，也不要让用户去出题页再点生成。"
+        elif spec.get("execute"):
+            note = "前端收到后将生成当前课程的学情报告并打开详情；工具本身未生成报告，不能声称已成功。"
+        else:
+            note = "前端收到后才会打开或回填；保存、发送、加入和正式导入仍需用户在目标界面确认。练习只打开题目，不选择或提交答案。"
         return {"ok": True, "ui_action": plan, "note": note}
     except (ValueError, TypeError) as exc:
         return {"error": str(exc)}

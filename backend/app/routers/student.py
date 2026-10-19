@@ -7,7 +7,7 @@ import json
 from datetime import date, datetime, timedelta, timezone
 from collections import defaultdict
 from fastapi import APIRouter, Depends, Query, HTTPException
-from sqlalchemy import func, desc
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 from ..database import get_db
 from ..models.course import Resource, ResourceProgress, ResourceStudyLog
@@ -311,7 +311,8 @@ def student_dashboard(
             "action": "去处理", "target": "alerts",
         })
 
-    # 进行中的练习「存档」→ 待办「继续挑战」（检查会话历史；同一模式最多一条，需有作答进度）
+    # 进行中的练习「存档」→ 待办「继续挑战」（同一模式最多一条）。
+    # 个人练习仍要有作答进度；教师布置的补练还没开始也要出现。
     _mode_cn = {"weak": "薄弱点强化", "order": "顺序练习", "random": "随机练习", "wrong": "错题重练"}
     _ps_todos, _seen_modes = [], set()
     # 存档续做（「继续挑战」待办）：必须限定当前课程 —— 原实现只按 user_id +
@@ -320,17 +321,25 @@ def student_dashboard(
         PracticeSession.user_id == uid,
         PracticeSession.course_id == course_id,      # 课程隔离
         PracticeSession.status == "running",
-    ).order_by(desc(PracticeSession.created_at)).all():
+    ).order_by(PracticeSession.created_at.desc()).all():
         if ps.mode in _seen_modes:
             continue
         _seen_modes.add(ps.mode)
         answered = db.query(func.count(AnswerRecord.id)).filter(
             AnswerRecord.session_id == ps.session_id).scalar() or 0
-        if 0 < answered < (ps.total or 0):
+        try:
+            snapshot = json.loads(ps.questions_snapshot or "[]")
+        except (TypeError, json.JSONDecodeError):
+            snapshot = []
+        assigned = any(isinstance(item, dict) and item.get("kind") == "pack" for item in snapshot)
+        if (assigned or answered > 0) and answered < (ps.total or 0):
+            title = "教师布置的补练" if assigned and answered == 0 else f"继续练习：{_mode_cn.get(ps.mode, ps.mode)}"
+            todo_desc = (f"共 {ps.total} 题，还没开始" if answered == 0
+                         else f"已完成 {answered}/{ps.total} 题，点击继续挑战")
             _ps_todos.append({
                 "id": f"TD_PS_{ps.session_id}", "type": "practice", "level": "brand",
-                "title": f"继续练习：{_mode_cn.get(ps.mode, ps.mode)}",
-                "desc": f"已完成 {answered}/{ps.total} 题，点击继续挑战",
+                "title": title,
+                "desc": todo_desc,
                 "action": "继续挑战", "target": "practice", "sessionId": ps.session_id,
                 "mode": ps.mode,
             })
@@ -352,7 +361,7 @@ def student_dashboard(
     ps_rows = (
         db.query(PracticeSession)
         .filter(PracticeSession.user_id == uid, PracticeSession.course_id == course_id)  # 课程隔离
-        .order_by(desc(func.coalesce(PracticeSession.finished_at, PracticeSession.created_at)))
+        .order_by(func.coalesce(PracticeSession.finished_at, PracticeSession.created_at).desc())
         .limit(50)
         .all()
     )

@@ -14,6 +14,11 @@
 /* —— 全局共享状态（供各视图模块引用） —— */
 const courseSel = U.$('#courseSel');
 const state = { classId: '' };   // 已改为课程上下文；classId 仅兼容旧参数，不再写死演示班
+let myCourses = [];
+function applySidebarCourse(courseId) {
+  const c = myCourses.find(x => x.courseId === courseId);
+  syncSidebarCourseName(c && c.name, '暂无课程');
+}
 
 /* —— 视图重渲染注册表（课程切换时复用） —— */
 const ViewFns = {
@@ -58,16 +63,17 @@ function courseOptionText(c, mine) {
 
 function refreshCourseSel(preferId) {
   return API.course.my().then(list => {
-    const courses = Array.isArray(list) ? list : [];
+    myCourses = Array.isArray(list) ? list : [];
     courseSel.innerHTML = '';
-    if (!list.length) {
+    if (!myCourses.length) {
       const o = document.createElement('option');
       o.value = ''; o.textContent = '暂无课程 · 点 + 新建';
       courseSel.appendChild(o);
       API.setActiveCourse('');
+      applySidebarCourse('');
       return;
     }
-    courses.forEach(c => {
+    myCourses.forEach(c => {
       const o = document.createElement('option');
       o.value = c.courseId;
       o.textContent = courseOptionText(c, c.role === 'teacher');
@@ -75,9 +81,10 @@ function refreshCourseSel(preferId) {
     });
     // 恢复上次选择；上次课程已不在列表（被清理/退出）时回落到第一门
     const cur = API.config.activeCourseId;
-    const target = preferId || (courses.some(c => c.courseId === cur) ? cur : courses[0].courseId);
+    const target = preferId || (myCourses.some(c => c.courseId === cur) ? cur : myCourses[0].courseId);
     API.setActiveCourse(target);
     courseSel.value = target;
+    applySidebarCourse(target);
   }).catch(() => {});
 }
 
@@ -154,6 +161,7 @@ window.__courseReady.then(() => {
 courseSel.addEventListener('change', () => {
   if (!courseSel.value) return;
   API.setActiveCourse(courseSel.value);
+  applySidebarCourse(courseSel.value);
   Toast.info('已切换课程', courseSel.options[courseSel.selectedIndex].text);
   refreshTeacherViewsAfterCourseChange();
 });

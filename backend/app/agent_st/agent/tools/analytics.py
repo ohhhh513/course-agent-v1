@@ -7,8 +7,8 @@
   模型无法指定别人的数据（越权在参数层面就不成立）。
 - **数值复用业务函数**：正确率逐题拆解走 `services.scoring.kp_accuracy_detail`
   （与页面、预警同一套口径），工具本身不做统计。
-- **只读**：学情和系统操作目录查询都不写库；唯一的"动作"是 `suggest_action`，
-  它只把建议塞进 `ctx.turn['actions']`，由前端渲染成按钮、用户点击才生效。
+- **只读**：学情和系统操作目录查询都不写库；界面动作是 `suggest_action`（跳转/练习建议）
+  和 `offer_choices`（缺关键细节时的可点选项），都不写库，由前端渲染、用户点击才生效。
 """
 from __future__ import annotations
 
@@ -158,7 +158,9 @@ def my_alerts(ctx: ToolContext, level: str = "all"):
     description=(
         "把**当前登录用户**在某个知识点上的答题正确率逐题拆开：每道题的权重"
         "（主命中 1.0 / 标签命中 0.3）、最近一次对错、对正确率的贡献。"
-        "用于回答「为什么这个知识点正确率是 X%」「正确答案率要练哪几道题」。"
+        "学生讲解单个知识点时也要调用：看 depth 决定入门或易错点讲法，"
+        "看 offerPractice 决定要不要给「去练」按钮。"
+        "也用于回答「为什么这个知识点正确率是 X%」「正确答案率要练哪几道题」。"
     ),
     parameters={
         "type": "object",
@@ -193,9 +195,145 @@ def breakdown(ctx: ToolContext, kp_id: str = ""):
         detail["isKey"] = bool(node.is_key)
         # 前置/后继（来自知识图谱编排保存的关系）：用于解释"为什么建议先补它"
         detail["relations"] = _relations(db, course_id, kp)
+        pool = _practice_pool(db, course_id, kp)
+        rate = detail.get("rate")
+        detail["practicePool"] = pool
+        # 空正确率或 <60% 用入门讲法；达到 60% 才收成易错点。去练按钮另看 offerPractice。
+        detail["depth"] = "advanced" if isinstance(rate, (int, float)) and rate >= 60 else "foundation"
+        detail["offerPractice"] = bool(isinstance(rate, (int, float)) and rate < 60 and pool > 0)
         detail["note"] = ("正确率 = Σ(权重×最近一次是否答对) ÷ Σ(权重)；"
-                          "主命中权重 1.0、标签命中 0.3；重做同一道题是替换而不是累加。")
+                          "主命中权重 1.0、标签命中 0.3；重做同一道题是替换而不是累加。"
+                          "depth=foundation 表示尚未作答或正确率 <60%，按入门讲；"
+                          "depth=advanced 表示正确率 ≥60%，只补易错点。"
+                          "offerPractice 为真才可以给「去练」按钮：必须已有作答且正确率 <60%，"
+                          "并且本课程已发布题池不为空。")
         return detail
+    finally:
+        db.close()
+
+
+def _practice_pool(db, course_id: str, kp_id: str) -> int:
+    """本课程已发布、且主知识点或标签命中该点的题数。口径与练习组卷一致。"""
+    from app.services.catalog_helpers import question_kp_clause
+
+    clause = question_kp_clause(persistence.Question, [kp_id])
+    if clause is None:
+        return 0
+    return int(db.query(persistence.Question).filter(
+        persistence.Question.course_id == course_id,
+        persistence.Question.status == "published",
+        clause,
+    ).count())
+
+
+def _option_map(raw) -> dict[str, str]:
+    import json
+
+    try:
+        rows = json.loads(raw or "[]")
+    except (TypeError, json.JSONDecodeError):
+        return {}
+    if isinstance(rows, dict):
+        return {str(k): str(v) for k, v in rows.items() if str(v or "").strip()}
+    if not isinstance(rows, list):
+        return {}
+    out = {}
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        key = str(row.get("key") or row.get("label") or "").strip()
+        text = str(row.get("text") or row.get("content") or "").strip()
+        if key:
+            out[key] = text
+    return out
+
+
+def _selected_text(options: dict[str, str], my_answer: str) -> str:
+    raw = (my_answer or "").strip()
+    if not raw:
+        return ""
+    compact = raw.replace(" ", "").replace(",", "").replace("，", "").replace("、", "")
+    letters = [ch for ch in compact.upper() if ch in options]
+    if letters and "".join(letters) == compact.upper():
+        return "；".join(f"{ch}. {options.get(ch, '')}".rstrip() for ch in letters)
+    if raw.upper() in options:
+        return options[raw.upper()]
+    return raw
+
+
+@tool(
+    name="my_last_attempt",
+    description=(
+        "读取**当前登录学生**在本课程对某一道题的最近一次作答："
+        "选了什么、选项原文、是否答对、作答时间。不返回标准答案和解析。"
+        "学生说「这道题我没做对」「我选错了哪项」时，在定位到题号后调用。"
+        "没有记录就如实说明没做过。身份由服务端注入，不能查别人的作答。"
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "q_id": {"type": "string", "description": "题号，如 KHD001。必须来自用户或本轮 get_question / resolve_topic"},
+        },
+        "required": ["q_id"],
+    },
+    flows=("explain",),
+    roles=("student",),
+)
+def my_last_attempt(ctx: ToolContext, q_id: str = ""):
+    uid, course_id = ctx.user_id, _course_id(ctx)
+    qid = (q_id or "").strip()
+    if not uid or not course_id:
+        return {"error": "缺少用户或课程上下文"}
+    if not qid:
+        return {"error": "请给出题号"}
+    db = persistence.SessionLocal()
+    try:
+        question = db.query(persistence.Question).filter(
+            persistence.Question.course_id == course_id,
+            persistence.Question.q_id == qid,
+        ).first()
+        if question is None:
+            return {"found": False, "qId": qid, "error": "题目不存在或不属于当前课程"}
+        row = db.query(persistence.AnswerRecord).filter(
+            persistence.AnswerRecord.user_id == uid,
+            persistence.AnswerRecord.course_id == course_id,
+            persistence.AnswerRecord.q_id == qid,
+        ).order_by(
+            persistence.AnswerRecord.created_at.desc(),
+            persistence.AnswerRecord.id.desc(),
+        ).first()
+        options = _option_map(question.options)
+        kp_name = ""
+        if question.kp_id:
+            node = db.query(persistence.GraphNode).filter(
+                persistence.GraphNode.id == question.kp_id,
+                persistence.GraphNode.course_id == course_id,
+                persistence.GraphNode.graph_type == "knowledge",
+            ).first()
+            kp_name = node.name if node else ""
+        if row is None:
+            return {
+                "found": False,
+                "qId": qid,
+                "kpId": question.kp_id or "",
+                "kpName": kp_name,
+                "note": "当前课程没有这道题的作答记录。按题面讲解，不要编造学生选过的选项。",
+            }
+        selected = _selected_text(options, row.my_answer or "")
+        return {
+            "found": True,
+            "qId": qid,
+            "kpId": question.kp_id or "",
+            "kpName": kp_name,
+            "type": question.type or "",
+            "myAnswer": row.my_answer or "",
+            "selectedText": selected,
+            "isCorrect": bool(row.is_correct),
+            "answeredAt": fmt_dt(row.created_at),
+            "note": ("这是该生最近一次作答，不是标准答案。"
+                     "答错时针对 selectedText 说明为什么这项不成立；"
+                     "用户没有要求核对时，不要先报正确答案字母。"),
+        }
     finally:
         db.close()
 
@@ -368,3 +506,60 @@ def suggest_action(ctx: ToolContext, kind: str = "", label: str = "", view: str 
     ctx.turn.setdefault("actions", []).append(action)
     return {"ok": True, "queued": action,
             "note": "已加入建议动作，前端会在回答下方渲染按钮，用户点击后才生效"}
+
+
+@tool(
+    name="offer_choices",
+    description=(
+        "执行操作还缺关键细节时，在最终回答前调用，给用户 2～4 个可点击选项。"
+        "适用于出几道题、哪种题型、出哪一章等会改变后续动作的信息；用户点选后会把选项原文发给你。"
+        "禁止猜一个默认题量或范围后直接执行。不要把选项再写进正文，也不要同时调用 prepare_ui_action。"
+        "每轮只问一件关键事。"
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "prompt": {"type": "string", "description": "一句不超过 80 字的问法，例如「这次课堂小测出几道题？」"},
+            "options": {
+                "type": "array",
+                "description": "2～4 个选项",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "label": {"type": "string", "description": "按钮上的短文案，不超过 24 字"},
+                        "message": {"type": "string", "description": "点选后作为下一轮用户问题发送的完整句子"},
+                    },
+                    "required": ["label"],
+                },
+            },
+        },
+        "required": ["prompt", "options"],
+    },
+    flows=("explain", "admin_ops"),
+)
+def offer_choices(ctx: ToolContext, prompt: str = "", options: list | None = None):
+    prompt = (prompt or "").strip()
+    if not prompt or len(prompt) > 80:
+        return {"error": "prompt 需为不超过 80 字的一句问法"}
+    if not isinstance(options, list) or not 2 <= len(options) <= 4:
+        return {"error": "options 必须是 2～4 项"}
+    cleaned = []
+    seen = set()
+    for item in options:
+        if not isinstance(item, dict):
+            return {"error": "每个选项需含 label"}
+        label = str(item.get("label") or "").strip()
+        message = str(item.get("message") or label).strip()
+        if not label or len(label) > 24 or not message or len(message) > 80:
+            return {"error": "选项文案过长或为空"}
+        if label in seen:
+            return {"error": "选项文案不能重复"}
+        seen.add(label)
+        cleaned.append({"label": label, "message": message})
+    ctx.turn["choices"] = {"prompt": prompt, "options": cleaned}
+    return {
+        "ok": True,
+        "prompt": prompt,
+        "options": cleaned,
+        "note": "前端会在回答下方渲染选项；用户点选后把 message 作为下一轮问题。不要在正文罗列选项，也不要同时调用 prepare_ui_action。",
+    }

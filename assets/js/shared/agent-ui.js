@@ -85,6 +85,24 @@ const AgentUI = (() => {
       ctx.allowCourseChange = true;
       set(select, plan.object.id);
     },
+    'student-exam-list': async (plan, ctx) => {
+      await click('#pTabs [data-t="exam"]', ctx.guard);
+      await wait(() => find('#examPaperList') || find('#examReload'), '试卷列表', ctx.guard);
+    },
+    'student-exam-latest': async (plan, ctx) => {
+      await handlers['student-exam-list'](plan, ctx);
+      const data = await API.practice.exams();
+      if (!ctx.guard()) return;
+      const papers = (data.list || []).filter(paper => paper.lastAttemptId);
+      papers.sort((a, b) => String(b.lastAttemptAt || '').localeCompare(String(a.lastAttemptAt || '')));
+      if (!papers.length) throw new Error('还没有已完成的试卷，无法打开作答详情');
+      await StudentExams.viewResult(papers[0].lastAttemptId);
+      await wait(() => find('#examBackList'), '作答详情', ctx.guard);
+    },
+    'teacher-exam-list': async (plan, ctx) => {
+      await click('#qTabs [data-t="exam"]', ctx.guard);
+      await wait(() => find('#examCreate') || find('#examRetry'), '试卷列表', ctx.guard);
+    },
     'practice-mode': async (plan, ctx) => {
       await wait(() => find('#pTabs [data-t="quiz"]'), '练习页签', ctx.guard);
       if (Practice.tab !== 'quiz') await click('#pTabs [data-t="quiz"]', ctx.guard);
@@ -219,6 +237,469 @@ const AgentUI = (() => {
     'question-import': async (plan, ctx) => openQuestionImport(plan, ctx),
   };
 
+  const TYPE_LABEL = { single: '单选题', multi: '多选题', blank: '填空题', judge: '判断题' };
+  const COUNT_CHOICES = [
+    { label: '5 道（课堂小测）', count: 5 },
+    { label: '8 道', count: 8 },
+    { label: '10 道（综合练习）', count: 10 },
+  ];
+  const TYPE_CHOICES = [
+    { label: '单选题', types: ['single'] },
+    { label: '单选 + 填空', types: ['single', 'blank'] },
+    { label: '单选 + 多选 + 填空', types: ['single', 'multi', 'blank'] },
+  ];
+  const AgentPreview = {
+    jobs: Object.create(null),
+    current: '',
+    wrap: null,
+    shell: null,
+    docked: false,
+    panelHtml() {
+      return `
+        <div class="chat__side-head">
+          <h3 id="apTitle">${typeof icon === 'function' ? icon('sparkle') : ''} 题目预览</h3>
+          <span class="badge badge--brand" id="apBadge">草稿</span>
+          <span class="spacer"></span>
+          <button type="button" class="btn btn--ghost btn--icon" id="apClose" aria-label="关闭预览">${typeof icon === 'function' ? icon('x') : '×'}</button>
+        </div>
+        <div class="chat__side-body" id="apBody"></div>
+        <div class="chat__side-foot">
+          <span class="fz-12 t-dim" id="apHint">可编辑后组成试卷，或发布进题库。</span>
+          <span class="spacer"></span>
+          <button type="button" class="btn" id="apExam" disabled>组成试卷</button>
+          <button type="button" class="btn btn--primary" id="apPublishAll" disabled>全部发布进题库</button>
+        </div>`;
+    },
+    ensure() {
+      if (this.wrap && this.wrap.isConnected) return this.wrap;
+      const shell = document.querySelector('#view-chat .chat-shell, #view-ai .chat-shell, #view-assistant .chat-shell');
+      this.docked = Boolean(shell);
+      this.shell = shell || null;
+      const wrap = document.createElement(this.docked ? 'aside' : 'div');
+      wrap.hidden = true;
+      if (this.docked) {
+        wrap.className = 'card chat__side chat__preview';
+        wrap.id = 'agentPreviewPanel';
+        wrap.setAttribute('aria-label', '题目预览');
+        wrap.innerHTML = this.panelHtml();
+        shell.appendChild(wrap);
+      } else {
+        wrap.className = 'drawer-wrap';
+        wrap.id = 'agentPreviewWrap';
+        wrap.innerHTML = `<div class="drawer agent-preview" role="dialog" aria-modal="true" aria-labelledby="apTitle">${this.panelHtml()}</div>`;
+        wrap.addEventListener('click', event => { if (event.target === wrap) this.close(); });
+        document.body.appendChild(wrap);
+      }
+      wrap.querySelector('#apClose').addEventListener('click', () => this.close());
+      wrap.querySelector('#apExam').addEventListener('click', () => this.assembleExam());
+      wrap.querySelector('#apPublishAll').addEventListener('click', () => this.publishAll());
+      this.wrap = wrap;
+      return wrap;
+    },
+    open() {
+      const wrap = this.ensure();
+      wrap.hidden = false;
+      if (this.docked && this.shell) {
+        const history = this.shell.querySelector('#chatHistory');
+        if (history && !history.hidden) {
+          history.hidden = true;
+          this.shell.classList.remove('is-history-open');
+          const toggle = document.querySelector('#toggleHistoryBtn');
+          if (toggle) {
+            toggle.setAttribute('aria-expanded', 'false');
+            toggle.title = '显示历史会话';
+            toggle.setAttribute('aria-label', '显示历史会话');
+          }
+        }
+        this.shell.classList.add('is-preview-open');
+      }
+    },
+    close() {
+      if (this.wrap) this.wrap.hidden = true;
+      if (this.docked && this.shell) this.shell.classList.remove('is-preview-open');
+    },
+    missingOf(plan) {
+      const values = (plan && plan.values) || {};
+      const kpIds = Array.isArray(values.kpIds) ? values.kpIds.filter(Boolean) : [];
+      const types = Array.isArray(values.types) ? values.types.filter(Boolean) : [];
+      const count = Number(values.count);
+      const missing = [];
+      if (!kpIds.length) missing.push('scope');
+      if (!Number.isInteger(count) || count < 1) missing.push('count');
+      if (!types.length) missing.push('types');
+      return { kpIds, types, count: (Number.isInteger(count) && count >= 1) ? count : 0, missing };
+    },
+    arm(plan) {
+      if (!plan || plan.target !== 'teacher.question.create') return null;
+      if (this.jobs[plan.id]) return this.jobs[plan.id];
+      const parsed = this.missingOf(plan);
+      this.jobs[plan.id] = {
+        id: plan.id,
+        status: parsed.missing.length ? 'need_input' : 'starting',
+        drafts: [], error: '', paperId: '',
+        count: parsed.count, types: parsed.types, kpIds: parsed.kpIds,
+        difficulty: (plan.values && plan.values.difficulty) || 3,
+        courseId: plan.courseId, plan, missing: parsed.missing.slice(),
+      };
+      return this.jobs[plan.id];
+    },
+    slotHtml(plan) {
+      if (!plan) return '';
+      if (plan.target !== 'teacher.question.create') {
+        return `<div class="msg__agent-acts"><button type="button" class="btn btn--sm btn--primary" data-agent-ui="${U.esc(JSON.stringify(plan))}">${U.esc(plan.label || '打开操作界面')}</button></div>`;
+      }
+      const job = this.jobs[plan.id];
+      const inner = job
+        ? this.slotInner(job)
+        : `<button type="button" class="btn btn--sm btn--primary" data-agent-ui="${U.esc(JSON.stringify(plan))}">${U.esc(plan.label || '预览题目')}</button>`;
+      return `<div class="msg__agent-acts msg__preview-slot" data-preview-job="${U.esc(plan.id)}">${inner}</div>`;
+    },
+    slotInner(job) {
+      if (!job) return '';
+      if (job.status === 'need_input') return this.choiceHtml(job);
+      if (job.status === 'starting' || job.status === 'running') return this.progressHtml(job);
+      const label = job.status === 'error' && !job.drafts.length ? '查看失败详情' : '预览题目';
+      return `<button type="button" class="btn btn--sm btn--primary" data-ap-open="${U.esc(job.id)}">${label}</button>`;
+    },
+    progressHtml(job) {
+      const made = (job.drafts || []).length;
+      const total = job.count || 0;
+      const pct = total ? Math.max(8, Math.min(100, Math.round((made / total) * 100))) : 12;
+      const type = TYPE_LABEL[(job.types || [])[made % Math.max(1, (job.types || []).length)]] || '';
+      const line = !made
+        ? (job.status === 'starting' ? '正在准备出题…' : '正在生成题目…')
+        : `正在生成第 ${Math.min(made + 1, total || made + 1)} / ${total || '…'} 道${type}`;
+      return `<div class="agent-progress">
+        <div class="agent-progress__row">
+          <span class="agent-progress__dot" aria-hidden="true"></span>
+          <b>${U.esc(line)}</b>
+          ${total ? `<span class="agent-progress__count">${made} / ${total}</span>` : ''}
+        </div>
+        <div class="agent-progress__bar"><i style="width:${pct}%"></i></div>
+      </div>`;
+    },
+    choiceHtml(job) {
+      const missing = job.missing || [];
+      if (missing.includes('scope')) {
+        return `<div class="agent-choices"><p class="agent-choices__prompt">还需要确定章节或知识点范围，请直接回复要出哪一章。</p></div>`;
+      }
+      const askCount = missing.includes('count');
+      const prompt = askCount ? '这次出几道题？' : '用哪些题型？';
+      const options = askCount ? COUNT_CHOICES : TYPE_CHOICES;
+      const buttons = options.map(option => askCount
+        ? `<button type="button" class="agent-choice" data-preview-count="${option.count}">${U.esc(option.label)}</button>`
+        : `<button type="button" class="agent-choice" data-preview-types="${U.esc(option.types.join(','))}">${U.esc(option.label)}</button>`
+      ).join('');
+      return `<div class="agent-choices"><p class="agent-choices__prompt">${prompt}</p><div class="agent-choices__list">${buttons}</div></div>`;
+    },
+    paintSlot(job) {
+      if (!job) return;
+      document.querySelectorAll(`[data-preview-job="${CSS.escape ? CSS.escape(job.id) : job.id}"]`).forEach(slot => {
+        slot.innerHTML = this.slotInner(job);
+        this.bindSlot(slot, job);
+      });
+    },
+    bindSlot(slot, job) {
+      if (!slot || !job) return;
+      slot.querySelectorAll('[data-ap-open]').forEach(btn => {
+        if (btn.dataset.bound) return;
+        btn.dataset.bound = '1';
+        btn.addEventListener('click', () => this.show(job.id));
+      });
+      slot.querySelectorAll('[data-preview-count]').forEach(btn => {
+        if (btn.dataset.bound) return;
+        btn.dataset.bound = '1';
+        btn.addEventListener('click', () => this.acceptCount(job, Number(btn.dataset.previewCount), btn));
+      });
+      slot.querySelectorAll('[data-preview-types]').forEach(btn => {
+        if (btn.dataset.bound) return;
+        btn.dataset.bound = '1';
+        btn.addEventListener('click', () => this.acceptTypes(job, (btn.dataset.previewTypes || '').split(',').filter(Boolean), btn));
+      });
+    },
+    acceptCount(job, count, btn) {
+      if (!job || job.status !== 'need_input' || !Number.isInteger(count) || count < 1) return;
+      job.count = count;
+      job.missing = (job.missing || []).filter(item => item !== 'count');
+      if (btn) {
+        btn.classList.add('is-picked');
+        btn.parentElement && btn.parentElement.querySelectorAll('.agent-choice').forEach(el => { el.disabled = true; });
+      }
+      if ((job.missing || []).length) { this.paintSlot(job); return; }
+      this.beginGenerate(job);
+    },
+    acceptTypes(job, types, btn) {
+      if (!job || job.status !== 'need_input' || !types.length) return;
+      job.types = types;
+      job.missing = (job.missing || []).filter(item => item !== 'types');
+      if (btn) {
+        btn.classList.add('is-picked');
+        btn.parentElement && btn.parentElement.querySelectorAll('.agent-choice').forEach(el => { el.disabled = true; });
+      }
+      if ((job.missing || []).length) { this.paintSlot(job); return; }
+      this.beginGenerate(job);
+    },
+    startQuestions(plan, ctx) {
+      const job = this.arm(plan);
+      if (!job) return false;
+      if (job.status === 'running' || job.status === 'starting') {
+        if (job.status === 'running') this.paintSlot(job);
+        else this.beginGenerate(job);
+        return true;
+      }
+      if (job.status === 'need_input') {
+        this.paintSlot(job);
+        return true;
+      }
+      this.show(plan.id);
+      return true;
+    },
+    beginGenerate(job) {
+      if (!job || job.status === 'running' || job.status === 'done') return true;
+      if (!API.question || typeof API.question.genStream !== 'function') throw new Error('当前页无法生成题目');
+      if (!(job.kpIds || []).length) throw new Error('请先确定要出题的知识点');
+      if (!job.count) throw new Error('请先选择出题数量');
+      if (!(job.types || []).length) job.types = ['single'];
+      job.status = 'running';
+      this.paintSlot(job);
+      API.question.genStream({
+        kpIds: job.kpIds, types: job.types, difficulty: job.difficulty, count: job.count,
+        requirement: '题型：' + job.types.map(t => TYPE_LABEL[t] || t).join('、') + '。',
+      }, {
+        onDraft: (d) => {
+          const payload = (d && d.payload) || {};
+          job.drafts.push({
+            draftId: (d && (d.draftId || d.draft_id)) || '',
+            status: (d && d.status) || (d && d.ok === false ? 'invalid' : 'draft'),
+            errors: (d && d.errors) || [],
+            payload,
+            kpIds: (d && d.kpIds) || payload.kp_ids || [],
+            chapterId: (d && d.chapterId) || payload.chapter_id || '',
+          });
+          this.paintSlot(job);
+        },
+        onError: (d) => { job.error = (d && d.message) || '生成出错'; },
+        onDone: (d) => {
+          job.status = job.drafts.length ? 'done' : 'error';
+          if (!job.drafts.length && !job.error) job.error = '本次没有产出题目，请调整范围后重试';
+          if (d && d.count) job.count = d.count;
+          this.paintSlot(job);
+          this.show(job.id);
+          if (job.drafts.length) Toast.ok('题目已生成', `${job.drafts.length} 道可在右侧预览中编辑或组成试卷`);
+        },
+      }).catch(err => {
+        job.status = job.drafts.length ? 'done' : 'error';
+        job.error = (err && err.message) || '生成失败';
+        this.paintSlot(job);
+        this.show(job.id);
+      });
+      return true;
+    },
+    show(id) {
+      this.current = id;
+      this.open();
+      this.render(this.jobs[id]);
+    },
+    render(job) {
+      if (!job) return;
+      this.ensure();
+      const badge = this.wrap.querySelector('#apBadge');
+      const body = this.wrap.querySelector('#apBody');
+      const publish = this.wrap.querySelector('#apPublishAll');
+      const hint = this.wrap.querySelector('#apHint');
+      const made = job.drafts.length;
+      if (job.status === 'running') {
+        badge.textContent = made ? `已出 ${made} 题` : '生成中';
+        badge.className = 'badge badge--brand';
+      } else if (job.status === 'error' && !made) {
+        badge.textContent = '未完成';
+        badge.className = 'badge badge--danger';
+      } else {
+        badge.textContent = `${made} 题 · 草稿`;
+        badge.className = 'badge badge--ok';
+      }
+      const progress = job.status === 'running'
+        ? `<div class="callout callout--brand" style="margin-bottom:12px">${typeof icon === 'function' ? icon('sparkle') : ''}<div>正在生成第 ${Math.min(made + 1, job.count)} / ${job.count} 道题目</div></div>`
+        : (job.error ? `<div class="callout callout--${made ? 'warn' : 'danger'}" style="margin-bottom:12px">${typeof icon === 'function' ? icon('alert') : ''}<div>${U.esc(job.error)}</div></div>` : '');
+      body.innerHTML = progress + (made
+        ? job.drafts.map((d, i) => this.cardHtml(d, i)).join('')
+        : (job.status === 'running' ? '' : '<div class="empty"><b>还没有题目</b><p>生成失败或被中断，请重新在对话里提出出题请求。</p></div>'));
+      hint.textContent = job.paperId
+        ? '试卷草稿已保存，可继续编辑题目或打开发布。'
+        : (made ? '可逐题编辑；组成试卷不会立刻发给学生。' : '草稿尚未进入正式题库。');
+      publish.disabled = !job.drafts.some(d => d.status === 'draft');
+      const examBtn = this.wrap.querySelector('#apExam');
+      if (examBtn) {
+        examBtn.disabled = !job.drafts.some(d => d.status === 'draft' || d.status === 'published');
+        examBtn.textContent = job.paperId ? '打开试卷' : '组成试卷';
+      }
+      body.querySelectorAll('[data-ap-edit]').forEach(btn => btn.addEventListener('click', () => {
+        const draft = job.drafts[Number(btn.dataset.apEdit)];
+        if (!draft) return;
+        if (typeof Question === 'undefined' || !Question.openDraftEdit) {
+          Toast.warn('当前页无法打开编辑器', '请到「AI 出题与题库 → 草稿箱」编辑');
+          return;
+        }
+        Question.openDraftEdit(draft, {
+          onSaved: (res, payload) => {
+            draft.payload = payload || draft.payload;
+            if (res && res.status) draft.status = res.status;
+            if (res && res.errors) draft.errors = res.errors;
+            if (this.current === job.id) this.render(job);
+          }
+        });
+      }));
+      body.querySelectorAll('[data-ap-pub]').forEach(btn => btn.addEventListener('click', () => this.publishOne(job, Number(btn.dataset.apPub), btn)));
+      job.drafts.forEach((d, i) => {
+        const q = d.payload || {};
+        if (q.graph && window.DsFigure) {
+          const el = this.wrap.querySelector('#apFig' + i);
+          if (el) DsFigure.mount(el, q.graph);
+        }
+      });
+    },
+    cardHtml(d, i) {
+      const q = d.payload || {};
+      const typeLabel = TYPE_LABEL[q.type] || (typeof Question !== 'undefined' && Question.GEN_TYPE_LABEL && Question.GEN_TYPE_LABEL[q.type]) || '题目';
+      const optHtml = (typeof Question !== 'undefined' && Question._genOptionHtml)
+        ? Question._genOptionHtml(q, 'apOptFig' + i)
+        : '';
+      const status = d.status === 'draft'
+        ? '<span class="badge badge--ok">校验通过 · 草稿</span>'
+        : (d.status === 'published' ? '<span class="badge badge--brand">已发布</span>' : '<span class="badge badge--danger">待修改</span>');
+      const errs = (d.errors || []).length
+        ? `<div class="callout callout--danger" style="margin-top:8px;padding:7px 10px">${U.esc(d.errors.join('；'))}</div>` : '';
+      return `
+        <article class="gen-q" style="margin-bottom:12px">
+          <div class="gen-q__head">
+            <span class="badge badge--brand">${i + 1}</span>
+            <b>${U.esc(typeLabel)}</b>
+            ${status}
+          </div>
+          <div class="gen-q__body">
+            <div>${U.esc(q.question || '')}</div>
+            <div id="apFig${i}" style="margin:8px 0"></div>
+            ${optHtml}
+            <div class="callout callout--brand" style="margin-top:10px;padding:9px 11px"><div><b>解析：</b>${U.esc(q.analysis || '暂无')}</div></div>
+            ${errs}
+          </div>
+          <div class="row" style="padding:0 14px 12px;gap:8px">
+            ${d.status !== 'published' ? `<button type="button" class="btn btn--sm btn--outline" data-ap-edit="${i}">编辑</button>` : ''}
+            ${d.status === 'draft' ? `<button type="button" class="btn btn--sm btn--primary" data-ap-pub="${i}">发布进题库</button>` : ''}
+          </div>
+        </article>`;
+    },
+    async publishOne(job, index, button) {
+      const draft = job.drafts[index];
+      if (!draft || draft.status !== 'draft') return;
+      button.disabled = true;
+      button.textContent = '发布中…';
+      try {
+        const res = await API.question.draftPublish({ draftId: draft.draftId });
+        draft.status = 'published';
+        draft.publishedQId = res && res.qId;
+        Toast.ok('已发布进题库', res && res.qId ? ('题号 ' + res.qId) : '');
+        if (this.current === job.id) this.render(job);
+      } catch (err) {
+        button.disabled = false;
+        button.textContent = '发布进题库';
+        Toast.err('发布失败', err && err.message);
+      }
+    },
+    examQuestionFromDraft(d, difficulty) {
+      const p = d.payload || {};
+      const type = p.type || 'single';
+      let options = p.options;
+      if (options && !Array.isArray(options)) {
+        options = Object.keys(options).sort().map(key => ({ key, text: String(options[key] || '') }));
+      }
+      if (!Array.isArray(options)) options = [];
+      const figure = (p.graph || p.options_graph)
+        ? { has_image: true, graph: p.graph, options_graph: p.options_graph }
+        : (p.figureJson || p.figure_json || null);
+      return {
+        stem: p.question || p.stem || '',
+        type,
+        difficulty: p.difficulty || difficulty || 3,
+        chapterId: p.chapter_id || d.chapterId || '',
+        kpIds: (p.kp_ids || d.kpIds || []).slice(),
+        options,
+        answer: p.answer || '',
+        analysis: p.analysis || '',
+        figureJson: figure,
+      };
+    },
+    async assembleExam() {
+      const job = this.jobs[this.current];
+      if (!job) return;
+      if (job.paperId && typeof TeacherExams !== 'undefined') {
+        try {
+          const paper = await API.question.exams.detail(job.paperId);
+          Question.tab = 'exam';
+          TeacherExams.courseId = API.config.activeCourseId;
+          TeacherExams.paper = paper;
+          TeacherExams.dirty = false;
+          Router.go('question');
+        } catch (err) {
+          Toast.err('无法打开试卷', err && err.message);
+        }
+        return;
+      }
+      const ready = job.drafts.filter(d => d.status === 'draft' || d.status === 'published');
+      if (!ready.length) { Toast.warn('还没有可组卷的题目'); return; }
+      if (!API.question || !API.question.exams || typeof API.question.exams.save !== 'function') {
+        Toast.warn('当前页无法组卷', '请到「AI 出题与题库 → 试卷测验」新建试卷');
+        return;
+      }
+      const btn = this.wrap.querySelector('#apExam');
+      btn.disabled = true;
+      btn.textContent = '组卷中…';
+      try {
+        const items = ready.map((d, i) => ({
+          id: 'AP' + (i + 1) + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+          sourceQId: d.publishedQId || '',
+          score: 0,
+          question: this.examQuestionFromDraft(d, job.difficulty),
+        }));
+        const saved = await API.question.exams.save({
+          title: '课堂小测',
+          totalScore: 100,
+          scoreMode: 'auto',
+          items,
+        });
+        job.paperId = saved.paperId;
+        Toast.ok('已组成试卷草稿', '学生还看不到；发布后才会出现在测验列表');
+        this.render(job);
+      } catch (err) {
+        btn.disabled = false;
+        btn.textContent = '组成试卷';
+        Toast.err('组卷失败', err && err.message);
+      }
+    },
+    async publishAll() {
+      const job = this.jobs[this.current];
+      if (!job) return;
+      const pending = job.drafts.filter(d => d.status === 'draft');
+      if (!pending.length) return;
+      const btn = this.wrap.querySelector('#apPublishAll');
+      btn.disabled = true;
+      let ok = 0;
+      for (const draft of pending) {
+        try {
+          const res = await API.question.draftPublish({ draftId: draft.draftId });
+          draft.status = 'published';
+          draft.publishedQId = res && res.qId;
+          ok += 1;
+        } catch (err) {
+          Toast.err('部分题目发布失败', err && err.message);
+          break;
+        }
+      }
+      if (ok) Toast.ok('已发布进题库', ok + ' 道题已可供学生练习');
+      this.render(job);
+    },
+  };
+
   const reportExecutors = {
     'student-report-create': async (plan, ctx) => {
       await wait(() => find('#genMyReport'), '报告生成按钮', ctx.guard);
@@ -236,6 +717,7 @@ const AgentUI = (() => {
       await click('#rgGo', ctx.guard);
       return Report._generating ? await Report._generating : false;
     },
+    'teacher-question-create': async (plan, ctx) => AgentPreview.startQuestions(plan, ctx),
   };
 
   async function openQuestionImport(plan, ctx) {
@@ -339,8 +821,9 @@ const AgentUI = (() => {
       const spec = (await load()).find(item => item.id === plan.target && item.role === snapshot.role);
       if (!spec || Object.keys(plan.values || {}).some(key => !spec.fields[key])) throw new Error('此操作入口或字段不受支持');
       if (spec.entity && (!plan.object || !plan.object.id)) throw new Error('尚未确定目标对象');
-      if (spec.execute && (!reportExecutors[spec.execute] || plan.auto !== true)) throw new Error('生成报告需要明确的操作请求');
-      const reportKey = spec.execute ? 'agent-report:' + snapshot.login + ':' + snapshot.userId + ':' + plan.id : '';
+      if (spec.execute && (!reportExecutors[spec.execute] || plan.auto !== true)) throw new Error('生成内容需要明确的操作请求');
+      const isReport = spec.execute === 'student-report-create' || spec.execute === 'teacher-report-create';
+      const reportKey = isReport ? 'agent-report:' + snapshot.login + ':' + snapshot.userId + ':' + plan.id : '';
       if (reportKey && (executed.has(plan.id) || sessionStorage.getItem(reportKey))) {
         Router.go('report');
         Toast.warn('这条生成请求已执行过', '可在历史归档查看报告；需要新报告请重新提出请求或点击页面生成按钮');
@@ -374,10 +857,10 @@ const AgentUI = (() => {
       if (spec.execute) {
         // 浏览器刷新后同一个计划也不能再次写入。失败/中断后保留页面上的手动生成按钮。
         if (!ctx.guard()) return false;
-        sessionStorage.setItem(reportKey, 'started');
+        if (reportKey) sessionStorage.setItem(reportKey, 'started');
         executed.add(plan.id);
         const success = await reportExecutors[spec.execute](plan, ctx);
-        sessionStorage.setItem(reportKey, success ? 'done' : 'failed');
+        if (reportKey) sessionStorage.setItem(reportKey, success ? 'done' : 'failed');
         return Boolean(success);
       }
       executed.add(plan.id);
@@ -394,5 +877,5 @@ const AgentUI = (() => {
     const ctx = { files: [], guard: () => role() === snapshot.role && userId() === snapshot.user && loginId() === snapshot.login && currentCourse() === snapshot.course && Router.current === snapshot.view };
     return openQuestionImport({ values: {} }, ctx);
   }
-  return { apply, load, wait, handlers, openImport, setFile };
+  return { apply, load, wait, handlers, openImport, setFile, preview: AgentPreview };
 })();

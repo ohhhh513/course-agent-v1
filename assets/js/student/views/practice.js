@@ -215,8 +215,9 @@
       panel.innerHTML = `<div class="card"><div class="card__body t-dim fz-13">检查存档…</div></div>`;
       API.practice.current({ mode }).then(sv => {
         if (stale()) return;
-        // 有实际作答进度、且未做完，才算「存档」；空会话（0 题）不提示
-        if (sv && sv.sessionId && sv.answered > 0 && sv.answered < sv.total) this._renderResumePanel(mode, ms, sv);
+        // 做过一部分才算个人存档。教师布置的补练即使还没开始也要出现，避免被「开始新练习」覆盖。
+        const assigned = sv && sv.assigned && sv.answered < sv.total;
+        if (sv && sv.sessionId && sv.total > 0 && (assigned || (sv.answered > 0 && sv.answered < sv.total))) this._renderResumePanel(mode, ms, sv);
         else this._startMode(mode, ms);
       }).catch(() => {
         if (!stale()) {
@@ -260,7 +261,7 @@
         </div>
         <div class="card__body">
           <div class="callout callout--brand">${icon('clock')}
-            <div><b>你上次练到一半</b><div class="fz-12 t-dim" style="margin-top:2px">已完成 ${sv.answered}/${sv.total} 题，可继续上次进度。</div></div>
+            <div><b>${sv.assigned && sv.answered === 0 ? '教师布置了补练' : '你上次练到一半'}</b><div class="fz-12 t-dim" style="margin-top:2px">${sv.assigned && sv.answered === 0 ? `共 ${sv.total} 题，还没开始。` : `已完成 ${sv.answered}/${sv.total} 题，可继续上次进度。`}</div></div>
           </div>
           <div class="row" style="margin-top:14px">
             <button class="btn btn--primary" id="rsContinue">${icon('arrowRight')} 继续挑战（${sv.answered}/${sv.total}）</button>

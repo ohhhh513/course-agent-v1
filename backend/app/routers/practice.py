@@ -373,7 +373,9 @@ def current_session(
     )
     if not session:
         return ok(None)
-    q_ids = [x.get("qId") for x in (loads(session.questions_snapshot) or []) if x.get("qId")]
+    raw_snapshot = loads(session.questions_snapshot) or []
+    assigned = any(isinstance(x, dict) and x.get("kind") == "pack" for x in raw_snapshot)
+    q_ids = [x.get("qId") for x in raw_snapshot if isinstance(x, dict) and x.get("qId")]
     rows = {q.q_id: q for q in db.query(Question).filter(
         Question.course_id == course_id,
         Question.q_id.in_(q_ids),
@@ -399,6 +401,7 @@ def current_session(
     return ok({
         "sessionId": session.session_id, "mode": session.mode,
         "total": len(questions), "answered": answered_count,
+        "assigned": assigned,
         "questions": questions,
     })
 
@@ -418,7 +421,7 @@ def get_session_questions(
     ).first()
     if not session:
         return fail("会话不存在", 404)
-    q_ids = [x["qId"] for x in loads(session.questions_snapshot) or []]
+    q_ids = [x.get("qId") for x in (loads(session.questions_snapshot) or []) if isinstance(x, dict) and x.get("qId")]
     rows = db.query(Question).filter(
         Question.course_id == course_id,
         Question.q_id.in_(q_ids),

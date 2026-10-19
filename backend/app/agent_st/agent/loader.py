@@ -33,7 +33,7 @@ EXPLAIN_GROUNDING = (
     "具体界面操作用 prepare_ui_action：询问auto=false给按钮，明确指令auto=true打开并回填；保存、发送、加入、正式导入和删除仍需用户确认。"
     "按整段语义和最近对话理解操作意图，不要求用户命中固定说法；代词或省略能从上文唯一确定时继续定位该对象。功能/资料/操作位置询问若有已实现入口，必须在最终回答前调用prepare_ui_action给真实按钮，不能只写步骤或只调用get_system_guide。没有成功生成入口不得声称有下方按钮；指代不明先澄清，不任选对象。纯知识问题不强制加入口，表达想学习某个知识点可给学习入口但不擅自跳页。"
     "auto只依据本轮意图：历史用于确定对象，不继承历史的自动跳转指令。即使上一轮说我要编辑，本轮问那在哪改也必须auto=false，只给按钮；本轮明确要求打开或继续执行才auto=true。"
-    "明确做错题必须打开错题重练，不得只跳到练习首页或错题本；有未完成错题会直接继续原进度。明确生成学情报告用当前角色report.create入口，让前端实际生成并打开详情。禁止代选答案、自动提交练习或伪造学习进度。用户只要求代答刷分而未独立要求打开界面时，只简短拒绝，不调用任何界面准备或导航工具，不擅自打开替代页面。"
+    "明确做错题必须打开错题重练，不得只跳到练习首页或错题本；有未完成错题会直接继续原进度。明确生成学情报告用当前角色report.create入口，让前端实际生成并打开详情。教师明确出题用 teacher.question.create 在对话里直接生成：缺题量、题型或范围时先 offer_choices 让用户点选，禁止默认题量后出题；细节齐全再 create。不要调用 kp_heatmap 做逐点分析，不要打开出题配置，不要把完整试卷或出题方案写进聊天，正文只留一两句说明正在生成，不要催点预览题目。禁止代选答案、自动提交练习或伪造学习进度。用户只要求代答刷分而未独立要求打开界面时，只简短拒绝，不调用任何界面准备或导航工具，不擅自打开替代页面。"
     "学情数据用对应角色查询工具；只有课程知识讲解必须先检索，并以命中的原文为依据。正文使用题目或知识点名称说明，默认不附题号或 KP 编号；"
     "只有用户明确询问编号，或需要靠编号区分对象时，才给出工具实际返回的编号。来源编号由系统的 citations 事件单独展示。"
     "直接调用工具，不输出检索或分析过程的进度旁白；最终回答只保留回答问题所需的结论与说明。"
@@ -89,6 +89,32 @@ def _flow_header(flow: dict) -> str:
     return "当前任务流（按用户问题选择系统操作、数据查询或课程讲解步骤；课程讲解不得跳过检索）："
 
 
+def bind_course_identity(extra: dict | None, course_id: str = "") -> dict:
+    """把当前课程名称写进提示词上下文。查不到名称时仍带 courseId，避免模型乱自称。"""
+    bound = dict(extra or {})
+    cid = str(bound.get("courseId") or course_id or "").strip()
+    if cid:
+        bound.setdefault("courseId", cid)
+        if not str(bound.get("courseName") or "").strip():
+            from app.agent_st.rag.structure import course_name
+            bound["courseName"] = course_name(cid)
+    return bound
+
+
+def _course_identity_line(flow: dict, ctx: dict) -> str:
+    if str(flow.get("id") or "") == "admin_ops":
+        return ""
+    name = str(ctx.get("courseName") or "").strip()
+    if name:
+        return (
+            f"当前课程：《{name}》。你是这门课的学习助手。"
+            "自称、拒绝越界和举例时必须使用这个名称，禁止说成数据结构或其他未选定的课程。"
+        )
+    if ctx.get("courseId"):
+        return "当前已选定一门课程，但课程名称未知。自称「本课学习助手」，不要改口成其他课程名。"
+    return "当前未选定课程。不要自称属于某门固定课程。"
+
+
 def build_system_prompt(
     persona: dict,
     flow: dict,
@@ -99,11 +125,14 @@ def build_system_prompt(
     skills = [load_skill(name) for name in skill_names]
     flow_text = yaml.safe_dump({k: flow[k] for k in flow if k != "skills"}, allow_unicode=True)
     ctx = extra_context or {}
-    parts = [
-        persona.get("system", ""),
+    parts = [persona.get("system", "")]
+    identity = _course_identity_line(flow, ctx)
+    if identity:
+        parts.append(identity)
+    parts.extend([
         "\n\n".join(s for s in skills if s),
         _flow_header(flow) + "\n" + flow_text,
-    ]
+    ])
     if course_catalog:
         parts.append(
             "本课程「章 + 知识点」清单（术语以这些名称为准；"

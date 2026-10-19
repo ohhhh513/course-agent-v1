@@ -32,6 +32,8 @@ class Element {
   get textContent(){return (this._text||'')+this.children.map(c=>c.textContent).join('');}
   set textContent(value){this._text=String(value);this.children=[];}
   get options(){return this.tagName==='SELECT'?this.querySelectorAll('option'):undefined;}
+  get id(){return this.attributes.id||'';}
+  set id(value){this.attributes.id=String(value);}
   appendChild(child){child.parentElement=this;this.children.push(child);return child;}
   remove(){if(this.parentElement)this.parentElement.children=this.parentElement.children.filter(c=>c!==this);this.parentElement=null;}
   get isConnected(){return Boolean(this.parentElement);}
@@ -64,12 +66,12 @@ class Element {
 function setup(role='student', storage=new Map()) {
   const body=new Element('body');body.innerHTML='<div id="view-practice" class="view"></div><div id="view-report" class="view"></div>';
   const warnings=[], writes=[];
-  const document={body,addEventListener(){},getElementById:id=>body.querySelector('#'+id),querySelector:s=>body.querySelector(s),querySelectorAll:s=>body.querySelectorAll(s)};
+  const document={body,addEventListener(){},createElement:tag=>new Element(tag),getElementById:id=>body.querySelector('#'+id),querySelector:s=>body.querySelector(s),querySelectorAll:s=>body.querySelectorAll(s)};
   const sandbox={console,document,window:{},icon:()=>'',R:{empty:()=>''},CSS:{escape:String},
     Auth:{currentUser:()=>({role,userId:role+'1'}),getSession:()=>({loginStartedAt:'login1'})},
     U:{$:(s,p=body)=>p.querySelector(s),$$:(s,p=body)=>p.querySelectorAll(s),esc:String,bar:()=>'',stars:()=>''},
     Router:{current:'ai',views:{},register(id,cfg){this.views[id]=cfg;},go(id){this.current=id;const cfg=this.views[id];if(cfg&&!cfg.mounted){cfg.mount();cfg.mounted=true;}}},
-    Toast:{warn:(...x)=>warnings.push(x),ok(){}},
+    Toast:{warn:(...x)=>warnings.push(x),ok(){},info(){},err(){}},
     MutationObserver:class {observe(){}disconnect(){}},Event:class{constructor(type){this.type=type;}},
     setTimeout,clearTimeout,setInterval:(fn,delay)=>delay===1000?0:setInterval(fn,delay),clearInterval,
     fetch:async()=>({ok:true,json:async()=>catalogue}),sessionStorage:{getItem:key=>storage.get(key)||null,setItem:(key,value)=>storage.set(key,value)},
@@ -166,4 +168,66 @@ async function reports() {
   console.log('PASS 生成等待中重新登录，不展示旧账号的报告详情');
 }
 
-(async()=>{await practice();await reports();console.log('全部通过：实际页面代码异步点击回归（DOM 替身，非浏览器实测）');})().catch(e=>{console.error(e);process.exitCode=1;});
+async function questions() {
+  const s=setup('teacher');
+  let pending=null;
+  s.sandbox.API.question={
+    genStream:(payload,handlers)=>{
+      s.writes.push(payload);
+      pending=handlers;
+      return Promise.resolve();
+    },
+    draftPublish:async({draftId})=>{s.writes.push('pub:'+draftId);return {qId:'AI1'};},
+    draftUpdate:async()=>({status:'draft',errors:[]}),
+    exams:{save:async(p)=>{s.writes.push(p);return {paperId:'EP1',status:'draft',items:p.items};},detail:async()=>({paperId:'EP1',title:'课堂小测',items:[]})},
+  };
+  const target=plan(s,'teacher.question.create',{kpIds:['K1'],count:6,types:['single'],difficulty:3});
+  const slot=s.body.appendChild(new Element('div',{'data-preview-job':target.id,class:'msg__preview-slot'}));
+  assert(await s.ui.apply(target,{auto:true,fromView:'ai'}));
+  await flush();
+  assert.equal(s.writes[0].kpIds[0],'K1');
+  assert.equal(s.writes[0].count,6);
+  const wrapBefore=s.body.querySelector('#agentPreviewWrap')||s.body.querySelector('#agentPreviewPanel');
+  assert(!wrapBefore || wrapBefore.hidden,'生成未完成前不打开预览');
+  assert(String(slot.textContent).includes('正在'));
+  assert(!slot.querySelector('[data-ap-open]'),'生成中不显示预览按钮');
+  const draft={draftId:'D1',status:'draft',payload:{type:'single',question:'栈的特点是？',options:{A:'先进后出',B:'先进先出'},answer:'A',analysis:'栈后进先出。'}};
+  pending.onDraft(draft);await flush();
+  assert(String(slot.textContent).includes('1 / 6') || String(slot.textContent).includes('正在生成'));
+  pending.onDone({count:6});await flush();
+  const panel=s.body.querySelector('#agentPreviewWrap')||s.body.querySelector('#agentPreviewPanel');
+  assert(panel);assert.equal(panel.hidden,false);
+  assert(String(s.body.querySelector('#apBody').textContent).includes('栈的特点'));
+  assert(s.body.querySelector('[data-ap-edit]'));
+  assert(s.body.querySelector('#apExam'));
+  assert(slot.querySelector('[data-ap-open]'),'全部完成后才出现预览按钮');
+  s.body.querySelector('#apExam').click();await flush();
+  assert.equal(s.writes.at(-1).title,'课堂小测');
+  assert.equal(await s.ui.apply(target,{fromView:'ai'}),true,'再次点击只重开预览');
+  assert.equal(s.writes.filter(x=>x&&x.kpIds).length,1,'同一计划不重复生成');
+  console.log('PASS 教师对话出题：生成中显示进度，全部完成后打开预览，可组成试卷');
+
+  const ask=setup('teacher');
+  const askPlan=plan(ask,'teacher.question.create',{kpIds:['K1'],types:['single'],difficulty:3});
+  const askSlot=ask.body.appendChild(new Element('div',{'data-preview-job':askPlan.id,class:'msg__preview-slot'}));
+  ask.sandbox.API.question={
+    genStream:(payload,handlers)=>{
+      ask.writes.push(payload);
+      Promise.resolve().then(()=>{handlers.onDraft(draft);handlers.onDone({count:payload.count});});
+      return Promise.resolve();
+    },
+    exams:{save:async()=>({paperId:'EP2'})},
+  };
+  assert(await ask.ui.apply(askPlan,{auto:true,fromView:'ai'}));
+  await flush();
+  assert.equal(ask.writes.length,0,'未选题量时不能直接生成');
+  assert(String(askSlot.textContent).includes('几道'));
+  const eight=askSlot.querySelector('[data-preview-count="8"]');
+  assert(eight);eight.click();await flush();
+  assert.equal(ask.writes[0].count,8);
+  const askedPanel=ask.body.querySelector('#agentPreviewWrap')||ask.body.querySelector('#agentPreviewPanel');
+  assert(askedPanel);assert.equal(askedPanel.hidden,false);
+  console.log('PASS 教师对话出题：未说题量时先出选项，点选后再生成');
+}
+
+(async()=>{await practice();await reports();await questions();console.log('全部通过：实际页面代码异步点击回归（DOM 替身，非浏览器实测）');})().catch(e=>{console.error(e);process.exitCode=1;});

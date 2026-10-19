@@ -2915,13 +2915,104 @@ def _parse_questions_from_text(text: str) -> list:
 @question_router.post("/packs")
 def create_pack(
     req: CreatePackReq,
+    db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
+    course_id: str = Depends(get_current_course_id),
 ):
-    """生成靶向补练包"""
-    import uuid
+    """按知识点组一套已发布题，写入学生的薄弱点练习存档。不新建表。
+
+    已有未做完（答过至少一题）的薄弱点练习不会被覆盖。还没开始的空存档会被这次布置替换。
+    没有已发布题目时明确失败，不再返回假的 pushed。
+    """
+    from ..models.user import ClassInfo
+    from ..services.kp_stats import course_student_ids
+
+    want = []
+    for raw in req.kpIds or []:
+        kp = str(raw or "").strip()
+        if kp and kp not in want:
+            want.append(kp)
+    if not want:
+        return fail("请指定知识点")
+    valid = [row[0] for row in db.query(GraphNode.id).filter(
+        GraphNode.graph_type == "knowledge",
+        GraphNode.course_id == course_id,
+        GraphNode.id.in_(want),
+    ).all()]
+    kp_ids = [kp for kp in want if kp in set(valid)]
+    if not kp_ids:
+        return fail("这些知识点不属于当前课程，补练包没有推送")
+    clause = _question_kp_clause(Question, kp_ids)
+    pool = db.query(Question).filter(
+        Question.course_id == course_id,
+        Question.status == "published",
+        clause,
+    ).all()
+    if req.difficulty:
+        matched = [q for q in pool if int(q.difficulty or 3) == int(req.difficulty)]
+        if matched:
+            pool = matched
+    if not pool:
+        return fail("这些知识点还没有已发布题目，补练包没有推送")
+    count = max(1, min(int(req.count or 6), 20, len(pool)))
+    picked = sorted(pool, key=lambda q: (int(q.difficulty or 3), q.q_id))[:count]
+    uids = course_student_ids(db, course_id)
+    if req.userIds:
+        chosen = {str(item).strip() for item in req.userIds if str(item).strip()}
+        uids = [uid for uid in uids if uid in chosen]
+        if not uids:
+            return fail("指定的学生不在当前课程，补练包没有推送")
+    if req.classId:
+        info = db.query(ClassInfo).filter(ClassInfo.class_id == req.classId).first()
+        class_name = (info.name if info else "") or str(req.classId)
+        rows = db.query(User.user_id, User.class_name).filter(User.user_id.in_(uids)).all()
+        allowed = {uid for uid, name in rows if (name or "") in (class_name, str(req.classId))}
+        uids = [uid for uid in uids if uid in allowed]
+        if not uids:
+            return fail("这个班级在当前课程没有学生，补练包没有推送")
+    if not uids:
+        return fail("当前课程还没有学生，补练包没有推送")
+
+    pack_id = "PK" + uuid.uuid4().hex[:10]
+    snapshot = [{"qId": q.q_id, "type": q.type, "stem": q.stem} for q in picked]
+    snapshot.append({"kind": "pack", "packId": pack_id})
+    created, skipped = [], []
+    for uid in uids:
+        running = db.query(PracticeSession).filter(
+            PracticeSession.user_id == uid,
+            PracticeSession.course_id == course_id,
+            PracticeSession.mode == "weak",
+            PracticeSession.status == "running",
+        ).order_by(PracticeSession.created_at.desc()).first()
+        if running:
+            answered = db.query(AnswerRecord).filter(
+                AnswerRecord.session_id == running.session_id,
+            ).count()
+            if answered:
+                skipped.append(uid)
+                continue
+            running.status = "abandoned"
+        db.add(PracticeSession(
+            session_id="PS" + uuid.uuid4().hex[:10],
+            user_id=uid,
+            course_id=course_id,
+            mode="weak",
+            total=len(picked),
+            status="running",
+            questions_snapshot=json.dumps(snapshot, ensure_ascii=False),
+        ))
+        created.append(uid)
+    db.commit()
+    if not created:
+        return fail("这些学生都有未做完的薄弱点练习，为避免覆盖进度，补练包没有推送")
     return ok({
-        "packId": "PK" + uuid.uuid4().hex[:10],
-        "kpIds": req.kpIds, "count": req.count, "pushed": True,
+        "packId": pack_id,
+        "kpIds": kp_ids,
+        "count": len(picked),
+        "pushed": True,
+        "studentCount": len(created),
+        "skippedCount": len(skipped),
+        "note": "已写入学生的薄弱点练习。打开「智能练习 → 薄弱点强化」可继续；已有未做完练习的学生未被覆盖。",
     })
 
 

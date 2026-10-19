@@ -10,7 +10,7 @@
 - **复用业务口径**：正确率走 `services/scoring`（按题去重取最近一次；主 KP 权重 1.0 / 标签 0.3），
   掌握率走 `services/kp_stats.mastery_by_kp`，预警门槛复用 `services/alert_detector` 的常量。
   工具本身不实现统计口径。
-- **只读**：这五个工具都不写库。
+- **只读**：这些工具都不写库。提问热点只聚合已有 tool_log，不把学生私聊全文返回。
 - **结果截断**：全班规模不可控，`class_alerts` / `kp_heatmap` / `hot_wrong_questions`
   都在工具里强制截断 —— 不指望模型自己克制。
 """
@@ -81,6 +81,71 @@ _ACCURACY_BASIS = (
     "正确率口径与预警/学情页一致：每道题只取最近一次作答，主知识点权重 1.0、"
     "标签命中的其它知识点权重 0.3；此处按题数加权汇总为个人整体正确率。"
 )
+
+
+def _question_count(db, course_id: str, kp_id: str) -> int:
+    """已发布、且主知识点或标签命中该点的题数。口径与练习组卷一致。"""
+    from app.services.catalog_helpers import question_kp_clause
+
+    clause = question_kp_clause(persistence.Question, [kp_id])
+    if clause is None:
+        return 0
+    return int(db.query(persistence.Question).filter(
+        persistence.Question.course_id == course_id,
+        persistence.Question.status == "published",
+        clause,
+    ).count())
+
+
+def _suggest_items(rate, question_count: int) -> dict:
+    """备课用的出题建议。只根据班级正确率和已有题量，不代替教师点生成。"""
+    if question_count <= 0:
+        return {"count": 3, "type": "单选题",
+                "reason": "这个知识点还没有已发布的题"}
+    if rate is None:
+        return {"count": 2, "type": "单选题",
+                "reason": "还没有学生作答，先备少量基础单选"}
+    if rate < 60:
+        return {"count": 3, "type": "单选题",
+                "reason": "班级正确率低于 60%，适合再出几道单选"}
+    return {"count": 2, "type": "单选题",
+            "reason": "班级正确率已达到 60%，少量巩固即可"}
+
+
+def _kp_brief(db, course_id: str, kp_id: str, uids: list[str]) -> dict:
+    """单个知识点的备课摘要：班正确率、资源数、题量、建议题量和题型。"""
+    node = db.query(persistence.GraphNode).filter(
+        persistence.GraphNode.id == kp_id,
+        persistence.GraphNode.graph_type == "knowledge",
+        persistence.GraphNode.course_id == course_id,
+    ).first()
+    if node is None:
+        return {"error": f"知识点 {kp_id} 不属于当前课程"}
+
+    from app.services.learning_path import resource_count_map
+    from app.services.scoring import quiz_accuracy_by_kp
+
+    rates = []
+    for uid in uids:
+        hit = quiz_accuracy_by_kp(db, uid).get(kp_id)
+        if hit:
+            rates.append(hit[0])
+    avg = round(sum(rates) / len(rates), 1) if rates else None
+    questions = _question_count(db, course_id, kp_id)
+    return {
+        "courseId": course_id,
+        "kpId": node.id,
+        "kpName": node.name,
+        "chapter": node.chapter or "",
+        "accuracy": avg,
+        "answeredStudents": len(rates),
+        "studentCount": len(uids),
+        "resourceCount": int(resource_count_map(db, course_id).get(kp_id, 0)),
+        "questionCount": questions,
+        "suggest": _suggest_items(avg, questions),
+        "basis": _ACCURACY_BASIS,
+        "note": "这是指定知识点的备课摘要，不含学生姓名。没有明确要求出题时不要打开出题页。",
+    }
 
 
 @tool(
@@ -344,6 +409,8 @@ def student_profile(ctx: ToolContext, student_id: str = "", limit: int = 5):
         "取**当前课程**「知识点 × 学生」的矩阵：每格是该生在该知识点上的掌握率或正确率，"
         "每行带一个班均值，按均值升序排列（最弱的排在前面）。"
         "教师问「这个知识点全班错在哪」「哪个知识点整体最差」时调用。"
+        "备课指定某一节时传入 kp_id，返回该点的班级正确率、资源数、已发布题量和建议题量，"
+        "不再返回全班矩阵。"
         "dimension=accuracy（默认，答题正确率）或 mastery（综合掌握率=正确率与资源完成率的较优值）。"
         "行数由 limit 控制（默认 10，最多 20），学生过多时自动截断。"
     ),
@@ -353,12 +420,14 @@ def student_profile(ctx: ToolContext, student_id: str = "", limit: int = 5):
             "dimension": {"type": "string", "enum": ["accuracy", "mastery"],
                           "description": "accuracy=答题正确率（默认）；mastery=综合掌握率"},
             "limit": {"type": "integer", "description": "返回的知识点行数，默认 10（最多 20）"},
+            "kp_id": {"type": "string",
+                      "description": "备课指定知识点时传入，如 KP014。传入后只返回这一节的摘要"},
         },
     },
     flows=_FLOW,
     roles=_TEACHER_ROLES,
 )
-def kp_heatmap(ctx: ToolContext, dimension: str = "accuracy", limit: int = 10):
+def kp_heatmap(ctx: ToolContext, dimension: str = "accuracy", limit: int = 10, kp_id: str = ""):
     course_id = _course_id(ctx)
     if not course_id:
         return {"error": "缺少课程上下文，无法生成知识点矩阵"}
@@ -366,10 +435,16 @@ def kp_heatmap(ctx: ToolContext, dimension: str = "accuracy", limit: int = 10):
     if dim not in ("accuracy", "mastery"):
         dim = "accuracy"
     rows_limit = _clamp(limit, 1, 20, 10)
+    focus = (kp_id or "").strip()
 
     db = persistence.SessionLocal()
     try:
         uids = _students(db, course_id)
+        if focus:
+            if not uids:
+                return {"courseId": course_id, "kpId": focus, "studentCount": 0,
+                        "note": "当前课程还没有学生成员"}
+            return _kp_brief(db, course_id, focus, uids)
         if not uids:
             return {"courseId": course_id, "note": "当前课程还没有学生成员"}
         shown = uids[:_MAX_STUDENTS]
@@ -425,6 +500,151 @@ def kp_heatmap(ctx: ToolContext, dimension: str = "accuracy", limit: int = 10):
             },
             "note": "values 与 students 按顺序一一对应；null 表示该生在这道知识点上没有记录；"
                     "结果已按班均值升序截断（最弱的知识点在前）",
+        }
+    finally:
+        db.close()
+
+
+def _clip_question(text: str) -> str:
+    compact = " ".join((text or "").split())
+    if len(compact) > 80:
+        return compact[:80] + "…"
+    return compact
+
+
+def _resolve_logged_topic(course_id: str, args: dict) -> dict:
+    """从已落库的 resolve_topic 参数还原知识点。不读取助手回答正文。"""
+    from app.agent_st.rag.topic import resolve_topic as resolve_topic_impl
+
+    kp_id = str((args or {}).get("kp_id") or "").strip()
+    text = str((args or {}).get("text") or "").strip()
+    q_id = str((args or {}).get("q_id") or "").strip()
+    if not kp_id and not text and not q_id:
+        return {}
+    return resolve_topic_impl(
+        course_id=course_id, text=text, kp_id=kp_id or None, q_id=q_id or None,
+    ) or {}
+
+
+@tool(
+    name="class_question_hotspots",
+    description=(
+        "统计**当前课程学生**最近一段时间在智能答疑里问得最多的知识点和章节。"
+        "只根据助手消息 tool_log 里已经记录的 resolve_topic 聚合，不返回私聊全文，"
+        "也不返回学生姓名。每个知识点最多带 3 条匿名问句样例。"
+        "教师问「这周学生都在问什么」「哪一章提问最多」时调用。"
+        "days 默认 7，问今天传 1，问这个月最多传 30。"
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "days": {"type": "integer", "description": "统计最近几天，默认 7，范围 1～30"},
+            "limit": {"type": "integer", "description": "返回前几个知识点，默认 5，最多 8"},
+        },
+    },
+    flows=_FLOW,
+    roles=_TEACHER_ROLES,
+)
+def class_question_hotspots(ctx: ToolContext, days: int = 7, limit: int = 5):
+    import json
+
+    course_id = _course_id(ctx)
+    if not course_id:
+        return {"error": "缺少课程上下文，无法统计学生提问"}
+    window = _clamp(days, 1, 30, 7)
+    top = _clamp(limit, 1, 8, 5)
+    since = datetime.utcnow() - timedelta(days=window)
+
+    db = persistence.SessionLocal()
+    try:
+        uids = _students(db, course_id)
+        if not uids:
+            return {"courseId": course_id, "days": window, "total": 0, "items": [],
+                    "note": "当前课程还没有学生成员"}
+        sessions = db.query(persistence.ChatSession.session_id).filter(
+            persistence.ChatSession.course_id == course_id,
+            persistence.ChatSession.user_id.in_(uids),
+        ).all()
+        sids = [row[0] for row in sessions]
+        if not sids:
+            return {"courseId": course_id, "days": window, "total": 0, "items": [],
+                    "chapters": [], "unlocated": 0,
+                    "note": "这段时间没有学生答疑记录"}
+        rows = db.query(persistence.ChatMessage).filter(
+            persistence.ChatMessage.session_id.in_(sids),
+            persistence.ChatMessage.created_at >= since,
+        ).order_by(
+            persistence.ChatMessage.session_id,
+            persistence.ChatMessage.id,
+        ).all()
+
+        buckets: dict[str, dict] = {}
+        chapters: dict[str, int] = {}
+        unlocated = 0
+        unlocated_samples: list[str] = []
+        last_question: dict[str, str] = {}
+        total = 0
+        for row in rows:
+            if row.role == "me":
+                sample = _clip_question(row.content or "")
+                if sample:
+                    last_question[row.session_id] = sample
+                continue
+            if row.role != "ai":
+                continue
+            try:
+                logged = json.loads(row.tool_log or "[]")
+            except (TypeError, json.JSONDecodeError):
+                continue
+            if not isinstance(logged, list):
+                continue
+            sample = last_question.get(row.session_id) or ""
+            for item in logged:
+                if not isinstance(item, dict) or item.get("name") != "resolve_topic":
+                    continue
+                if item.get("kind") not in (None, "tool"):
+                    continue
+                located = _resolve_logged_topic(course_id, item.get("args") or {})
+                kp_id = str(located.get("kp_id") or "").strip()
+                chapter_only = str(located.get("chapter_name") or "").strip()
+                if not kp_id:
+                    if chapter_only and not located.get("uncertain"):
+                        chapters[chapter_only] = chapters.get(chapter_only, 0) + 1
+                    else:
+                        unlocated += 1
+                        if sample and sample not in unlocated_samples and len(unlocated_samples) < 3:
+                            unlocated_samples.append(sample)
+                    total += 1
+                    continue
+                bucket = buckets.setdefault(kp_id, {
+                    "kpId": kp_id,
+                    "kpName": located.get("kp_name") or kp_id,
+                    "chapter": located.get("chapter_name") or "",
+                    "count": 0,
+                    "samples": [],
+                })
+                bucket["count"] += 1
+                if sample and sample not in bucket["samples"] and len(bucket["samples"]) < 3:
+                    bucket["samples"].append(sample)
+                chapter = bucket["chapter"] or "未分章"
+                chapters[chapter] = chapters.get(chapter, 0) + 1
+                total += 1
+
+        items = sorted(buckets.values(), key=lambda r: (-r["count"], r["kpName"]))[:top]
+        chapter_rows = sorted(
+            ({"chapter": name, "count": count} for name, count in chapters.items()),
+            key=lambda r: (-r["count"], r["chapter"]),
+        )[:top]
+        return {
+            "courseId": course_id,
+            "days": window,
+            "total": total,
+            "unlocated": unlocated,
+            "unlocatedSamples": unlocated_samples,
+            "items": items,
+            "chapters": chapter_rows,
+            "note": ("按学生答疑里已记录的知识点定位聚合，问句已截断且不含姓名。"
+                     "点名某个学生时改用 student_profile，不要从这里推断是谁。"),
         }
     finally:
         db.close()

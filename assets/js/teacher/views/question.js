@@ -470,8 +470,11 @@
           Toast.ok('已审核发布', r.affected + ' 道习题进入题库'));
       });
       U.$('#gPack', box).addEventListener('click', () => {
-        API.question.createPack({ kpIds: list.map(q => q.kpId), count: this.gen.count, difficulty: this.gen.difficulty }).then(r =>
-          Toast.ok('靶向补练包已生成', '包号 ' + r.packId + ' · 已推送'));
+        const kpIds = [...new Set(list.map(q => q.kpId).filter(Boolean))];
+        API.question.createPack({ kpIds, count: this.gen.count, difficulty: this.gen.difficulty }).then(r => {
+          const skipped = r.skippedCount ? `，${r.skippedCount} 人有未做完练习未覆盖` : '';
+          Toast.ok('补练已放入学生练习', `已给 ${r.studentCount || 0} 名学生准备 ${r.count} 道题${skipped}`);
+        }).catch(e => Toast.err('没有推送补练包', e && e.message));
       });
     },
 
@@ -689,7 +692,7 @@
       </div>`;
     },
 
-    openDraftEdit(d) {
+    openDraftEdit(d, extra) {
       const p = d.payload || {};
       const isBlank = p.type === 'blank' || p.is_blank;
       const isMulti = p.type === 'multi';
@@ -826,6 +829,7 @@
             API.question.draftUpdate({ draftId: d.draftId, payload }).then(res => {
               Toast.ok('草稿已保存', res.status === 'draft' ? '校验通过' : '校验未通过：' + (res.errors || []).join('；'));
               close(); Question.loadDrafts();
+              if (extra && typeof extra.onSaved === 'function') extra.onSaved(res, payload);
             }).catch(err => Toast.err('保存失败', err && err.message));
           });
         }

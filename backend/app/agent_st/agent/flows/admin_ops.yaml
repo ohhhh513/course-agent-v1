@@ -11,6 +11,7 @@ tools:
   - get_system_guide
   - prepare_ui_action
   - suggest_action
+  - offer_choices
   - system_overview
   - account_overview
   - course_overview

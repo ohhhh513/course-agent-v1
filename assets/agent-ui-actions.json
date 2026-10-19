@@ -321,6 +321,30 @@
       "file_input": ""
     },
     {
+      "id": "student.practice.exam",
+      "role": "student",
+      "title": "打开试卷测验列表",
+      "view": "practice",
+      "steps": [],
+      "fields": {},
+      "entity": "",
+      "handler": "student-exam-list",
+      "focus": "",
+      "file_input": ""
+    },
+    {
+      "id": "student.practice.exam.latest",
+      "role": "student",
+      "title": "打开最近一次已完成试卷的作答详情",
+      "view": "practice",
+      "steps": [],
+      "fields": {},
+      "entity": "",
+      "handler": "student-exam-latest",
+      "focus": "",
+      "file_input": ""
+    },
+    {
       "id": "student.practice.quiz",
       "role": "student",
       "title": "做题模式",
@@ -641,6 +665,18 @@
       "file_input": ""
     },
     {
+      "id": "teacher.question.exam",
+      "role": "teacher",
+      "title": "打开试卷测验列表",
+      "view": "question",
+      "steps": [],
+      "fields": {},
+      "entity": "",
+      "handler": "teacher-exam-list",
+      "focus": "",
+      "file_input": ""
+    },
+    {
       "id": "teacher.question.generate",
       "role": "teacher",
       "title": "AI 出题配置",
@@ -672,6 +708,40 @@
       "handler": "question-config",
       "focus": "",
       "file_input": ""
+    },
+    {
+      "id": "teacher.question.create",
+      "role": "teacher",
+      "title": "预览题目",
+      "view": "",
+      "steps": [],
+      "fields": {
+        "difficulty": {
+          "selector": "",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 5
+        },
+        "count": {
+          "selector": "",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10
+        },
+        "kpIds": {
+          "selector": "",
+          "type": "array"
+        },
+        "types": {
+          "selector": "",
+          "type": "array"
+        }
+      },
+      "entity": "",
+      "handler": "",
+      "focus": "",
+      "file_input": "",
+      "execute": "teacher-question-create"
     },
     {
       "id": "teacher.question.search",

@@ -9,6 +9,7 @@ AI 智能答疑接口：/ai/*
 import json, uuid
 from fastapi import APIRouter, Depends, Body, Query, Request
 from fastapi.responses import FileResponse, JSONResponse
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from typing import Optional
@@ -48,10 +49,11 @@ def ai_sessions(
     user=Depends(get_current_user),
     course_id: str = Depends(get_current_course_id),
 ):
-    """答疑历史会话 —— 按当前学生和当前课程检索。"""
+    """答疑历史会话 —— 按当前学生和当前课程检索。出题流内部会话不进列表。"""
     rows = db.query(ChatSession).filter(
         ChatSession.user_id == user.user_id,
         ChatSession.course_id == course_id,
+        or_(ChatSession.flow_id.is_(None), ChatSession.flow_id != "generate_items"),
     ).order_by(ChatSession.updated_at.desc()).all()
     items = [
         {

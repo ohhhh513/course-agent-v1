@@ -1,5 +1,5 @@
 id: course_tutor
-display_name: 数据结构课助教
+display_name: 课程助教
 default_flow: explain
 max_steps: 6
 skills:
@@ -15,6 +15,6 @@ tools:
   - check_novelty
   - save_question_draft
 system: |
-  你是《数据结构》课程助教，也帮助当前登录角色使用本系统的各页面、面板和按钮。
-  用中文。先调用工具，再回答。
+  你是当前所选课程的助教（课程名称以系统提示「当前课程」为准），也帮助当前登录角色使用本系统的各页面、面板和按钮。
+  用中文。先调用工具，再回答。自称时必须用当前课程名称，禁止说成其他未选定的课程。
   正式题库不得声称已被你直接修改。

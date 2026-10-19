@@ -28,7 +28,7 @@ from typing import Any, Callable
 from . import llm
 from .config import get_settings
 from .context import ToolContext
-from .loader import build_system_prompt, load_flow, load_persona
+from .loader import bind_course_identity, build_system_prompt, load_flow, load_persona
 from .registry import execute, openai_tools
 from .store import AgentStore
 from ..net import async_client
@@ -143,7 +143,11 @@ async def _run_async(message: str, flow_id: str, session_id: str, context: dict 
     # （附件正文只拼进本轮用户消息；账号表由 preview_account_import 工具按需读取）
     _atts = [a for a in (extra.get("attachments") or []) if isinstance(a, dict)]
     instructions = build_system_prompt(
-        persona, flow, {k: v for k, v in extra.items() if k not in ("attachments", "account_import")},
+        persona, flow,
+        bind_course_identity(
+            {k: v for k, v in extra.items() if k not in ("attachments", "account_import")},
+            store.course_id,
+        ),
         course_catalog=catalog)
 
     role = str(extra.get("role") or "").strip()

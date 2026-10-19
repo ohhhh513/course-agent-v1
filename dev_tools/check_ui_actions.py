@@ -38,7 +38,8 @@ def main():
         for role in ('student', 'teacher', 'admin'):
             html = (REPO / f'{role}.html').read_text(encoding='utf-8')
             sources = html + '\n'.join((REPO / path).read_text(encoding='utf-8')
-                                      for path in re.findall(r'<script[^>]+src="([^"]+)"', html)
+                                      for src in re.findall(r'<script[^>]+src="([^"]+)"', html)
+                                      for path in [src.split('?', 1)[0]]
                                       if path.startswith('assets/js/') and (REPO / path).is_file())
             ids = set(re.findall(r'id=["\']([^"\']+)', sources))
             views = set(re.findall(r'data-view="([^"]+)"', html))
@@ -47,6 +48,7 @@ def main():
                     continue
                 assert not spec['view'] or spec['view'] in views, spec['id']
                 assert not spec['handler'] or f"'{spec['handler']}':" in ui, spec['id']
+                assert not spec.get('execute') or f"'{spec['execute']}':" in ui, spec['id']
                 selectors = [s['selector'] for s in spec['steps']] + [spec['focus'], spec['file_input']]
                 selectors += [f['selector'] for f in spec['fields'].values()]
                 for selector in selectors:
@@ -69,6 +71,8 @@ def main():
             course = teacher.extra['courseId']
             pupil = db.query(p.User).join(p.UserCourse, p.UserCourse.user_id == p.User.user_id).filter(p.UserCourse.course_id == course, p.User.role == 'student').first()
             chapter = db.query(p.GraphNode).filter_by(course_id=course, graph_type='chapter').first()
+            knowledge = db.query(p.GraphNode).filter_by(course_id=course, graph_type='knowledge').first()
+            assert knowledge, '演示库缺少知识点，无法验收对话出题入口'
 
         before = db_state()
         def ok(ctx, target, **kw):
@@ -88,9 +92,15 @@ def main():
         ok(student, 'student.practice.mode.wrong', auto=True)
         ok(student, 'student.report.create', auto=True)
         ok(teacher, 'teacher.report.create', auto=True)
+        created = ok(teacher, 'teacher.question.create', auto=True, values={
+            'kpIds': [knowledge.id], 'count': 6, 'types': ['单选', '填空'], 'difficulty': 3})
+        assert created['label'] == '预览题目' and created['values']['types'] == ['single', 'blank']
         ok(student, 'student.practice.chapter', object_id=chapter.id, auto=True)
         denied(student, 'student.report.create', auto=False)
         denied(teacher, 'teacher.report.create', auto=False)
+        denied(teacher, 'teacher.question.create', auto=False, values={'kpIds': [knowledge.id]})
+        denied(teacher, 'teacher.question.create', auto=True)
+        denied(student, 'teacher.question.create', auto=True, values={'kpIds': [knowledge.id]})
         denied(student, 'teacher.report.create', auto=True)
         denied(student, 'student.practice.answer', auto=True)
         denied(student, 'student.practice.submit', auto=True)

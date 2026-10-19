@@ -10,7 +10,7 @@ from collections.abc import Iterator
 from app.agent_st.agent import llm
 from app.agent_st.agent.config import get_settings
 from app.agent_st.agent.context import ToolContext
-from app.agent_st.agent.loader import build_system_prompt, load_flow, load_persona
+from app.agent_st.agent.loader import bind_course_identity, build_system_prompt, load_flow, load_persona
 from app.agent_st.agent.registry import execute, openai_tools, tool_ok
 from app.agent_st.agent.store import AgentStore
 from app.agent_st.rag.bank import get_question, next_ai_q_id, search_similar
@@ -558,7 +558,9 @@ def _retrieval_empty(ctx: ToolContext) -> bool:
 
 
 # 学生学情类工具：问自己的预警 / 某个百分比怎么算 / 逐题拆解 —— 不依赖教材检索，数据来自库
-_STUDENT_ANALYTICS_TOOLS = {"my_alerts", "breakdown", "explain_metric", "weak_ranking"}
+_STUDENT_ANALYTICS_TOOLS = {
+    "my_alerts", "breakdown", "explain_metric", "weak_ranking", "my_last_attempt",
+}
 
 
 def analytics_tool_names() -> set[str]:
@@ -587,15 +589,24 @@ def analytics_tool_names() -> set[str]:
     return names
 
 
+# 教学工作流工具：出题、给选项、打开界面。这些本来就不检索教材，
+# 本轮调用过就不能再打「超出课程材料范围」——否则会出现一边给选项一边拒绝的矛盾。
+_WORKFLOW_TOOLS = {"prepare_ui_action", "offer_choices", "suggest_action"}
+
+
 def _explain_out_of_scope(ctx: ToolContext, message: str) -> bool:
-    """越界判定：主题不确定 + 不像本课问题 + 检索证据分低于越界阈值。
+    """越界判定：主题不确定 + 不像本课教学/学习问题 + 检索证据分低于越界阈值。
+
+    越界只用于与课程学习明显无关的闲聊（天气、菜谱、写诗等）。
+    出题、组卷、练习、学情、界面操作等教学任务即使还没检索到课文，也不是越界。
 
     注意检索混合了向量分，生活类问题（如菜谱）也可能捞到几个低分切片，
     因此不能用「有命中就算相关」，必须看最高分是否达到课程问题的水平。
 
-    例外：**查库类问题**（问自己的预警 / 班级学情 / 某个百分比怎么算 / 逐题拆解）
-    本来就不依赖教材检索，数据来自库；本轮调用过这类工具就不能判成"超出课程材料范围"。
-    集合见 `analytics_tool_names()`。
+    例外：
+    - 本轮成功查到操作目录（界面帮助不依赖教材）
+    - 查库类学情工具，见 `analytics_tool_names()`
+    - 教学工作流工具（出题预览、选项询问、界面入口）
     """
     # 界面帮助以当前角色操作目录为依据，不需要课程教材检索。
     # 只认工具本轮成功查到的目录，失败调用不能豁免越界判断。
@@ -603,6 +614,8 @@ def _explain_out_of_scope(ctx: ToolContext, message: str) -> bool:
         return False
     used = {e.get("name") for e in (ctx.tool_log or []) if isinstance(e, dict)}
     if used & analytics_tool_names():
+        return False
+    if used & _WORKFLOW_TOOLS:
         return False
 
     topic = ctx.turn.get("topic") or {}
@@ -793,7 +806,10 @@ def run_turn(
     # 提示词里的「页面上下文」不含附件正文与账号解析结果：正文只拼进用户消息，
     # 账号表数据由 preview_account_import 工具按需读取 —— 两处都不进 system，
     # 避免同一份内容重复喂（既费 token，也可能让模型把材料当指令；密码更不该进提示词）。
-    prompt_extra = {k: v for k, v in extra.items() if k not in ("attachments", "account_import")}
+    prompt_extra = bind_course_identity(
+        {k: v for k, v in extra.items() if k not in ("attachments", "account_import")},
+        store.course_id,
+    )
     messages = [{
         "role": "system",
         "content": build_system_prompt(persona, flow, prompt_extra, course_catalog=catalog),

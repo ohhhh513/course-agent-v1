@@ -100,8 +100,11 @@ def retrieve_chunks(
             "请直接说明无法在未确定课程的情况下作答，不得凭记忆或常识补全，禁止伪造引用。"
         )
     elif empty:
+        from app.agent_st.rag.structure import course_name as _course_name
+        course_label = (_course_name(course_id) or "").strip() or "当前"
         refuse_hint = (
-            "未检索到课程原文。若问题与数据结构课程明显无关（日常生活等），直接简短说明本助手只覆盖数据结构课程内容，"
+            f"未检索到课程原文。若问题与《{course_label}》明显无关（日常生活等），"
+            f"直接简短说明本助手只覆盖《{course_label}》课程内容，"
             "不得讲解该问题本身；若属课程相关但证据不足，可用【补充】声明非课程原文。不得伪造引用。"
         )
     else:

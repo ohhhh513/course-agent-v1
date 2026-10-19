@@ -42,7 +42,7 @@ FAILS: list[str] = []
 # 与注册表推导交叉校验，防止「漏写 roles」把工具悄悄放给学生。
 KNOWN_TEACHER_TOOLS: dict[str, set[str]] = {
     "explain": {"class_overview", "class_alerts", "student_profile",
-                "kp_heatmap", "hot_wrong_questions"},
+                "kp_heatmap", "hot_wrong_questions", "class_question_hotspots"},
     "generate_items": {"search_similar_questions", "submit_item_plan",
                        "check_novelty", "validate_question", "save_question_draft"},
 }
@@ -79,16 +79,19 @@ def main() -> int:
     exp_student = names_of("explain", "student")
     exp_teacher = names_of("explain", "teacher")
     exp_only = teacher_only("explain")
-    check({"explain_metric", "my_alerts", "breakdown", "weak_ranking"} <= set(exp_student),
+    student_personal = {"my_last_attempt"}
+    check({"explain_metric", "my_alerts", "breakdown", "weak_ranking", "my_last_attempt"} <= set(exp_student),
           f"explain 流含学情工具：{exp_student}")
+    check(student_personal <= set(exp_student) and not (student_personal & set(exp_teacher)),
+          "my_last_attempt 只给学生：读的是当前登录人的最近一次作答，教师清单里不出现")
     check(KNOWN_TEACHER_TOOLS["explain"] <= exp_only,
           f"explain 流的教师专用工具都声明了 roles 不含 student：{sorted(exp_only)}")
     check(not (exp_only & set(exp_student)),
           f"explain 流学生看不到教师专用工具 {sorted(exp_only)}：{exp_student}")
     check(exp_only <= set(exp_teacher),
           f"explain 流教师能看到全部教师专用工具：{exp_teacher}")
-    check(set(exp_student) <= set(exp_teacher),
-          "explain 流教师清单覆盖学生清单（教师权限不小于学生）")
+    check(set(exp_student) - student_personal <= set(exp_teacher),
+          "explain 流教师清单覆盖学生共享工具（个人作答查询除外）")
 
     print("3) generate_items 流：教师专用工具对学生不可见")
     gen_student = names_of("generate_items", "student")
@@ -111,7 +114,7 @@ def main() -> int:
           "出题流不再对管理员开放")
     admin_tools = set(load_flow("admin_ops").get("tools") or [])
     # 业务治理权限保持原有九个工具；系统使用手册与导航是新增的共享只读能力。
-    shared_guidance = {"get_system_guide", "suggest_action", "prepare_ui_action"}
+    shared_guidance = {"get_system_guide", "suggest_action", "prepare_ui_action", "offer_choices"}
     business_admin_tools = admin_tools - shared_guidance
     expected_admin_tools = {"system_overview", "account_overview", "course_overview", "kb_status", "data_check",
                             "preview_account_import", "import_accounts", "preview_account_delete", "delete_accounts"}
@@ -176,6 +179,11 @@ def main() -> int:
     rejected3 = registry.execute("class_alerts", {}, stu_explain_ctx)
     check(isinstance(rejected3, dict) and "无权" in str(rejected3.get("error", "")),
           f"学生硬调 class_alerts 被拒：{rejected3}")
+    teacher_explain_ctx = ToolContext(store=_Store(), flow_id="explain",
+                                      extra={"role": "teacher"}, user_id="U_TEST")
+    rejected_attempt = registry.execute("my_last_attempt", {"q_id": "Q1"}, teacher_explain_ctx)
+    check(isinstance(rejected_attempt, dict) and "无权" in str(rejected_attempt.get("error", "")),
+          f"教师硬调 my_last_attempt 被拒：{rejected_attempt}")
 
     print("7) 写操作（带审批）的工具：学生一律看不见、调不动")
     write_tools = sorted(name for name, spec in registry.TOOLS.items() if spec.approval)
@@ -228,7 +236,7 @@ def main() -> int:
     exp_only = teacher_only("explain")
     check(exp_only <= covered,
           f"explain 流的教师专用工具都在例外集合内：{sorted(exp_only)} ⊆ {sorted(covered)}")
-    check({"my_alerts", "breakdown", "explain_metric", "weak_ranking"} <= covered,
+    check({"my_alerts", "breakdown", "explain_metric", "weak_ranking", "my_last_attempt"} <= covered,
           "学生学情工具也在例外集合内")
 
     print()

@@ -46,6 +46,17 @@ Q_ID_RE = re.compile(r"\b((?:KHD|AI|QD|Q)[0-9A-Za-z_]*\d[0-9A-Za-z_]*)\b", re.I)
 KP_ID_RE = re.compile(r"\b(KP\d{1,4})\b", re.I)
 CHAPTER_ID_RE = re.compile(r"\b(CH0?[1-9])\b", re.I)
 CHAPTER_CN_RE = re.compile(r"第\s*([1-9])\s*章")
+# 口语里的章节范围：第1、2章 / 第1和2章 / 第1-2章 / 第一章 / 前两章。不含课程专名。
+_CN_NUM = {"一": 1, "二": 2, "两": 2, "三": 3, "四": 4, "五": 5, "六": 6, "七": 7, "八": 8, "九": 9, "十": 10}
+CHAPTER_SPAN_RE = re.compile(
+    r"第\s*((?:[0-9一二三四五六七八九十两]+\s*[、,，和与至到～\-–—]\s*)*[0-9一二三四五六七八九十两]+)\s*章"
+)
+FRONT_CHAPTER_RE = re.compile(r"前\s*([0-9一二三四五六七八九十两]+)\s*章")
+# 教学/学习操作：任意课程都成立，不依赖教材检索命中。
+TEACHING_TASK_RE = re.compile(
+    r"(出题|出一套|出几道|出\s*\d+\s*道|组卷|出卷|小测|测验|习题|练习|题库|备课|"
+    r"学情|错题|掌握度|预警|试卷|作业|知识点|章节)"
+)
 
 
 # ------------------------------------------------------------------
@@ -255,11 +266,8 @@ def resolve_topic(
         if _fill_chapter(result, course_id, cid, "text_chapter"):
             return result
 
-    # 6) 「第N章」→ 先定章，再尝试在**该章内**定到知识点
-    #    （否则「第6章 二叉树遍历」只会得到章、丢掉更精确的知识点归属）
-    m = CHAPTER_CN_RE.search(query)
-    if m:
-        num = int(m.group(1))
+    # 6) 「第N章 / 第1、2章 / 前两章」→ 先定章，再尝试在该章内定到知识点
+    for num in mentioned_chapter_numbers(query):
         for ch in structure.list_chapters(course_id):
             if ch["name"].startswith(f"第{num}章"):
                 result.update({
@@ -297,20 +305,50 @@ def resolve_topic(
 
 _COURSE_HINTS = (
     "定义", "实现", "算法", "复杂度", "遍历", "结点", "节点", "指针", "递归",
-    "数据结构", "课件", "教材", "ppt",
+    "课件", "教材", "ppt",
 )
 
 
-def looks_like_course_question(text: str, course_id: str = "") -> bool:
-    """粗判是否像本课问题：有 id 标记/章节，或命中本课知识点名称/课程通用词。
+def _parse_cn_int(token: str) -> int | None:
+    token = (token or "").strip()
+    if token.isdigit():
+        value = int(token)
+        return value if 1 <= value <= 20 else None
+    return _CN_NUM.get(token)
 
-    传入 course_id 时会做知识点名称匹配（数据驱动）；不传则只做通用判断。
+
+def mentioned_chapter_numbers(text: str) -> list[int]:
+    """从用户原话抽出章节序号。只认中文章节说法，不含课程专名。"""
+    found: list[int] = []
+
+    def push(value: int | None) -> None:
+        if value and value not in found:
+            found.append(value)
+
+    for match in CHAPTER_SPAN_RE.finditer(text or ""):
+        for token in re.split(r"[、,，和与至到～\-–—\s]+", match.group(1) or ""):
+            push(_parse_cn_int(token))
+    front = FRONT_CHAPTER_RE.search(text or "")
+    if front:
+        count = _parse_cn_int(front.group(1))
+        if count:
+            for num in range(1, count + 1):
+                push(num)
+    return found
+
+
+def looks_like_course_question(text: str, course_id: str = "") -> bool:
+    """粗判是否像本课教学/学习问题，而不是生活闲聊。
+
+    判定只使用：题号/章节说法、本课知识点名称（传入 course_id 时）、
+    跨课程通用的教学操作词（出题/小测/练习/学情…）、以及少量通用课程词。
+    不含某门课的专有知识点列表，换课程仍然成立。
     """
     query = str(text or "").strip()
     if not query:
         return False
     if Q_ID_RE.search(query) or KP_ID_RE.search(query) or CHAPTER_ID_RE.search(query) \
-            or CHAPTER_CN_RE.search(query):
+            or mentioned_chapter_numbers(query) or TEACHING_TASK_RE.search(query):
         return True
     if course_id and match_terms(course_id, query):
         return True

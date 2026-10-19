@@ -104,7 +104,9 @@ window.AgentChatView = (function () {
    */
   function mdToHtml(src) {
     if (src == null) return '';
-    let text = String(src);
+    let text = String(src)
+      .replace(/[；，]?\s*开始作答和提交由你自己完成。?/g, '')
+      .replace(/[；，]?\s*作答和提交由你自己完成。?/g, '');
     // 1) 先摘出 fenced 代码块，避免块内语法被二次转换
     const fences = [];
     text = text.replace(/```[a-zA-Z0-9_-]*\r?\n?([\s\S]*?)```/g, (_, code) => {
@@ -165,26 +167,33 @@ window.AgentChatView = (function () {
     const html = text.split(/\n{2,}/).map(par => {
       const blocks = [];
       let list = null;
+      const textLines = [];
+      const flushText = () => {
+        if (!textLines.length) return;
+        blocks.push('<p>' + textLines.join('<br>') + '</p>');
+        textLines.length = 0;
+      };
       const flushList = () => { if (list) { blocks.push('</' + list + '>'); list = null; } };
+      const flushBlocks = () => { flushText(); flushList(); };
       par.split('\n').forEach(raw => {
         const line = raw.replace(/\r$/, '');
         const fence = line.match(/^\s*\u0000F(\d+)\u0000\s*$/);
-        if (fence) { flushList(); blocks.push(fences[+fence[1]]); return; }
+        if (fence) { flushBlocks(); blocks.push(fences[+fence[1]]); return; }
         const tbl = line.match(/^\s*\u0000T(\d+)\u0000\s*$/);
-        if (tbl) { flushList(); blocks.push(tables[+tbl[1]]); return; }
+        if (tbl) { flushBlocks(); blocks.push(tables[+tbl[1]]); return; }
         const h = line.match(/^(#{1,6})\s+(.*)/);
-        if (h) { flushList(); blocks.push('<div class="md-h md-h' + h[1].length + '">' + inline(h[2]) + '</div>'); return; }
+        if (h) { flushBlocks(); blocks.push('<div class="md-h md-h' + h[1].length + '">' + inline(h[2]) + '</div>'); return; }
         const ul = line.match(/^\s*[-*•]\s+(.*)/);
-        if (ul) { if (list !== 'ul') { flushList(); blocks.push('<ul class="md-list">'); list = 'ul'; } blocks.push('<li>' + inline(ul[1]) + '</li>'); return; }
+        if (ul) { flushText(); if (list !== 'ul') { flushList(); blocks.push('<ul class="md-list">'); list = 'ul'; } blocks.push('<li>' + inline(ul[1]) + '</li>'); return; }
         const ol = line.match(/^\s*\d+[.、)]\s+(.*)/);
-        if (ol) { if (list !== 'ol') { flushList(); blocks.push('<ol class="md-list">'); list = 'ol'; } blocks.push('<li>' + inline(ol[1]) + '</li>'); return; }
+        if (ol) { flushText(); if (list !== 'ol') { flushList(); blocks.push('<ol class="md-list">'); list = 'ol'; } blocks.push('<li>' + inline(ol[1]) + '</li>'); return; }
         const bq = line.match(/^\s*>\s?(.*)/);
-        if (bq) { flushList(); blocks.push('<blockquote class="md-quote">' + inline(bq[1]) + '</blockquote>'); return; }
-        if (!line.trim()) { flushList(); return; }
+        if (bq) { flushBlocks(); blocks.push('<blockquote class="md-quote">' + inline(bq[1]) + '</blockquote>'); return; }
+        if (!line.trim()) { flushBlocks(); return; }
         flushList();
-        blocks.push(inline(line) + '<br>');
+        textLines.push(inline(line));
       });
-      flushList();
+      flushBlocks();
       return blocks.join('');
     }).join('');
     return html.replace(/(<br>\s*)+$/, '');   // 去掉末尾多余换行
@@ -514,6 +523,7 @@ window.AgentChatView = (function () {
         const chatShell = el.querySelector('.chat-shell') || el;
         const _setHistoryOpen = (open) => {
           if (!historyEl || !toggleBtn) return;
+          if (open && typeof AgentUI !== 'undefined' && AgentUI.preview) AgentUI.preview.close();
           historyEl.hidden = !open;
           chatShell.classList.toggle('is-history-open', !!open);
           toggleBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
@@ -964,6 +974,7 @@ window.AgentChatView = (function () {
         const confirms = this.confirmCardsOf(m);                          // 待批准 / 已处理的写操作
         const suggests = this.suggestCardsOf(m);                          // 只读建议（历史从 toolLog 重建）
         const uiPlans = this.uiCardsOf(m);
+        const choices = this.choiceCardsOf(m);
         const oos = this.outOfScopeOf(m);                                 // 越界（历史从 toolLog 里的 meta 标记恢复）
         if (m.role === 'me') {
           const me = this._meAvatar();
@@ -1004,10 +1015,15 @@ window.AgentChatView = (function () {
               </div>` : ''}
               ${oos ? `<div class="callout callout--warn" style="margin-top:10px">${icon('alert')}<div><b>超出课程材料范围</b>已按「严格溯源」约束拒绝推测性回答，建议换一个更贴近课程知识点的问法。</div></div>` : ''}
               ${confirms.length ? `<div class="msg__confirms">${confirms.map(c => confirmCardHtml(c)).join('')}</div>` : ''}
-              ${uiPlans.length ? `<div class="msg__agent-acts">${uiPlans.map(plan => `<button class="btn btn--sm btn--primary" data-agent-ui="${U.esc(JSON.stringify(plan))}">${U.esc(plan.label || '打开操作界面')}</button>`).join('')}</div>` : ''}
+              ${uiPlans.map(plan => (typeof AgentUI !== 'undefined' && AgentUI.preview && AgentUI.preview.slotHtml)
+                ? AgentUI.preview.slotHtml(plan)
+                : `<div class="msg__agent-acts"><button class="btn btn--sm btn--primary" data-agent-ui="${U.esc(JSON.stringify(plan))}">${U.esc(plan.label || '打开操作界面')}</button></div>`).join('')}
+              ${choices.length ? choices.map(group => `<div class="agent-choices">
+                <p class="agent-choices__prompt">${U.esc(group.prompt)}</p>
+                <div class="agent-choices__list">${group.options.map(option => `<button type="button" class="agent-choice" data-agent-choice="${U.esc(option.message)}">${U.esc(option.label)}</button>`).join('')}</div>
+              </div>`).join('') : ''}
               ${suggests.length ? `
               <div class="msg__agent-acts">
-                <span class="msg__acts-tag">${icon('eye')} 只读建议 · 点击跳转，不会修改任何数据</span>
                 ${suggests.map((a, i) => `<button class="btn btn--sm ${i === 0 ? 'btn--primary' : 'btn--outline'}"
                   data-agent-action="${U.esc(JSON.stringify(a))}">${U.esc(a.label || '打开')}</button>`).join('')}
               </div>` : ''}
@@ -1035,6 +1051,8 @@ window.AgentChatView = (function () {
        */
       outOfScopeOf(m) {
         if (!m) return false;
+        // 已经在给出教学选项或界面入口时，不再同时显示「超出课程材料范围」。
+        if ((this.choiceCardsOf(m) || []).length || (this.uiCardsOf(m) || []).length) return false;
         if (m.outOfScope) return true;
         const log = m.toolLog || [];
         return log.some(x => x && x.kind === 'meta' && x.out_of_scope);
@@ -1110,6 +1128,20 @@ window.AgentChatView = (function () {
         return Array.from(plans.values());
       },
 
+      choiceCardsOf(m) {
+        const out = [];
+        ((m && m.toolLog) || []).forEach(entry => {
+          if (!entry || entry.kind !== 'tool' || entry.name !== 'offer_choices' || entry.ok === false) return;
+          const args = entry.args || {};
+          const options = (Array.isArray(args.options) ? args.options : []).map(item => ({
+            label: String((item && item.label) || '').trim(),
+            message: String((item && (item.message || item.label)) || '').trim(),
+          })).filter(item => item.label && item.message);
+          if (args.prompt && options.length >= 2) out.push({ prompt: String(args.prompt), options });
+        });
+        return out;
+      },
+
       async applyUiPlan(plan, auto = false, fromView = cfg.viewKey) {
         if (typeof AgentUI === 'undefined') return false;
         const origin = this._openSessionStorageInfo();
@@ -1141,6 +1173,31 @@ window.AgentChatView = (function () {
             try { await this.applyUiPlan(plan); } finally { button.disabled = false; }
           });
         });
+        U.$$('[data-agent-choice]', U.$('#chatLog')).forEach(button => {
+          if (button.dataset.bound) return;
+          button.dataset.bound = '1';
+          button.addEventListener('click', () => {
+            const text = (button.dataset.agentChoice || '').trim();
+            if (!text || this.busy) {
+              if (this.busy) Toast.info('正在生成中', '请等待当前回答完成');
+              return;
+            }
+            const group = button.closest('.agent-choices');
+            if (group) {
+              group.querySelectorAll('.agent-choice').forEach(el => {
+                el.disabled = true;
+                el.classList.toggle('is-picked', el === button);
+              });
+            }
+            this.ask(text);
+          });
+        });
+        if (typeof AgentUI !== 'undefined' && AgentUI.preview) {
+          U.$$('[data-preview-job]', U.$('#chatLog')).forEach(slot => {
+            const job = AgentUI.preview.jobs[slot.getAttribute('data-preview-job')];
+            if (job) AgentUI.preview.bindSlot(slot, job);
+          });
+        }
         U.$$('.cite__head', U.$('#chatLog')).forEach(h => {
           if (h.dataset.bound) return;
           h.dataset.bound = '1';
@@ -1533,6 +1590,9 @@ window.AgentChatView = (function () {
 
         const finish = (payload) => {
           const automatic = payload.stopped ? null : (this._uiPlans || []).filter(plan => plan.auto).slice(-1)[0];
+          if (typeof AgentUI !== 'undefined' && AgentUI.preview) {
+            (this._uiPlans || []).forEach(plan => AgentUI.preview.arm(plan));
+          }
           const sm = $id('streamMsg');
           if (sm) sm.remove();
           const cites = (payload.citations || []).map(c => ({

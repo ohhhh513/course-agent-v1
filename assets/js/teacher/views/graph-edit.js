@@ -100,11 +100,11 @@ const TeacherGraphEdit = {
         #view-graph-edit .ge-panel{border-right:1px solid var(--border);display:flex;flex-direction:column;min-height:0;overflow:hidden}
         #view-graph-edit .ge-tabs{display:flex;gap:6px;padding:8px 10px;flex-shrink:0}
         #view-graph-edit .ge-tabs .tab{flex:1;height:30px;border-radius:8px;border:1px solid var(--border);background:var(--surface-2);font-size:13px;cursor:pointer}
-        #view-graph-edit .ge-tabs .tab.on{background:rgba(15,118,110,.12);border-color:#5eead4;color:var(--brand)}
+        #view-graph-edit .ge-tabs .tab.on{background:var(--brand-soft);border-color:var(--brand-300);color:var(--brand)}
         #view-graph-edit .ge-list{flex:1;overflow-x:hidden;overflow-y:auto;padding:0 10px 12px;min-height:0}
         #view-graph-edit .ge-ch{font-size:12px;color:var(--text-3);margin:10px 2px 6px;font-weight:600}
         #view-graph-edit .ge-item{display:flex;align-items:center;gap:8px;padding:8px 10px;border:1px solid var(--border);border-radius:10px;background:var(--surface-2);margin-bottom:6px;cursor:pointer;font-size:13.5px}
-        #view-graph-edit .ge-item:hover{border-color:#5eead4}
+        #view-graph-edit .ge-item:hover{border-color:var(--brand-400)}
         #view-graph-edit .ge-item .swatch{width:10px;height:10px;border-radius:50%;flex-shrink:0}
         #view-graph-edit .ge-item .id{margin-left:auto;font-size:11px;color:var(--text-3);font-family:ui-monospace,monospace}
         #view-graph-edit .ge-canvas-wrap{display:flex;flex-direction:column;min-width:0;min-height:0;position:relative;overflow:hidden}
@@ -112,7 +112,7 @@ const TeacherGraphEdit = {
         #view-graph-edit .ge-legend{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:6px 12px;border-bottom:1px solid var(--border);font-size:12px;color:var(--text-3);flex-shrink:0;background:var(--surface)}
         #view-graph-edit .ge-legend .lg{display:inline-flex;align-items:center;gap:4px}
         #view-graph-edit .ge-legend .lg i{width:9px;height:9px;border-radius:50%;display:inline-block}
-        #view-graph-edit .ge-board-box{position:relative;flex:1 1 auto;min-height:0;overflow:hidden;background:radial-gradient(circle at 30% 20%,rgba(15,118,110,.06),transparent 40%),var(--bg)}
+        #view-graph-edit .ge-board-box{position:relative;flex:1 1 auto;min-height:0;overflow:hidden;background:radial-gradient(circle at 30% 20%,rgba(59,130,246,.06),transparent 40%),var(--bg)}
         #view-graph-edit .ge-board{position:absolute;left:0;top:0;right:0;bottom:0;width:100%;height:100%;display:block;touch-action:none;
           user-select:none;-webkit-user-select:none}
         #view-graph-edit .ge-node circle.core{stroke:transparent;stroke-width:0;transition:stroke .15s}
@@ -148,7 +148,7 @@ const TeacherGraphEdit = {
         #view-graph-edit .ge-plus text{fill:#fff;font-size:19px;font-weight:700;pointer-events:none;user-select:none}
         /* +号悬停反馈：放大 + 阴影 + 顶部品牌色光晕 */
         #view-graph-edit .ge-plus:hover{cursor:pointer}
-        #view-graph-edit .ge-plus:hover circle{filter:drop-shadow(0 2px 6px rgba(15,118,110,.45));transform-origin:center;transform-box:fill-box}
+        #view-graph-edit .ge-plus:hover circle{filter:drop-shadow(0 2px 6px rgba(59,130,246,.45));transform-origin:center;transform-box:fill-box}
         #view-graph-edit .ge-plus:hover text{font-size:20px}
         #view-graph-edit .ge-relpop{position:absolute;z-index:9;min-width:132px;padding:6px;border:1px solid var(--border);
           border-radius:10px;background:var(--surface);box-shadow:0 8px 24px rgba(15,23,42,.14)}

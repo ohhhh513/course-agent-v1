@@ -44,7 +44,7 @@ def main() -> int:
         flow_id = "admin_ops" if role == "admin" else "explain"
         ctx = ToolContext(store=None, flow_id=flow_id, extra={"role": role})
         offered = {item["function"]["name"] for item in openai_tools(flow_id, load_flow(flow_id)["tools"], role)}
-        check({"get_system_guide", "suggest_action"} <= offered, f"{role} 模型可用操作手册与导航")
+        check({"get_system_guide", "suggest_action", "offer_choices"} <= offered, f"{role} 模型可用操作手册与导航")
         for view in nav:
             result = execute("suggest_action", {"kind": "navigate", "label": "打开页面", "view": view}, ctx)
             check(result.get("ok") and result["queued"] == {"kind": "navigate", "label": "打开页面", "view": view},
@@ -64,8 +64,17 @@ def main() -> int:
         if role != "teacher":
             check("teacher.structure.chapter.edit" not in prompt.split("当前登录角色可用的系统操作目录")[-1], f"{role} 目录没有教师操作")
 
-    for name in ("get_system_guide", "suggest_action"):
+    for name in ("get_system_guide", "suggest_action", "offer_choices"):
         check(TOOLS[name].approval is None, f"{name} 不新增业务写操作")
+    teacher_ctx = ToolContext(store=None, flow_id="explain", extra={"role": "teacher"})
+    asked = execute("offer_choices", {
+        "prompt": "这次出几道题？",
+        "options": [{"label": "5 道", "message": "出 5 道题"}, {"label": "8 道"}, {"label": "10 道"}],
+    }, teacher_ctx)
+    check(asked.get("ok") and len(asked.get("options") or []) == 3 and asked["options"][1]["message"] == "8 道",
+          "offer_choices 校验选项并补全 message")
+    check("error" in execute("offer_choices", {"prompt": "出几道？", "options": [{"label": "只有一项"}]}, teacher_ctx),
+          "offer_choices 拒绝不足两项的选项")
     unknown = ToolContext(store=None, flow_id="explain", extra={})
     check("error" in execute("get_system_guide", {"query": "编辑课程"}, unknown), "身份缺失不能查操作目录")
     for role, question, expected in [

@@ -688,6 +688,31 @@ def test_novelty_rejects_tiny_weight_tweak():
     assert not result["ok"]
 
 
+def test_out_of_scope_teaching_ops_not_life_chat(st_env):
+    from app.agent_st.agent import runtime
+    from app.agent_st.agent.context import ToolContext
+    from app.agent_st.agent.store import AgentStore
+    from app.agent_st.rag.topic import looks_like_course_question, mentioned_chapter_numbers
+
+    assert mentioned_chapter_numbers("范围第1、2章") == [1, 2]
+    assert mentioned_chapter_numbers("第一章和第二章") == [1, 2]
+    assert mentioned_chapter_numbers("前两章") == [1, 2]
+    assert looks_like_course_question("帮我出一套课堂小测，范围第1、2章，单选和填空，难度适中")
+    assert looks_like_course_question("出 5 道题")
+    assert not looks_like_course_question("今天天气如何")
+    assert not looks_like_course_question("西红柿炒鸡蛋怎么做")
+
+    ctx = ToolContext(store=AgentStore(user_id="U_OOS"), flow_id="explain", extra={}, user_id="U_OOS")
+    ctx.turn["retrieval"] = {"empty": True, "hits": [], "max_score": 0}
+    ctx.turn["topic"] = {"uncertain": True, "course_title": "", "chapter_name": "", "kp_name": ""}
+    assert runtime._explain_out_of_scope(ctx, "帮我出一套课堂小测，范围第1、2章，单选和填空，难度适中") is False
+    assert runtime._explain_out_of_scope(ctx, "出 5 道题") is False
+    assert runtime._explain_out_of_scope(ctx, "今天天气如何") is True
+    assert runtime._explain_out_of_scope(ctx, "西红柿炒鸡蛋怎么做") is True
+    ctx.tool_log = [{"kind": "tool", "name": "offer_choices", "ok": True, "args": {}}]
+    assert runtime._explain_out_of_scope(ctx, "先选本次出几道") is False
+
+
 def test_demo_explain_empty_uses_supplement(st_env):
     from app.agent_st.agent import runtime
     from app.agent_st.agent.context import ToolContext
@@ -725,6 +750,10 @@ def test_prompt_grounding_splits_by_flow():
     assert "【补充】" in explain
     assert "check_novelty" in generate
     assert "微扰动" in generate
+    assert "你是《数据结构》" not in (persona.get("system") or "")
+    named = build_system_prompt(persona, load_flow("explain"), {"courseName": "C语言程序与设计"})
+    assert "当前课程：《C语言程序与设计》" in named
+    assert "禁止说成数据结构" in named
 
 
 # ---------------- 回归：定位「整词优先」 ----------------

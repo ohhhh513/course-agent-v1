@@ -37,6 +37,11 @@
        数据源 = GET /course/my；切换即 setActiveCourse + 重绘当前视图
        ================================================================ */
     const courseSel = U.$('#courseSel');
+    let myCourses = [];
+    function applySidebarCourse(courseId) {
+      const c = myCourses.find(x => x.courseId === courseId);
+      syncSidebarCourseName(c && c.name, '未加入课程');
+    }
     window.renderStudentNoCourse = function (el) {
       if (!el) return;
       el.innerHTML = `
@@ -77,25 +82,27 @@
     }
     function refreshCourseSel(preferId) {
       return API.course.my().then(list => {
-        const courses = Array.isArray(list) ? list : [];
+        myCourses = Array.isArray(list) ? list : [];
         courseSel.innerHTML = '';
-        if (!courses.length) {
+        if (!myCourses.length) {
           API.setActiveCourse('');
           const o = document.createElement('option');
           o.value = ''; o.textContent = '未加入课程 · 点 + 加入';
           courseSel.appendChild(o);
+          applySidebarCourse('');
           return;
         }
-        courses.forEach(c => {
+        myCourses.forEach(c => {
           const o = document.createElement('option');
           o.value = c.courseId;
           o.textContent = [c.name, c.code, c.classNo].filter(Boolean).join(' · ');
           courseSel.appendChild(o);
         });
         const cur = API.config.activeCourseId;
-        const target = preferId || (courses.some(c => c.courseId === cur) ? cur : courses[0].courseId);
+        const target = preferId || (myCourses.some(c => c.courseId === cur) ? cur : myCourses[0].courseId);
         API.setActiveCourse(target);
         courseSel.value = target;
+        applySidebarCourse(target);
         }).catch(() => {});
     }
     // 首屏课程上下文 Promise：路由启动前必须等它（见 start.js），
@@ -119,6 +126,7 @@
         return;
       }
       API.setActiveCourse(courseSel.value);
+      applySidebarCourse(courseSel.value);
       Toast.info('已切换课程', courseSel.options[courseSel.selectedIndex].text);
       refreshStudentViewsAfterCourseChange();
     });

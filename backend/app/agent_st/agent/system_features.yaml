@@ -99,6 +99,20 @@ roles:
         title: 智能练习
         source: assets/js/student/views/practice.js
         features:
+          - id: student.practice.exam
+            title: 打开试卷测验列表
+            aliases: [试卷测验, 打开试卷, 试卷列表]
+            location: 智能练习顶部「试卷测验」页签
+            steps: [打开「智能练习」，点击顶部「试卷测验」。, 列表只显示已发布试卷；未完成的点「开始」或「继续」，已完成的点「查看详细」。]
+            notes: [助手只能打开列表或已完成的作答详情，不能代答、代交卷。没有已完成记录时不能编造分数。]
+            anchors: [试卷测验, examPaperList, data-exam-start, data-exam-result]
+          - id: student.practice.exam.latest
+            title: 查看最近一次已完成试卷的作答详情
+            aliases: [这次测验, 试卷失分, 作答详情, 查看详细]
+            location: 智能练习 → 试卷测验 → 已完成试卷的「查看详细」
+            steps: [打开「试卷测验」。, 在最近一份已完成试卷上点「查看详细」，查看分数、逐题对错和解析。]
+            notes: [详情是只读的，不会重新交卷。分数以页面为准，助手不能在打开前编造得分。]
+            anchors: [查看详细, examBackList, 作答详情]
           - id: student.practice.start
             title: 选择练习模式并开始做题
             aliases: [靶向练习, 薄弱点强化, 顺序练习, 随机练习, 错题重练, 出题, 整章练习]
@@ -327,13 +341,28 @@ roles:
         source: assets/js/teacher/views/question.js
         prerequisites: [顶部选择自己的课程；题目挂载需要已有章节和知识点。]
         features:
+          - id: teacher.question.exam
+            title: 打开试卷测验列表
+            aliases: [打开试卷, 试卷列表, 试卷测验]
+            location: AI 出题与题库顶部「试卷测验」页签
+            steps: [打开「AI 出题与题库」，点击顶部「试卷测验」。, 列表可按草稿或已发布筛选；编辑、发布仍由教师在页面上确认。]
+            notes: [助手只打开列表，不代为发布试卷，也不按测验结果自动出补练。]
+            anchors: [试卷测验, examCreate, 新建试卷]
           - id: teacher.question.generate
-            title: AI 出题配置、生成预览和批准草稿
-            aliases: [AI 智能出题, 生成习题, 出题配置, 生成题目]
+            title: 打开 AI 出题配置页
+            aliases: [出题配置, 打开出题页, 出题在哪]
             location: AI 出题与题库 → 顶部「AI 智能出题」页签
-            steps: [在「出题配置」选择知识点，可多选；用滑块设置难度和题量。, 点「生成习题」，在右侧查看生成预览和进度。, 若出现待批准卡片，点击「确认执行」后才写入草稿箱；再到「草稿箱」编辑并发布。]
-            notes: [生成期间不要声称已直接发布正式题库；待批准卡片未确认时草稿也尚未写入。]
-            anchors: [AI 智能出题, 出题配置, genKp, genDiff, genCountRange, genBtn, genConfirms]
+            steps: [询问出题入口或要先自己调配置时，打开本页并回填知识点。]
+            notes: [只用于询问位置或明确要求打开配置。教师说「帮我出题 / 出一套小测」必须用 teacher.question.create 在对话里直接生成。]
+            anchors: [AI 智能出题, 出题配置, genKp, genDiff, genCountRange, genBtn]
+          - id: teacher.question.create
+            title: 对话中直接生成题目并预览
+            aliases: [帮我出题, 生成习题, 出一套小测, 课堂小测, 直接出题]
+            source: assets/js/shared/agent-ui.js
+            location: 智能助手对话 → 生成完成后回答下方「预览题目」→ 右侧预览
+            steps: [明确出题且题量、题型、范围齐全时在对话中直接生成草稿。, 生成过程显示进度，全部完成后点「预览题目」在右侧查看、编辑、组成试卷或发布进题库。]
+            notes: [生成的是个人草稿，不是正式题库。用户没说题量时先出选项询问，不要默认题数。不要让教师再去出题页点「生成习题」。不要在聊天正文里贴完整试卷。]
+            anchors: [预览题目]
           - id: teacher.question.material
             title: 出题素材库上传入口的限制
             aliases: [素材库, 上传出题素材, 模拟上传]

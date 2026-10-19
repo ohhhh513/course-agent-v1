@@ -495,7 +495,16 @@ const Router = {
   }
 };
 
-/* ---------------- 7. 顶栏通用初始化 ---------------- */
+/* ---------------- 7. 侧栏课程名（随当前课切换） ---------------- */
+function syncSidebarCourseName(name, emptyText) {
+  const el = document.getElementById('sidebarCourseName');
+  if (!el) return;
+  const text = String(name || '').trim() || emptyText || '未选择课程';
+  el.textContent = text;
+  el.title = text;
+}
+
+/* ---------------- 8. 顶栏通用初始化 ---------------- */
 
 /**
  * 退出登录二次确认（学生端/教师端/管理端共用）
@@ -683,7 +692,7 @@ const Sidebar = {
     if (appRoot.dataset.sidebarInited === '1') return;
     appRoot.dataset.sidebarInited = '1';
 
-    // 注入半圆拉出按钮（避免每个 HTML 文件都改一遍）
+    // 注入边缝方框拉出按钮（避免每个 HTML 文件都改一遍）
     let handle = appRoot.querySelector(':scope > .sidebar__handle');
     if (!handle) {
       handle = document.createElement('button');
