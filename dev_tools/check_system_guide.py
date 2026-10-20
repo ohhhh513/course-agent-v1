@@ -61,6 +61,8 @@ def main() -> int:
         flow = load_flow(flow_id)
         prompt = build_system_prompt(load_persona(flow["persona"]), flow, {"role": role})
         check("系统操作目录" in prompt and "system_guide" in prompt, f"{role} 提示词含操作目录")
+        check("跳转" in prompt and "用户本轮确认" in prompt and "auto=false" in prompt,
+              f"{role} 提示词要求跳转经用户确认")
         if role != "teacher":
             check("teacher.structure.chapter.edit" not in prompt.split("当前登录角色可用的系统操作目录")[-1], f"{role} 目录没有教师操作")
 

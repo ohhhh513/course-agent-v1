@@ -120,7 +120,7 @@ def _lookup_manual_guide(role: str, query: str = "", feature_id: str = "", view:
         {key: item.get(key, []) if key in ("notes", "prerequisites") else item[key]
          for key in ("id", "title", "page", "view", "location", "steps", "prerequisites", "notes", "navigation")}
         for item in matches],
-        "note": "本工具只查询位置，不会生成按钮。目标明确且有可执行入口时，最终回答前必须调用 prepare_ui_action：询问auto=false给按钮，明确打开auto=true。指代从最近对话确定；不能仅写步骤或在未成功准备入口时声称有按钮。"}
+        "note": "本工具只查询位置，不会生成按钮。目标明确且有可执行入口时，最终回答前必须调用 prepare_ui_action：询问/讲解/学情auto=false给按钮，本轮明确要求打开或跳转才auto=true。指代从最近对话确定；不能仅写步骤或在未成功准备入口时声称有按钮。"}
 
 
 def feature_index(role: str) -> str:
@@ -166,7 +166,7 @@ def lookup_guide(role: str, query: str = "", feature_id: str = "", view: str = "
                         "不足时继续用 query=按钮id/函数名、view=所属页面 查询关联片段。"
                         "未调用函数、演示模板或已移除入口不能当作可用功能。"
                         "本工具只查询位置，不会生成按钮。操作目标明确且ui_actions中有入口时，最终回答前必须另调prepare_ui_action："
-                        "询问auto=false给真实按钮，明确打开auto=true；按最近对话解析指代，具体入口优先于普通导航。"
+                        "询问/讲解/学情auto=false给真实按钮，本轮明确要求打开或跳转才auto=true；按最近对话解析指代，具体入口优先于普通导航。"
                         "只写必要中文位置和步骤，不输出代码；没有成功准备入口，不许声称有按钮。"}
     except (OSError, ValueError, KeyError, TypeError):
         LOG.warning("界面源码查询失败，使用原操作手册", exc_info=True)

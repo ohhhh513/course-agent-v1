@@ -3233,7 +3233,8 @@ def teacher_resources(
     includeGen=1 时一并返回出题页上传的素材；资源中心默认不列出，避免和给学生看的资源混在一起。
     """
     from ..services.catalog_helpers import student_visible_source
-    q = db.query(Resource).filter(Resource.course_id == course_id)
+    from ..services.catalog_helpers import not_share_type
+    q = db.query(Resource).filter(Resource.course_id == course_id, not_share_type(Resource.type))
     if not includeGen:
         q = q.filter(student_visible_source(Resource.source))
     q = q.order_by(Resource.res_id.asc())
@@ -3720,7 +3721,7 @@ def structure_overview(
     from ..services.catalog_helpers import is_gen_material
     resources = [
         r for r in db.query(Resource).filter(Resource.course_id == course_id).order_by(Resource.res_id.asc()).all()
-        if not is_gen_material(r)
+        if not is_gen_material(r) and r.type != "share"
     ]
 
     name_map = {n.id: n.name for n in kps}
@@ -4361,8 +4362,10 @@ def get_kp_detail(
     from ..services.catalog_helpers import resource_hits_kp
     res_rows = [
         r for r in db.query(Resource).all()
-        if resource_hits_kp(r, kpId)
-        or ((not (r.kp_id or "").strip()) and chapter and (r.kp or "").startswith(chapter))
+        if r.type != "share" and (
+            resource_hits_kp(r, kpId)
+            or ((not (r.kp_id or "").strip()) and chapter and (r.kp or "").startswith(chapter))
+        )
     ]
     video_res_ids = [r.res_id for r in res_rows if r.type == "video"]
     # 题目数同资源口径：主 KP ∪ kp_ids 标签（2026-09-29），保证面板内两个数字同一规则
@@ -4391,3 +4394,79 @@ def get_kp_detail(
         "questionCount": question_count,
         **stats,
     })
+
+
+class FrontierShareIn(BaseModel):
+    title: str
+    source: str = ""
+    url: str
+
+
+@router.get("/shares")
+def teacher_shares(
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+    course_id: str = Depends(get_current_course_id),
+):
+    from ..services.frontier_share import list_for_teacher
+    return ok(list_for_teacher(db, course_id))
+
+
+@router.post("/shares")
+def create_teacher_share(
+    body: FrontierShareIn,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+    course_id: str = Depends(get_current_course_id),
+):
+    from ..services.frontier_share import create_share
+    try:
+        return ok(create_share(db, course_id, body.title, body.source, body.url))
+    except ValueError as exc:
+        return fail(str(exc), 400)
+
+
+@router.put("/shares/{share_id}")
+def update_teacher_share(
+    share_id: str,
+    body: FrontierShareIn,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+    course_id: str = Depends(get_current_course_id),
+):
+    from ..services.frontier_share import update_share
+    try:
+        return ok(update_share(db, course_id, share_id, body.title, body.source, body.url))
+    except LookupError as exc:
+        return fail(str(exc), 404)
+    except ValueError as exc:
+        return fail(str(exc), 400)
+
+
+@router.delete("/shares/{share_id}")
+def delete_teacher_share(
+    share_id: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+    course_id: str = Depends(get_current_course_id),
+):
+    from ..services.frontier_share import delete_share
+    try:
+        delete_share(db, course_id, share_id)
+        return ok({"shareId": share_id, "deleted": True})
+    except LookupError as exc:
+        return fail(str(exc), 404)
+
+
+@router.get("/shares/{share_id}/readers")
+def teacher_share_readers(
+    share_id: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+    course_id: str = Depends(get_current_course_id),
+):
+    from ..services.frontier_share import readers_of
+    try:
+        return ok(readers_of(db, course_id, share_id))
+    except LookupError as exc:
+        return fail(str(exc), 404)

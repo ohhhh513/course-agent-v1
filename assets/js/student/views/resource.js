@@ -334,7 +334,7 @@
 
       const chipIsActive = kpId => this.currentMode === 'kp' && this.currentKpId === kpId;
 
-      // 默认行：全部 + 章节标签 + 课外教材
+      // 默认行：全部 + 章节标签 + 其他资源
       const allActive = this.currentMode === 'all' && !this.keyword;
       const otherActive = this.currentMode === 'other';
       const row1 = [
@@ -347,7 +347,7 @@
             ${U.esc(chName)}
           </button>`;
         }),
-        `<button class="chip chip--other ${otherActive ? 'is-active' : ''}" data-mode="other">📚 课外教材</button>`,
+        `<button class="chip chip--other ${otherActive ? 'is-active' : ''}" data-mode="other">📚 其他资源</button>`,
       ].join('');
 
       // 展开行：某章节的知识点 chips
@@ -527,7 +527,7 @@
         } else if (!items.length && this.currentMode === 'other') {
           emptyHtml = `<div style="text-align:center;padding:30px">
             <div style="font-size:37px;margin-bottom:8px">📚</div>
-            <p class="fz-14 fw-6">暂未收集到课外教材类资源</p>
+            <p class="fz-14 fw-6">暂未收集到其他资源</p>
             <button class="btn btn--sm btn--outline" id="clearKpFilter" style="margin-top:10px">查看全部资源</button>
           </div>`;
         } else if (!items.length) {

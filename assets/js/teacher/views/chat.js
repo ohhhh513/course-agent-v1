@@ -59,6 +59,7 @@ const TeacherChat = AgentChatView.create({
 
   /**
    * 执行 AI 建议的界面动作（来自工具 suggest_action）。返回 false = 未识别/不允许。
+   * 仅在用户点击回答下方按钮后调用，流式回答结束不会自动跳转。
    * 教师端只允许跳转到教师端自己的页面（白名单）；教师端没有练习页，
    * 所以 practice / 学生端页面一律不执行。
    */
@@ -71,7 +72,7 @@ const TeacherChat = AgentChatView.create({
 
   applyAction(a) {
     const VIEWS = ['dashboard', 'monitor', 'analysis', 'question',
-                   'report', 'structure', 'graph-edit', 'chat'];
+                   'report', 'structure', 'shares', 'graph-edit', 'chat'];
     if (!a || typeof a !== 'object') return false;
     if (a.kind === 'navigate' && VIEWS.includes(a.view)) {
       Router.go(a.view);

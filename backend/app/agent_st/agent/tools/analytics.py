@@ -439,7 +439,7 @@ def weak_ranking(ctx: ToolContext, limit: int = 3):
     description=("检索当前角色实际加载的界面源码：页面、面板、页签、小按钮、事件绑定、弹窗和保存位置。"
                  "凡在问功能、资料或操作入口都先查本工具，包括口语及承接上文的追问，不要求固定关键词。query保留完整问题，并补上最近对话中已明确的指代对象，可限定view；"
                  "sources 返回实时源码，features 是旧手册补充。可再次用按钮id/函数名 query 追踪调用。"
-                 "本工具不会生成跳转按钮；有可执行入口必须在最终回答前另调prepare_ui_action，询问auto=false，明确打开auto=true。新按钮不用预先登记。源码存在不证明入口可用，需确认渲染和绑定；不读业务数据、不执行操作。"),
+                 "本工具不会生成跳转按钮；有可执行入口必须在最终回答前另调prepare_ui_action。询问/讲解/学情auto=false只给按钮，本轮明确要求打开或跳转才auto=true。新按钮不用预先登记。源码存在不证明入口可用，需确认渲染和绑定；不读业务数据、不执行操作。"),
     parameters={"type": "object", "properties": {
         "query": {"type": "string", "description": "完整操作问题；有代词或省略时保留原意，并补上最近对话已明确的对象和目标功能，不编造对象"},
         "feature_id": {"type": "string", "description": "可选，兼容原手册内部功能 id；新功能用 query 检索"},
@@ -461,7 +461,7 @@ def get_system_guide(ctx: ToolContext, query: str = "", feature_id: str = "", vi
 @tool(
     name="suggest_action",
     description=(
-        "在最终正文之前调用，给用户一个**显示在回答下方的可点击界面动作按钮**（不直接执行任何操作）。"
+        "在最终正文之前调用，给用户一个**显示在回答下方的可点击界面动作按钮**（绝不自动跳转，必须等用户点击）。"
         "先完成工具调用再写最终回答，避免在调用导航前后重复回答。"
         "当你的结论指向某个页面或某组练习时调用，例如「建议去练某知识点的靶向练习」"
         "「去我的学情看矩阵」。kind=navigate 只是跳页面；kind=practice 会在学生端"

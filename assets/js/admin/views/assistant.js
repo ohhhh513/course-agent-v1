@@ -119,7 +119,7 @@ const AdminChat = AgentChatView.create({
   }),
   emptyRecommend: '还没有足够的平台汇总数据或历史提问来判断关注点；开始对话后，推荐会随你的关注主题调整。',
 
-  // 只跳转本端真实页面，编辑、保存和删除仍由用户自行操作。
+  // 只跳转本端真实页面，且仅在用户点击建议按钮后执行；编辑、保存和删除仍由用户自行操作。
   applyAction(act) {
     const VIEWS = ['users', 'assistant'];
     if (act && act.kind === 'navigate' && VIEWS.includes(act.view)) {

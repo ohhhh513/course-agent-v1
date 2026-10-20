@@ -5,6 +5,16 @@ from sqlalchemy.orm import Session
 
 # 出题页上传的素材写在现有 source 列上，不新增字段。学生端列表、图谱和练习推荐都排除它。
 GEN_MATERIAL_SOURCE = "出题素材"
+# 前沿分享复用 resources.type，不进资源中心 / 图谱 / 学习路径。
+SHARE_TYPE = "share"
+
+
+def is_share(resource) -> bool:
+    return str(getattr(resource, "type", "") or "") == SHARE_TYPE
+
+
+def not_share_type(type_column):
+    return or_(type_column.is_(None), type_column != SHARE_TYPE)
 
 
 def is_gen_material(resource) -> bool:

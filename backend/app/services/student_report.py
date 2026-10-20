@@ -96,10 +96,11 @@ def build_student_report(db: Session, user, course_id: str) -> dict:
     mastery_vals = [mastery_map[r.kp_id] for r in lp_rows if r.kp_id in mastery_map]
     mastery_avg = round(sum(mastery_vals) / len(mastery_vals), 1) if mastery_vals else 0.0
 
-    from .catalog_helpers import student_visible_source
+    from .catalog_helpers import student_visible_source, not_share_type
     resources = db.query(Resource).filter(
         Resource.course_id == course_id,
         student_visible_source(Resource.source),
+        not_share_type(Resource.type),
     ).all()
     pmap = progress_map(db, uid, [r.res_id for r in resources])
     res_progress = [((pmap.get(r.res_id).progress if pmap.get(r.res_id) else 0) or 0) for r in resources]

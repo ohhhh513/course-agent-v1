@@ -991,6 +991,8 @@ const AgentUI = (() => {
 
   async function apply(plan, options = {}) {
     if (!plan || !plan.id || !plan.target) return false;
+    // 自动跳转只允许「用户本轮已确认打开该界面」的计划；未确认的入口只能靠点击按钮执行。
+    if (options.auto && plan.auto !== true) return false;
     if (running || (options.auto && executed.has(plan.id))) return false;
     const snapshot = { role: role(), userId: userId(), course: currentCourse(), view: Router.current, login: loginId() };
     if (plan.role !== snapshot.role || plan.userId !== snapshot.userId || (plan.role !== 'admin' && plan.courseId !== snapshot.course)) {

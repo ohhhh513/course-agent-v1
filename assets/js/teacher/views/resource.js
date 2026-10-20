@@ -96,7 +96,7 @@
           <select class="select" id="trEKp"><option value="">（不挂具体知识点）</option></select></label>
         <label class="stack" style="gap:4px"><span class="fz-12 t-dim">资源分类</span>
           <select class="select" id="trECat">
-            <option value="other" ${r.category === 'other' ? 'selected' : ''}>课外/教材</option>
+            <option value="other" ${r.category === 'other' ? 'selected' : ''}>其他资源</option>
             <option value="knowledge" ${r.category === 'knowledge' ? 'selected' : ''}>知识点挂载</option>
           </select></label>
         <div class="stack" style="gap:4px"><span class="fz-12 t-dim">多标签</span><div id="trETags"></div></div>
@@ -189,7 +189,7 @@
         <label class="stack" style="gap:4px"><span class="fz-12 t-dim">资源标题</span><input class="input" type="text" id="trTitle" placeholder="默认使用文件名"></label>
         <label class="stack" style="gap:4px"><span class="fz-12 t-dim">所属章节</span><select class="select" id="trChapter"><option value="">自动识别章节</option></select></label>
         <label class="stack" style="gap:4px"><span class="fz-12 t-dim">挂载知识点</span><select class="select" id="trKp"><option value="">（不挂具体知识点）</option></select></label>
-        <label class="stack" style="gap:4px"><span class="fz-12 t-dim">资源分类</span><select class="select" id="trCat"><option value="other">课外/教材</option><option value="knowledge">知识点挂载</option></select></label>
+        <label class="stack" style="gap:4px"><span class="fz-12 t-dim">资源分类</span><select class="select" id="trCat"><option value="other">其他资源</option><option value="knowledge">知识点挂载</option></select></label>
         <div class="stack" style="gap:4px"><span class="fz-12 t-dim">多标签（可选）</span><div id="trTags"></div></div>
         <p class="fz-12 t-dim">教材文献支持 PDF / DOC / DOCX / TXT；课件支持 PDF / PPT / PPTX；教学视频支持 MP4 / MOV / WEBM / MKV。PPT/PPTX 上传时自动转为 PDF 供在线阅读，并保留原文件；转换需要一些时间。上传前会核对文件内容与所选类型。</p>
       </form>`;

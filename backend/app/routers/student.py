@@ -550,10 +550,11 @@ def student_resources(
     course_id: str = Depends(get_current_course_id),
 ):
     # 课程隔离：只返回当前课程下的资源（X-Course-Id 头，缺省回退默认课程）
-    from ..services.catalog_helpers import student_visible_source
+    from ..services.catalog_helpers import student_visible_source, not_share_type
     q = db.query(Resource).filter(
         Resource.course_id == course_id,
         student_visible_source(Resource.source),
+        not_share_type(Resource.type),
     )
     if type and type != "all":
         q = q.filter(Resource.type == type)
@@ -791,10 +792,11 @@ def resource_view(res_id: str, db: Session = Depends(get_db), user: User = Depen
 def resource_stats(db: Session = Depends(get_db), user: User = Depends(get_current_user), course_id: str = Depends(get_current_course_id)):
     """学习资源进度统计 — 从 ResourceProgress 聚合（仅统计当前课程）"""
     uid = user.user_id
-    from ..services.catalog_helpers import student_visible_source
+    from ..services.catalog_helpers import student_visible_source, not_share_type
     resources = db.query(Resource).filter(
         Resource.course_id == course_id,
         student_visible_source(Resource.source),
+        not_share_type(Resource.type),
     ).all()
     res_map = {r.res_id: r for r in resources}
     # 同一资源多行时只取最优行，避免「开始数/完成数/平均进度」被重复行失真
@@ -1228,3 +1230,29 @@ def read_message(
     m.read = 1
     db.commit()
     return ok({"msgId": msg_id, "read": True})
+
+
+@router.get("/shares")
+def list_shares(
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+    course_id: str = Depends(get_current_course_id),
+):
+    """学生驾驶舱前沿分享：优先今日发布，否则最近几篇。"""
+    from ..services.frontier_share import list_for_student
+    return ok(list_for_student(db, course_id, user.user_id))
+
+
+@router.post("/shares/{share_id}/read")
+def read_share(
+    share_id: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+    course_id: str = Depends(get_current_course_id),
+):
+    """记录学生打开一篇前沿分享。"""
+    from ..services.frontier_share import mark_read
+    try:
+        return ok(mark_read(db, course_id, user.user_id, share_id))
+    except LookupError as exc:
+        return fail(str(exc), 404)

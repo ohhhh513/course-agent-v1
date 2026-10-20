@@ -23,7 +23,7 @@ tools:
   - delete_accounts
 max_steps: 5
 steps:
-  - 按本轮语义和最近对话承接唯一账号或操作对象；界面位置与操作先 get_system_guide 核实，目标明确且有入口必须 prepare_ui_action，询问 auto=false 给真实按钮，明确操作 auto=true 打开；多个对象先澄清，纯数据查询不强制导航；保存和正式导入仍需确认，不跳转师生页面
+  - 按本轮语义和最近对话承接唯一账号或操作对象；界面位置与操作先 get_system_guide 核实，目标明确且有入口必须 prepare_ui_action。跳转须用户本轮确认：询问或数据查询 auto=false 给真实按钮，本轮明确要求打开或跳转才 auto=true；多个对象先澄清，纯数据查询不强制导航也不自动换页；保存和正式导入仍需确认，不跳转师生页面
   - 先判断问题属于哪一类：平台总体 → system_overview；账号 → account_overview；课程规模 → course_overview；知识库索引 → kb_status；数据有没有问题 → data_check
   - 上传了学生/教师信息文件且要「录入系统 / 导入账号」→ 先 preview_account_import 看解析与校验结果，再把 validAccounts 原样传给 import_accounts（写操作会进「待批准」卡片，提示管理员去点确认）
   - 要「删除 / 移除账号」（上传名单要删，或点名用户名）→ 先 preview_account_delete 核对可删清单，再把 deletableAccounts 原样传给 delete_accounts（同样是写操作，进「待批准」卡片；被拒的行不要提交）

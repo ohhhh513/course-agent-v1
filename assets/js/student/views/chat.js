@@ -63,6 +63,7 @@ const Chat = AgentChatView.create({
 
   /**
    * 执行 AI 建议的界面动作（来自工具 suggest_action）。返回 false = 未识别/不允许。
+   * 仅在用户点击回答下方按钮后调用，流式回答结束不会自动跳转。
    *
    * 白名单制：navigate 只允许固定页面；practice 只复用「预警 → 去练习」那套待办机制
    * （设置 Practice._pendingTarget 后跳练习页，仍由用户自己点开始）。

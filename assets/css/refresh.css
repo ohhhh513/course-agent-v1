@@ -419,8 +419,8 @@ svg.ico {
 }
 .hero__ring:hover, .hero__stat:hover { transform: translateY(-2px); }
 .streak-cal {
-  border-color: #cdd8e4 !important;
-  box-shadow: inset 0 1px 0 rgba(255,255,255,.9);
+  border: none !important;
+  box-shadow: none;
 }
 .cal-cell, .streak-cal [class*="cell"] { border-radius: 3px; }
 .todo {
@@ -729,6 +729,9 @@ html.auth-skin body {
   .hero__main h2 { font-size: 20px; }
   .hero__stats, .hero__rings { width: 100%; flex-basis: 100%; gap: 12px; }
   .hero--learning > .hero__stats { width: fit-content; max-width: 100%; flex: 0 1 auto; }
+  .hero__feed { max-width: 100%; flex-basis: 100%; min-width: 0; }
+  .share-readers { height: min(50vh, 400px); }
+  .share-readers__cols { grid-template-columns: 1fr; }
   .hero__stat--streak { min-width: 0; max-width: 100%; width: fit-content; }
   .hero__rings { overflow-x: auto; justify-content: flex-start; }
   .hero__ring { flex: 0 0 150px; }

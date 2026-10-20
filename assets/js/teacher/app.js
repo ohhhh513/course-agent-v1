@@ -30,6 +30,7 @@ const ViewFns = {
   report: () => Report.render(),
   resource: () => TeacherStructure.render(),
   structure: () => TeacherStructure.render(),
+  shares: () => TeacherShares.render(),
   'graph-edit': () => TeacherGraphEdit.render(),
 };
 

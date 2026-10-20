@@ -21,11 +21,11 @@
     return h > 0 ? `${h} 时 ${m} 分` : `${m} 分`;
   }
 
-  /** 渲染「今日累计学习时长」徽标；extra 存在时把练习 / 视频明细写进 title */
+  /** 刷新欢迎区「今日学习」时长；extra 存在时把练习 / 视频明细写进 title */
   function _paintTodayDuration(seconds, extra) {
     const el = U.$('#todayStudyDuration');
     if (!el) return;
-    el.textContent = `今日累计学习 ${_fmtStudyDuration(seconds)}`;
+    el.textContent = _fmtStudyDuration(seconds);
     if (extra) {
       el.title = `练习 ${_fmtStudyDuration(extra.practiceSeconds)} · 视频观看 ${_fmtStudyDuration(extra.resourceSeconds)}`;
     }
@@ -54,6 +54,7 @@
       const userName = d.userName || '同学';
       const currentNodeName = (o.currentNode && o.currentNode.name) ? o.currentNode.name : '未开始';
       const greeting = _greetingByTime();
+      const todayStudyText = _fmtStudyDuration(o.todayStudySeconds != null ? o.todayStudySeconds : (o.todayStudyMinutes || 0) * 60);
       const lampText = {
         ok: '学习状态正常',
         warn: `有 ${o.needAttention} 项需要关注`,
@@ -81,34 +82,34 @@
         <div class="hero__main">
           <div class="row" style="margin-bottom:6px">
             ${R.lamp(o.status === 'danger' ? 'red' : o.status === 'warn' ? 'yellow' : 'ok', lampText[o.status])}
-            <span class="badge badge--outline" id="todayStudyDuration"
-              title="练习 ${_fmtStudyDuration(o.todayPracticeSeconds || 0)} · 视频观看 ${_fmtStudyDuration(o.todayResourceSeconds || 0)}">今日累计学习 ${_fmtStudyDuration(o.todayStudySeconds != null ? o.todayStudySeconds : (o.todayStudyMinutes || 0) * 60)}</span>
           </div>
           <h2>${greeting}，${U.esc(userName)} 👋</h2>
-          <p>当前学习节点：<b class="t-brand">${U.esc(currentNodeName)}</b> · 课程总进度 ${o.courseProgress}%</p>
-          <div class="bar bar--lg" style="max-width:420px;margin-top:10px"><i class="is-good" style="width:${o.courseProgress}%"></i></div>
+          <p>当前学习节点：<b class="t-brand">${U.esc(currentNodeName)}</b></p>
+          <div class="bar bar--lg hero__progress"><i class="is-good" style="width:${o.courseProgress}%"></i></div>
+          <div class="hero__glance">
+            <div class="hero__glance-item">
+              <span>课程进度</span>
+              <b>${o.courseProgress}%</b>
+            </div>
+            <div class="hero__glance-item">
+              <span>今日学习</span>
+              <b id="todayStudyDuration"
+                title="练习 ${_fmtStudyDuration(o.todayPracticeSeconds || 0)} · 视频观看 ${_fmtStudyDuration(o.todayResourceSeconds || 0)}">${todayStudyText}</b>
+            </div>
+            <div class="hero__glance-item">
+              <span>连续学习</span>
+              <b>${o.currentStreak} 天</b>
+            </div>
+            <div class="hero__glance-item">
+              <span>累计打卡</span>
+              <b>${o.totalDays} 天</b>
+            </div>
+          </div>
         </div>
         <div class="hero__stats">
           <div class="hero__stat hero__stat--streak">
             <div class="streak-cal" id="streakCal" style="--cal-grid-width:${_calGridWidth}px">
               <div class="cal-top">
-                <div class="cal-stats">
-                  <div class="cal-stat">
-                    <span class="cal-stat__lbl">当前连续</span>
-                    <b class="cal-stat__num">${o.currentStreak}</b>
-                    <span class="cal-stat__unit">天</span>
-                  </div>
-                  <div class="cal-stat">
-                    <span class="cal-stat__lbl">最长连续</span>
-                    <b class="cal-stat__num">${o.maxStreak}</b>
-                    <span class="cal-stat__unit">天</span>
-                  </div>
-                  <div class="cal-stat">
-                    <span class="cal-stat__lbl">累计学习</span>
-                    <b class="cal-stat__num">${o.totalDays}</b>
-                    <span class="cal-stat__unit">天</span>
-                  </div>
-                </div>
                 <div class="cal-legend">
                   <span class="cal-legend__year">${o.semesterLabel || _yrLabel}</span>
                 </div>
@@ -153,6 +154,14 @@
               </div>
               </div>
             </div>
+          </div>
+        </div>
+        <div class="hero__feed" id="frontierFeed">
+          <div class="frontier-feed__head">
+            <b>更多资源分享</b>
+          </div>
+          <div class="frontier-feed__list" id="frontierFeedList">
+            <p class="fz-12 t-dim">正在加载…</p>
           </div>
         </div>
       </div>
@@ -207,26 +216,42 @@
         </div>
 
         <div class="card">
-          <div class="card__head"><h3>${icon('clock')} 最近学习动态</h3></div>
-          <div class="card__body">
-            <div class="tl-scroll">
-              <div class="timeline">
-                ${d.recentActivities.map(a => `
-                  <div class="tl-item tl-item--${a.level}">
-                    <time>${a.time}</time>
-                    <b>${U.esc(a.title)}</b>
-                    <p>${U.esc(a.meta)}</p>
-                  </div>`).join('')}
+          <div class="card__head">
+            <h3>${icon('clock')} 最近学习动态</h3>
+            <span class="spacer"></span>
+            <div class="tl-range" id="tlRange">
+              <button class="tl-range__btn" id="tlRangeBtn" type="button" aria-expanded="false" aria-haspopup="listbox">
+                <span class="tl-range__label">时间维度</span>
+                <span class="tl-range__value" id="tlRangeValue">今天</span>
+                ${icon('chevronDown')}
+              </button>
+              <div class="tl-range__menu" id="tlRangeMenu" hidden role="listbox">
+                ${[
+                  ['today', '今天'],
+                  ['yesterday', '昨天'],
+                  ['7d', '近 7 天'],
+                  ['30d', '近 30 天'],
+                  ['month', '本月'],
+                  ['lastMonth', '上月'],
+                ].map(([id, label], i) => `
+                  <button class="tl-range__opt${i === 0 ? ' is-active' : ''}" type="button" data-range="${id}" data-label="${label}">
+                    <span>${label}</span>${i === 0 ? icon('check') : '<span class="tl-range__check"></span>'}
+                  </button>`).join('')}
               </div>
             </div>
+          </div>
+          <div class="card__body">
+            <div class="tl-scroll" id="tlRangeList"></div>
           </div>
         </div>
       </div>`;
 
       _startTodayDurationTimer();
+      _bindActivityRange(el, Array.isArray(d.recentActivities) ? d.recentActivities : []);
 
       // 交互绑定
       U.$$('[data-goto]', el).forEach(b => b.addEventListener('click', () => Router.go(b.dataset.goto)));
+      _loadFrontierFeed();
       U.$$('[data-practice-kp]', el).forEach(b => b.addEventListener('click', () => {
         Router.go('practice');
         Toast.info('已定位薄弱知识点', '可直接开始靶向强化练习');
@@ -252,6 +277,140 @@
 // update：视图已 mount 过时再次进入也要刷新 —— 驾驶舱指标（尤其今日累计学习时长）
 // 必须反映最新数据，不能停留在首次进入的快照上。
 Router.register('dashboard', { title: '学习驾驶舱', mount: renderDashboard, update: renderDashboard });
+
+function _loadFrontierFeed() {
+  const box = U.$('#frontierFeedList');
+  if (!box) return;
+  API.student.shares().then(d => {
+    const list = Array.isArray(d.list) ? d.list : [];
+    if (!list.length) {
+      box.innerHTML = '<p class="fz-12 t-dim">还没有新的资源。</p>';
+      return;
+    }
+    box.innerHTML = list.map(item => `
+      <button type="button" class="frontier-feed__item ${item.read ? 'is-read' : ''}" data-share-id="${U.esc(item.shareId)}" data-url="${U.esc(item.url)}">
+        <b>${U.esc(item.title)}</b>
+        <span>${U.esc(item.source || '教师推荐')}</span>
+        ${item.publishedOn ? `<span class="frontier-feed__date">${U.esc(item.publishedOn)}</span>` : ''}
+      </button>`).join('');
+    U.$$('[data-share-id]', box).forEach(btn => btn.addEventListener('click', () => {
+      const url = btn.dataset.url;
+      const id = btn.dataset.shareId;
+      if (url) window.open(url, '_blank', 'noopener');
+      if (id) API.student.readShare(id).then(() => btn.classList.add('is-read')).catch(() => {});
+    }));
+  }).catch(() => {
+    box.innerHTML = '<p class="fz-12 t-dim">暂时无法加载分享。</p>';
+  });
+}
+
+function _parseActivityTime(raw) {
+  if (!raw) return null;
+  if (raw instanceof Date) return isNaN(+raw) ? null : raw;
+  const s = String(raw).trim();
+  if (!s) return null;
+  if (/Z$|[+-]\d{2}:?\d{2}$/.test(s)) {
+    const d = new Date(s);
+    return isNaN(+d) ? null : d;
+  }
+  const iso = s.includes('T') ? s : s.replace(' ', 'T');
+  const d = new Date(iso + 'Z');
+  return isNaN(+d) ? null : d;
+}
+
+function _cnParts(d) {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Asia/Shanghai', year: 'numeric', month: 'numeric', day: 'numeric'
+  }).formatToParts(d);
+  const get = t => Number(parts.find(p => p.type === t).value);
+  return { y: get('year'), m: get('month'), day: get('day') };
+}
+
+function _cnDayUtc(d) {
+  const p = _cnParts(d);
+  return Date.UTC(p.y, p.m - 1, p.day);
+}
+
+function _activityInRange(d, range) {
+  const now = new Date();
+  const today = _cnDayUtc(now);
+  const act = _cnDayUtc(d);
+  const day = 86400000;
+  if (range === 'today') return act === today;
+  if (range === 'yesterday') return act === today - day;
+  if (range === '7d') return act >= today - 6 * day && act <= today;
+  if (range === '30d') return act >= today - 29 * day && act <= today;
+  const np = _cnParts(now), ap = _cnParts(d);
+  if (range === 'month') return np.y === ap.y && np.m === ap.m;
+  if (range === 'lastMonth') {
+    let y = np.y, m = np.m - 1;
+    if (m < 1) { m = 12; y -= 1; }
+    return ap.y === y && ap.m === m;
+  }
+  return true;
+}
+
+function _activityItemHtml(a) {
+  return `<div class="tl-item tl-item--${U.esc(a.level || 'ok')}">
+    <time>${U.esc(a.time || '')}</time>
+    <b>${U.esc(a.title)}</b>
+    <p>${U.esc(a.meta)}</p>
+  </div>`;
+}
+
+function _bindActivityRange(root, list) {
+  const wrap = U.$('#tlRange', root);
+  const btn = U.$('#tlRangeBtn', root);
+  const menu = U.$('#tlRangeMenu', root);
+  const value = U.$('#tlRangeValue', root);
+  const box = U.$('#tlRangeList', root);
+  if (!wrap || !btn || !menu || !box) return;
+  let range = 'today';
+
+  const close = () => {
+    wrap.classList.remove('is-open');
+    menu.hidden = true;
+    btn.setAttribute('aria-expanded', 'false');
+  };
+  const paint = () => {
+    const filtered = list.filter(a => {
+      const t = _parseActivityTime(a.time_sort);
+      if (t) return _activityInRange(t, range);
+      const label = String(a.time || '');
+      if (range === 'today') return label.startsWith('今天');
+      if (range === 'yesterday') return label.startsWith('昨天');
+      return true;
+    });
+    box.innerHTML = filtered.length
+      ? `<div class="timeline">${filtered.map(_activityItemHtml).join('')}</div>`
+      : '<p class="fz-13 t-dim" style="padding:12px 0;text-align:center">该时间范围内暂无学习动态</p>';
+    U.$$('[data-range]', menu).forEach(opt => {
+      const on = opt.dataset.range === range;
+      opt.classList.toggle('is-active', on);
+      const mark = opt.querySelector('svg, .tl-range__check');
+      if (mark) mark.outerHTML = on ? icon('check') : '<span class="tl-range__check"></span>';
+    });
+  };
+
+  btn.addEventListener('click', e => {
+    e.stopPropagation();
+    const open = wrap.classList.toggle('is-open');
+    menu.hidden = !open;
+    btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+  });
+  menu.addEventListener('click', e => {
+    const opt = e.target.closest('[data-range]');
+    if (!opt) return;
+    range = opt.dataset.range;
+    value.textContent = opt.dataset.label;
+    close();
+    paint();
+  });
+  if (window._tlRangeDocClose) document.removeEventListener('click', window._tlRangeDocClose);
+  window._tlRangeDocClose = e => { if (!wrap.contains(e.target)) close(); };
+  document.addEventListener('click', window._tlRangeDocClose);
+  paint();
+}
 
 function _greetingByTime() {
   const h = new Date().getHours();

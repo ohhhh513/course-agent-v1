@@ -1119,8 +1119,10 @@ window.AgentChatView = (function () {
       tpl(m) {
         const now = m.time || new Date().toTimeString().slice(0, 5);
         const confirms = this.confirmCardsOf(m);                          // 待批准 / 已处理的写操作
-        const suggests = this.suggestCardsOf(m);                          // 只读建议（历史从 toolLog 重建）
-        const uiPlans = this.uiCardsOf(m);
+        // 本轮未生成完毕（流式中 / 用户点了停止）不提前给出跳转入口，避免正文还在写就能换页。
+        const navReady = m.complete !== false;
+        const suggests = navReady ? this.suggestCardsOf(m) : [];
+        const uiPlans = navReady ? this.uiCardsOf(m) : [];
         const choices = this.choiceCardsOf(m);
         const oos = this.outOfScopeOf(m);                                 // 越界（历史从 toolLog 里的 meta 标记恢复）
         if (m.role === 'me') {
@@ -1736,7 +1738,8 @@ window.AgentChatView = (function () {
         };
 
         const finish = (payload) => {
-          const automatic = payload.stopped ? null : (this._uiPlans || []).filter(plan => plan.auto).slice(-1)[0];
+          // 仅回放本轮用户已确认打开的入口（plan.auto）；建议按钮必须等点击。
+          const automatic = payload.stopped ? null : (this._uiPlans || []).filter(plan => plan.auto === true).slice(-1)[0];
           if (typeof AgentUI !== 'undefined' && AgentUI.preview) {
             (this._uiPlans || []).forEach(plan => AgentUI.preview.arm(plan));
           }
@@ -1753,6 +1756,7 @@ window.AgentChatView = (function () {
             citations: cites, outOfScope: payload.outOfScope,
             toolLog: this._tools,
             actions: this._actions || [],
+            complete: !payload.stopped,
           }));
           this._acc = ''; this._final = ''; this._tools = []; this._actions = [];
           this.bindCites();

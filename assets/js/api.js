@@ -479,6 +479,12 @@ window.API = (function () {
     /** GET /student/resource-stats  资源学习进度统计 */
     resourceStats: () => request('GET', '/student/resource-stats'),
 
+    /** GET /student/shares  驾驶舱前沿分享（今日或最近几篇） */
+    shares: () => request('GET', '/student/shares'),
+
+    /** POST /student/shares/{shareId}/read  记录打开一篇分享 */
+    readShare: (shareId) => request('POST', `/student/shares/${shareId}/read`, {}),
+
     /** GET /student/mastery/matrix  知识点掌握矩阵（按章节分组） */
     masteryMatrix: (p) => request('GET', '/student/mastery/matrix', p, () => M().masteryMatrix),
 
@@ -811,6 +817,17 @@ window.API = (function () {
 
     /** GET /teacher/classes  当前教师所带班级（真实数据，来自数据库） */
     classes: () => request('GET', '/teacher/classes'),
+
+    /** GET /teacher/shares  前沿分享列表（含已读人数） */
+    shares: () => request('GET', '/teacher/shares'),
+    /** POST /teacher/shares  发布分享  body: { title, source, url } */
+    createShare: (p) => request('POST', '/teacher/shares', p),
+    /** PUT /teacher/shares/{shareId}  编辑分享 */
+    updateShare: (shareId, p) => request('PUT', `/teacher/shares/${shareId}`, p),
+    /** DELETE /teacher/shares/{shareId}  删除分享 */
+    deleteShare: (shareId) => request('DELETE', `/teacher/shares/${shareId}`),
+    /** GET /teacher/shares/{shareId}/readers  某篇分享的学生阅读记录 */
+    shareReaders: (shareId) => request('GET', `/teacher/shares/${shareId}/readers`),
 
     /** GET /teacher/resources  教师资源管理列表  params: { keyword } */
     resources: (p) => request('GET', '/teacher/resources', p),

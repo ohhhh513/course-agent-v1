@@ -170,6 +170,18 @@
       "file_input": ""
     },
     {
+      "id": "teacher.page.shares",
+      "role": "teacher",
+      "title": "更多资源分享",
+      "view": "shares",
+      "steps": [],
+      "fields": {},
+      "entity": "",
+      "handler": "",
+      "focus": "",
+      "file_input": ""
+    },
+    {
       "id": "teacher.page.graph-edit",
       "role": "teacher",
       "title": "知识图谱编排",

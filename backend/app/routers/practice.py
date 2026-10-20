@@ -788,9 +788,11 @@ def wrong_detail(
     kp_path = loads(q.kp_path) or []
     chapter = kp_path[0] if kp_path else ""
     from ..services.catalog_helpers import student_visible_source
+    from ..services.catalog_helpers import not_share_type
     res_q = db.query(Resource).filter(
         Resource.course_id == q.course_id,
         student_visible_source(Resource.source),
+        not_share_type(Resource.type),
     )
     if chapter:
         res_q = res_q.filter(Resource.kp == chapter)

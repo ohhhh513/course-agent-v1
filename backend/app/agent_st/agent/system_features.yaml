@@ -33,10 +33,10 @@ roles:
             anchors: [msgBtn, 消息与通知, 消息详情]
           - id: student.dashboard
             title: 学习总览与驾驶舱面板
-            aliases: [课程进度, 待办与提醒, 学情速览, 最近学习动态, 薄弱点提示]
+            aliases: [课程进度, 待办与提醒, 学情速览, 最近学习动态, 薄弱点提示, 更多资源分享, 时间维度]
             location: 学习驾驶舱的顶部指标与下方卡片
-            steps: [从左侧打开「学习驾驶舱」；顶部看当前学习节点和课程总进度。, 下方「待办与提醒」「学情速览」「薄弱点提示」「最近学习动态」分别查看对应信息；薄弱点条目可点「去练习」。]
-            anchors: [当前学习节点, 待办与提醒, 学情速览, 薄弱点提示, 最近学习动态, data-practice-kp]
+            steps: [从左侧打开「学习驾驶舱」；顶部看当前学习节点和课程总进度。, 右侧「更多资源分享」查看教师发布的文章，点击即可打开。, 下方「待办与提醒」「学情速览」「薄弱点提示」「最近学习动态」分别查看对应信息；学习动态可用右上角「时间维度」筛选今天、昨天、近 7 天、近 30 天、本月或上月。, 薄弱点条目可点「去练习」。]
+            anchors: [当前学习节点, 待办与提醒, 学情速览, 薄弱点提示, 最近学习动态, 更多资源分享, 时间维度, data-practice-kp]
           - id: student.dashboard.ask
             title: 从驾驶舱发起 AI 提问
             aliases: [AI 助教, 一键发起提问]
@@ -71,10 +71,10 @@ roles:
         features:
           - id: student.resource.find
             title: 查找和筛选学习资源
-            aliases: [资源聚合, 搜索资源, 教材, 课外教材, 知识点标签]
+            aliases: [资源聚合, 搜索资源, 教材, 其他资源, 知识点标签]
             location: 学习资源中心右侧「资源聚合」卡片
-            steps: [在「资源聚合」右上方搜索框输入资源标题或知识点。, 点「全部」、章节标签、章节展开后的知识点标签或「课外教材」筛选；弹出标签区域的小「✕」可收起。, 点资源卡片打开资源；筛选无结果时可点「查看全部资源」。]
-            anchors: [资源聚合, resSearch, 课外教材, chips-popup__close, 查看全部资源]
+            steps: [在「资源聚合」右上方搜索框输入资源标题或知识点。, 点「全部」、章节标签、章节展开后的知识点标签或「其他资源」筛选；弹出标签区域的小「✕」可收起。, 点资源卡片打开资源；筛选无结果时可点「查看全部资源」。]
+            anchors: [资源聚合, resSearch, 其他资源, chips-popup__close, 查看全部资源]
           - id: student.resource.path
             title: 查看推荐学习路径
             aliases: [学习顺序, 章节折叠, 推荐学习路径]
@@ -502,6 +502,23 @@ roles:
             steps: [点击知识点标签打开「知识点详情」。, 修改「知识点名称」「所属章节」「学时」「知识点介绍」或「标记为重点」，点击底部「保存修改」。, 若要删除，点同一弹窗底部「删除知识点」，核对提示后确认。]
             notes: [知识点仍挂有资源或题目时无法删除。]
             anchors: [知识点详情, kdSave, kdDel, 所属章节, kdHours, kdKey, kdSummary]
+      shares:
+        title: 更多资源分享
+        source: assets/js/teacher/views/shares.js
+        features:
+          - id: teacher.shares.publish
+            title: 发布或编辑资源分享
+            aliases: [发布资源, 更多资源分享, 公众号文章]
+            location: 左侧「课程」分组中的「更多资源分享」
+            steps: [打开「更多资源分享」，点击「发布资源」。, 填写标题、来源（网站或公众号）和链接，点击「发布」。]
+            notes: [这些内容出现在学生驾驶舱右侧，与课程目录课件分开。]
+            anchors: [更多资源分享, shareCreateBtn, 发布资源]
+          - id: teacher.shares.readers
+            title: 查看学生阅读记录
+            aliases: [阅读记录, 已读未读]
+            location: 更多资源分享列表每条右侧「阅读记录」
+            steps: [在分享条目点击「阅读记录」，查看已读和未读学生名单。]
+            anchors: [阅读记录, data-share-readers]
       graph-edit:
         title: 知识图谱编排
         source: assets/js/teacher/views/graph-edit.js

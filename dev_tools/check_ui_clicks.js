@@ -94,6 +94,8 @@ async function practice() {
   api.practice.submitAnswer=()=>{throw Error('禁止自动提交');};
   vm.runInContext(read('assets/js/student/views/practice.js'),s.context);
   const practice=vm.runInContext('Practice',s.context);
+  assert.equal(await s.ui.apply({...plan(s,'student.practice.mode.wrong'),auto:false},{auto:true,fromView:'ai'}),false,
+    '未确认的界面跳转不能自动执行');
   assert(await s.ui.apply(plan(s,'student.practice.mode.wrong'),{auto:true,fromView:'ai'}));
   assert.equal(practice.state,'quiz');assert.equal(practice.mode,'wrong');assert.equal(practice.picked,null);
   assert(s.body.querySelector('#qBack'));assert(s.body.querySelector('#qSubmit').disabled);

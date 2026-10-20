@@ -292,10 +292,10 @@ def kp_detail(
         from ..services.resource_progress import progress_map as _progress_map
         from ..services.catalog_helpers import resource_hits_kp
         prog_map = _progress_map(db, user.user_id) if user else {}
-        from ..services.catalog_helpers import is_gen_material
+        from ..services.catalog_helpers import is_gen_material, is_share
         rows = [
             r for r in db.query(Resource).all()
-            if not is_gen_material(r) and (
+            if not is_gen_material(r) and not is_share(r) and (
                 resource_hits_kp(r, kp_id)
                 or ((not (r.kp_id or "").strip()) and chapter and (r.kp or "").startswith(chapter))
             )
