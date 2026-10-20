@@ -19,7 +19,7 @@ from app.agent_st.rag.topic import looks_like_course_question
 
 # 注册工具（import 即注册；逐个显式列出，避免依赖 tools/__init__ 的副作用）
 from app.agent_st.agent.tools import (admin_delete, admin_import, admin_ops,  # noqa: F401
-                                      analytics, bank, draft, plan, rag,
+                                      analytics, bank, batch_draft, draft, plan, rag,
                                       teacher_analytics, topic, validate, ui_actions)
 
 Event = dict  # run_turn 产出的事件统一为 dict：{"type": ...}
@@ -101,6 +101,20 @@ def _run_tool(name: str, args: dict, ctx: ToolContext) -> tuple[list[Event], obj
          "preview": result if not isinstance(result, list) else result[:4]}
     )
     return events, result
+
+
+def draft_events_for_tool(name: str, result, ctx: ToolContext) -> list[Event]:
+    """把草稿工具结果映射为现有的逐题 draft 事件。"""
+    if name == "save_question_draft":
+        return [{"type": "draft", **result}] if isinstance(result, dict) and result.get("draft_id") else []
+    if name != "save_question_batch" or not isinstance(result, dict) or not result.get("ok"):
+        return []
+    draft_ids = set(str(value) for value in (result.get("draft_ids") or []))
+    return [
+        {"type": "draft", **draft}
+        for draft in (ctx.turn.get("drafts") or [])
+        if isinstance(draft, dict) and str(draft.get("draft_id") or "") in draft_ids
+    ]
 
 
 def _demo_explain(message: str, ctx: ToolContext) -> str:
@@ -748,7 +762,9 @@ def run_turn(
     # 「停止生成」= 协作式取消：开新一轮前清掉上一轮可能残留的停止标记
     from . import cancel as _cancel
 
-    _cancel.clear(session_id)
+    cancel_key = str((context or {}).get("cancelKey") or session_id)
+    if cancel_key == session_id:
+        _cancel.clear(session_id)
 
     extra = dict(context or {})
     extra["message"] = message
@@ -772,7 +788,7 @@ def run_turn(
         stopped = False
         for event in _demo_turn(flow_id, message, ctx):
             # 停止生成：演示模式的假流式也在每个切片之间检查一次
-            if _cancel.is_requested(session_id):
+            if _cancel.is_requested(cancel_key):
                 stopped = True
                 break
             if event.get("type") == "text":
@@ -844,11 +860,11 @@ def run_turn(
         q: "queue.Queue[tuple[str, object]]" = queue.Queue()
         holder: dict = {}
 
-        def _worker(msgs=messages, _tools=tools, _q=q, _holder=holder, _sid=session_id):
+        def _worker(msgs=messages, _tools=tools, _q=q, _holder=holder, _key=cancel_key):
             def _forward(kind: str, text: str) -> None:
                 # 停止生成：一旦置了标记就从回调里抛出去 —— 展开生成器、关闭上游 HTTP 流，
                 # 不再继续消耗 token（而不是只在消费侧丢弃）。
-                if _cancel.is_requested(_sid):
+                if _cancel.is_requested(_key):
                     raise _cancel.Stopped()
                 _q.put((kind, text))
 
@@ -857,12 +873,13 @@ def run_turn(
                     msgs, _tools,
                     on_text_delta=lambda t: _forward("delta", t),
                     on_reasoning_delta=lambda t: _forward("think", t),
+                    cancel_key=_key,
                 )
                 _q.put(("done", None))
             except _cancel.Stopped:
                 _q.put(("stopped", None))
             except Exception as exc:  # noqa: BLE001
-                _q.put(("error", exc))
+                _q.put(("stopped", None) if _cancel.is_requested(_key) else ("error", exc))
 
         threading.Thread(target=_worker, daemon=True).start()
         reply: dict | None = None
@@ -871,7 +888,7 @@ def run_turn(
         stopped = False
         while True:
             # 兜底轮询：模型长时间没有 delta（例如纯思考阶段）时，也在下个检查点停下
-            if _cancel.is_requested(session_id):
+            if _cancel.is_requested(cancel_key):
                 stopped = True
                 break
             try:
@@ -923,12 +940,23 @@ def run_turn(
                 }
             )
             for tc in reply["tool_calls"]:
+                if _cancel.is_requested(cancel_key):
+                    stopped = True
+                    break
                 try:
                     args = json.loads(tc["arguments"] or "{}")
                 except json.JSONDecodeError:
                     args = {}
                 yield {"type": "tool_start", "name": tc["name"], "args": args}
                 result = execute(tc["name"], args, ctx)
+                saved_batch = (
+                    tc["name"] == "save_question_batch"
+                    and isinstance(result, dict)
+                    and result.get("ok") is True
+                )
+                if _cancel.is_requested(cancel_key) and not saved_batch:
+                    stopped = True
+                    break
                 _log_tool(ctx, tc["name"], args, result)
                 preview = result if not isinstance(result, list) else result[:4]
                 yield {"type": "tool_end", "name": tc["name"], "ok": True, "preview": preview}
@@ -940,8 +968,12 @@ def run_turn(
                     }
                 )
                 # 每保存一道题即推送 draft 事件（教师端流式预览的关键）
-                if tc["name"] == "save_question_draft" and isinstance(result, dict) and result.get("draft_id"):
-                    yield {"type": "draft", **result}
+                yield from draft_events_for_tool(tc["name"], result, ctx)
+                if _cancel.is_requested(cancel_key):
+                    stopped = True
+                    break
+            if stopped:
+                break
             continue
 
         # 最终回答轮：delta 已实时转发，无需重发；思考内容也入日志

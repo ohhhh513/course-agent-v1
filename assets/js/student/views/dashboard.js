@@ -70,8 +70,10 @@
       const _endY = _now.getFullYear();
       const _startY = new Date(_now.getFullYear(), _now.getMonth() - 11, 1).getFullYear();
       const _yrLabel = _startY === _endY ? `${_endY}` : `${_startY}-${_endY}`;
+      const _streakHistory = Array.isArray(o.streakHistory) ? o.streakHistory : [];
       // 打卡热力图：列 = 周，周数由后端按「学期第 1 周（8/31）起算」给出
-      const _calWeeks = o.streakWeeks || Math.ceil(((o.streakHistory || []).length) / 7) || 52;
+      const _calWeeks = o.streakWeeks || Math.ceil(_streakHistory.length / 7) || 52;
+      const _calGridWidth = Math.max(11, _calWeeks * 11 + Math.max(0, _calWeeks - 1) * 4);
 
       el.innerHTML = `
       <!-- Hero -->
@@ -88,21 +90,21 @@
         </div>
         <div class="hero__stats">
           <div class="hero__stat hero__stat--streak">
-            <div class="streak-cal" id="streakCal">
+            <div class="streak-cal" id="streakCal" style="--cal-grid-width:${_calGridWidth}px">
               <div class="cal-top">
                 <div class="cal-stats">
                   <div class="cal-stat">
-                    <span class="cal-stat__lbl">当前连续学习</span>
+                    <span class="cal-stat__lbl">当前连续</span>
                     <b class="cal-stat__num">${o.currentStreak}</b>
                     <span class="cal-stat__unit">天</span>
                   </div>
                   <div class="cal-stat">
-                    <span class="cal-stat__lbl">最大连续学习</span>
+                    <span class="cal-stat__lbl">最长连续</span>
                     <b class="cal-stat__num">${o.maxStreak}</b>
                     <span class="cal-stat__unit">天</span>
                   </div>
                   <div class="cal-stat">
-                    <span class="cal-stat__lbl">总学习天数</span>
+                    <span class="cal-stat__lbl">累计学习</span>
                     <b class="cal-stat__num">${o.totalDays}</b>
                     <span class="cal-stat__unit">天</span>
                   </div>
@@ -113,13 +115,13 @@
               </div>
               <div class="cal-grid-wrap">
                 <div class="cal-grid" id="streakCalGrid" style="--cal-weeks:${_calWeeks}">
-                  ${o.streakHistoryStart && o.streakHistory.length ? (() => {
-                    const DAYS = o.streakHistory.length;
+                  ${o.streakHistoryStart && _streakHistory.length ? (() => {
+                    const DAYS = _streakHistory.length;
                     const p = o.streakHistoryStart.split('-').map(Number);
                     const todayIdx = (typeof o.streakTodayIndex === 'number') ? o.streakTodayIndex : DAYS - 1;
                     let cells = '';
                     for (let i = 0; i < DAYS; i++) {
-                      const v = o.streakHistory[i];
+                      const v = _streakHistory[i];
                       const dt = new Date(p[0], p[1] - 1, p[2]);
                       dt.setDate(dt.getDate() + i);
                       const dateStr = `${dt.getMonth() + 1}/${dt.getDate()}`;
@@ -138,18 +140,17 @@
                     }
                     return cells;
                   })() : ''}
-                </div>
-                <div class="cal-weeks" style="--cal-weeks:${_calWeeks}">
-                  ${(() => {
-                    // 横轴标签写「第N周」而不是月份；列宽只有 10px、字宽约 31px（列距 12px），
-                    // 逐周都写会压字，所以每 3 周标一次（第1、4、7…周）
-                    let labels = '';
-                    for (let w = 0; w < _calWeeks; w += 3) {
-                      labels += `<span class="cal-week-label" style="grid-column-start:${w + 1}">第${w + 1}周</span>`;
-                    }
-                    return labels;
-                  })()}
-                </div>
+              </div>
+              <div class="cal-weeks" style="--cal-weeks:${_calWeeks}">
+                ${(() => {
+                  // 横轴标签写「第N周」而不是月份；每 3 周标一次，保留周视图。
+                  let labels = '';
+                  for (let w = 0; w < _calWeeks; w += 3) {
+                    labels += `<span class="cal-week-label" style="grid-column-start:${w + 1}">第${w + 1}周</span>`;
+                  }
+                  return labels;
+                })()}
+              </div>
               </div>
             </div>
           </div>

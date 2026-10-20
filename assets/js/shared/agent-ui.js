@@ -254,19 +254,38 @@ const AgentUI = (() => {
     wrap: null,
     shell: null,
     docked: false,
+    closeTimer: 0,
+    hasActiveGeneration() {
+      return Object.values(this.jobs).some(job => job && ['running', 'stopping'].includes(job.status));
+    },
+    notifyGenerationState() {
+      window.dispatchEvent(new CustomEvent('agent-preview-state', {
+        detail: { busy: this.hasActiveGeneration() },
+      }));
+    },
+    newTaskId() {
+      if (window.crypto && typeof window.crypto.randomUUID === 'function') return window.crypto.randomUUID();
+      return 'agent-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2);
+    },
+    stopActiveGeneration() {
+      const current = this.jobs[this.current];
+      const active = current && ['running', 'stopping'].includes(current.status)
+        ? current
+        : Object.values(this.jobs).find(job => job && ['running', 'stopping'].includes(job.status));
+      return active ? this.stopGeneration(active) : false;
+    },
     panelHtml() {
       return `
         <div class="chat__side-head">
           <h3 id="apTitle">${typeof icon === 'function' ? icon('sparkle') : ''} 题目预览</h3>
           <span class="badge badge--brand" id="apBadge">草稿</span>
           <span class="spacer"></span>
-          <button type="button" class="btn btn--ghost btn--icon" id="apClose" aria-label="关闭预览">${typeof icon === 'function' ? icon('x') : '×'}</button>
+          <button type="button" class="btn btn--ghost btn--icon" id="apClose" title="隐藏扩展栏" aria-label="隐藏扩展栏">${typeof icon === 'function' ? icon('panelRightClose') : '×'}</button>
         </div>
         <div class="chat__side-body" id="apBody"></div>
         <div class="chat__side-foot">
-          <span class="fz-12 t-dim" id="apHint">可编辑后组成试卷，或发布进题库。</span>
+          <span class="fz-12 t-dim" id="apHint">可编辑题目，或发布进题库。</span>
           <span class="spacer"></span>
-          <button type="button" class="btn" id="apExam" disabled>组成试卷</button>
           <button type="button" class="btn btn--primary" id="apPublishAll" disabled>全部发布进题库</button>
         </div>`;
     },
@@ -291,32 +310,74 @@ const AgentUI = (() => {
         document.body.appendChild(wrap);
       }
       wrap.querySelector('#apClose').addEventListener('click', () => this.close());
-      wrap.querySelector('#apExam').addEventListener('click', () => this.assembleExam());
       wrap.querySelector('#apPublishAll').addEventListener('click', () => this.publishAll());
       this.wrap = wrap;
       return wrap;
     },
     open() {
       const wrap = this.ensure();
-      wrap.hidden = false;
+      clearTimeout(this.closeTimer);
+      this.closeTimer = 0;
       if (this.docked && this.shell) {
         const history = this.shell.querySelector('#chatHistory');
         if (history && !history.hidden) {
+          // 通过聊天视图自身的关闭逻辑更新状态，再复用同一右侧停靠位。
+          this.shell.querySelector('#closeHistoryBtn')?.click();
           history.hidden = true;
-          this.shell.classList.remove('is-history-open');
-          const toggle = document.querySelector('#toggleHistoryBtn');
-          if (toggle) {
-            toggle.setAttribute('aria-expanded', 'false');
-            toggle.title = '显示历史会话';
-            toggle.setAttribute('aria-label', '显示历史会话');
-          }
         }
+        const resizeHandle = this.shell.querySelector('#chatSideResizeHandle');
+        if (resizeHandle) resizeHandle.hidden = false;
+        wrap.hidden = false;
+        wrap.classList.remove('is-open');
         this.shell.classList.add('is-preview-open');
+        const viewportWidth = Math.max(320, Math.round(window.innerWidth || document.documentElement.clientWidth || 0));
+        const maxWidth = Math.max(260, Math.min(viewportWidth, Math.round(this.shell.getBoundingClientRect().right)));
+        const currentWidth = Number.parseFloat(this.shell.style.getPropertyValue('--chat-side-width')) || 360;
+        const fullScreen = currentWidth >= Math.min(Math.round(viewportWidth * 0.8), maxWidth);
+        this.shell.classList.toggle('is-side-fullscreen', fullScreen);
+        resizeHandle?.setAttribute('aria-valuemax', String(viewportWidth));
+        resizeHandle?.setAttribute('aria-valuenow', String(fullScreen ? viewportWidth : currentWidth));
+        resizeHandle?.setAttribute('aria-valuetext', fullScreen ? '全屏' : `${currentWidth} 像素`);
+        requestAnimationFrame(() => {
+          if (this.wrap === wrap && this.shell?.classList.contains('is-preview-open')) wrap.classList.add('is-open');
+        });
+      } else {
+        wrap.hidden = false;
       }
     },
-    close() {
-      if (this.wrap) this.wrap.hidden = true;
-      if (this.docked && this.shell) this.shell.classList.remove('is-preview-open');
+    close(options = {}) {
+      if (!this.wrap) return;
+      const wrap = this.wrap;
+      if (!this.docked || !this.shell) {
+        wrap.hidden = true;
+        return;
+      }
+      const shell = this.shell;
+      const resizeHandle = shell.querySelector('#chatSideResizeHandle');
+      const hideAfterTransition = () => {
+        if (this.wrap !== wrap || shell.classList.contains('is-preview-open')) return;
+        wrap.hidden = true;
+        if (!shell.classList.contains('is-history-open') && resizeHandle) resizeHandle.hidden = true;
+        this.closeTimer = 0;
+      };
+      clearTimeout(this.closeTimer);
+      this.closeTimer = 0;
+      wrap.classList.remove('is-open');
+      shell.classList.remove('is-preview-open');
+      shell.classList.remove('is-side-fullscreen');
+      shell.dispatchEvent(new Event('agent:sidepane-close'));
+      if (options.immediate) {
+        hideAfterTransition();
+      } else {
+        this.closeTimer = setTimeout(hideAfterTransition, 320);
+      }
+    },
+    refreshIfVisible(job) {
+      if (!job || this.current !== job.id) return;
+      const visible = this.docked
+        ? Boolean(this.shell && this.shell.classList.contains('is-preview-open'))
+        : Boolean(this.wrap && !this.wrap.hidden);
+      if (visible) this.render(job);
     },
     missingOf(plan) {
       const values = (plan && plan.values) || {};
@@ -329,14 +390,94 @@ const AgentUI = (() => {
       if (!types.length) missing.push('types');
       return { kpIds, types, count: (Number.isInteger(count) && count >= 1) ? count : 0, missing };
     },
+    storageKey(plan) {
+      if (!plan || !plan.id) return '';
+      const user = window.Auth && typeof Auth.currentUser === 'function' ? Auth.currentUser() : null;
+      const parts = [
+        (user && (user.userId || user.user_id || user.id)) || '',
+        plan.courseId || currentCourse() || '',
+        plan.sessionId || 'new',
+        plan.id,
+      ];
+      return 'course-agent:agent-question-preview:v1:' + parts.map(value => encodeURIComponent(String(value))).join(':');
+    },
+    persist(job) {
+      const key = this.storageKey(job && job.plan);
+      if (!key || !job) return;
+      try {
+        sessionStorage.setItem(key, JSON.stringify({
+          version: 1,
+          id: job.id,
+          status: job.status,
+          drafts: job.drafts || [],
+          error: job.error || '',
+          count: job.count || 0,
+          types: job.types || [],
+          kpIds: job.kpIds || [],
+          difficulty: job.difficulty || 3,
+          courseId: job.courseId || '',
+        }));
+      } catch (_) {
+        // 会话存储不可用或已满时，当前页面中的预览仍可正常使用。
+      }
+    },
+    restore(plan) {
+      const key = this.storageKey(plan);
+      if (!key) return null;
+      try {
+        const saved = JSON.parse(sessionStorage.getItem(key) || 'null');
+        if (!saved || saved.version !== 1 || saved.id !== plan.id || !Array.isArray(saved.drafts)) return null;
+        const drafts = saved.drafts.filter(item => item && item.payload && typeof item.payload === 'object');
+        let status = saved.status;
+        let error = saved.error || '';
+        if (status === 'starting' || status === 'running' || status === 'stopping') {
+          if (drafts.length) {
+            status = 'done';
+            const expected = Number(saved.count) || 0;
+            if (!error && expected > drafts.length) {
+              error = `页面刷新前生成中断，已恢复 ${drafts.length} 道题；如需补充，请重新发起出题请求。`;
+            }
+          }
+          else {
+            status = 'error';
+            error = error || '页面刷新前生成任务尚未产出题目，已停止自动重试；请重新发起出题请求。';
+          }
+        }
+        if (!['done', 'error', 'stopped'].includes(status)) return null;
+        if (status === 'done' && !drafts.length) {
+          status = 'error';
+          error = error || '没有可恢复的题目结果，请重新发起出题请求。';
+        }
+        return {
+          id: plan.id,
+          status,
+          drafts,
+          error,
+          count: Number(saved.count) || drafts.length,
+          types: Array.isArray(saved.types) ? saved.types : [],
+          kpIds: Array.isArray(saved.kpIds) ? saved.kpIds : [],
+          difficulty: Number(saved.difficulty) || 3,
+          courseId: saved.courseId || plan.courseId || '',
+          plan,
+          missing: [],
+        };
+      } catch (_) {
+        return null;
+      }
+    },
     arm(plan) {
       if (!plan || plan.target !== 'teacher.question.create') return null;
       if (this.jobs[plan.id]) return this.jobs[plan.id];
+      const restored = this.restore(plan);
+      if (restored) {
+        this.jobs[plan.id] = restored;
+        return restored;
+      }
       const parsed = this.missingOf(plan);
       this.jobs[plan.id] = {
         id: plan.id,
         status: parsed.missing.length ? 'need_input' : 'starting',
-        drafts: [], error: '', paperId: '',
+        drafts: [], error: '',
         count: parsed.count, types: parsed.types, kpIds: parsed.kpIds,
         difficulty: (plan.values && plan.values.difficulty) || 3,
         courseId: plan.courseId, plan, missing: parsed.missing.slice(),
@@ -348,7 +489,11 @@ const AgentUI = (() => {
       if (plan.target !== 'teacher.question.create') {
         return `<div class="msg__agent-acts"><button type="button" class="btn btn--sm btn--primary" data-agent-ui="${U.esc(JSON.stringify(plan))}">${U.esc(plan.label || '打开操作界面')}</button></div>`;
       }
-      const job = this.jobs[plan.id];
+      let job = this.jobs[plan.id];
+      if (!job) {
+        job = this.restore(plan);
+        if (job) this.jobs[plan.id] = job;
+      }
       const inner = job
         ? this.slotInner(job)
         : `<button type="button" class="btn btn--sm btn--primary" data-agent-ui="${U.esc(JSON.stringify(plan))}">${U.esc(plan.label || '预览题目')}</button>`;
@@ -357,26 +502,23 @@ const AgentUI = (() => {
     slotInner(job) {
       if (!job) return '';
       if (job.status === 'need_input') return this.choiceHtml(job);
-      if (job.status === 'starting' || job.status === 'running') return this.progressHtml(job);
-      const label = job.status === 'error' && !job.drafts.length ? '查看失败详情' : '预览题目';
+      if (['starting', 'running', 'stopping'].includes(job.status)) return this.progressHtml(job);
+      const label = ['error', 'stopped'].includes(job.status) && !job.drafts.length ? '查看生成状态' : '预览题目';
       return `<button type="button" class="btn btn--sm btn--primary" data-ap-open="${U.esc(job.id)}">${label}</button>`;
     },
-    progressHtml(job) {
+    progressHtml(job, inPanel = false) {
       const made = (job.drafts || []).length;
-      const total = job.count || 0;
-      const pct = total ? Math.max(8, Math.min(100, Math.round((made / total) * 100))) : 12;
-      const type = TYPE_LABEL[(job.types || [])[made % Math.max(1, (job.types || []).length)]] || '';
-      const line = !made
-        ? (job.status === 'starting' ? '正在准备出题…' : '正在生成题目…')
-        : `正在生成第 ${Math.min(made + 1, total || made + 1)} / ${total || '…'} 道${type}`;
-      return `<div class="agent-progress">
-        <div class="agent-progress__row">
-          <span class="agent-progress__dot" aria-hidden="true"></span>
-          <b>${U.esc(line)}</b>
-          ${total ? `<span class="agent-progress__count">${made} / ${total}</span>` : ''}
-        </div>
-        <div class="agent-progress__bar"><i style="width:${pct}%"></i></div>
-      </div>`;
+      const line = job.status === 'starting'
+        ? '\u6b63\u5728\u51c6\u5907\u51fa\u9898\u2026'
+        : (job.status === 'stopping' ? '\u6b63\u5728\u505c\u6b62\u751f\u6210\u2026'
+          : (made ? '\u5df2\u751f\u6210 ' + made + ' \u9053\u9898\uff0c\u7ee7\u7eed\u751f\u6210\u4e2d\u2026' : '\u6b63\u5728\u751f\u6210\u9898\u76ee\u2026'));
+      return '<div class="agent-progress' + (inPanel ? ' agent-progress--panel' : '') + '" role="status" aria-live="polite">' +
+        '<span class="agent-progress__spinner" aria-hidden="true"></span>' +
+        '<b class="agent-progress__text">' + U.esc(line) + '</b>' +
+        (['running', 'stopping'].includes(job.status)
+          ? '<button type="button" class="btn btn--sm" data-ap-stop="' + U.esc(job.id) + '"' + (job.status === 'stopping' ? ' disabled' : '') + '>' + (job.status === 'stopping' ? '\u6b63\u5728\u505c\u6b62' : '\u505c\u6b62') + '</button>'
+          : '') +
+      '</div>';
     },
     choiceHtml(job) {
       const missing = job.missing || [];
@@ -405,6 +547,11 @@ const AgentUI = (() => {
         if (btn.dataset.bound) return;
         btn.dataset.bound = '1';
         btn.addEventListener('click', () => this.show(job.id));
+      });
+      slot.querySelectorAll('[data-ap-stop]').forEach(btn => {
+        if (btn.dataset.bound) return;
+        btn.dataset.bound = '1';
+        btn.addEventListener('click', () => this.stopGeneration(job));
       });
       slot.querySelectorAll('[data-preview-count]').forEach(btn => {
         if (btn.dataset.bound) return;
@@ -442,13 +589,24 @@ const AgentUI = (() => {
     startQuestions(plan, ctx) {
       const job = this.arm(plan);
       if (!job) return false;
-      if (job.status === 'running' || job.status === 'starting') {
-        if (job.status === 'running') this.paintSlot(job);
-        else this.beginGenerate(job);
+      if (job.status === 'running' || job.status === 'starting' || job.status === 'stopping') {
+        if (job.status === 'running' || job.status === 'stopping') this.paintSlot(job);
+        else if (ctx && ctx.auto) this.beginGenerate(job);
+        else {
+          job.status = 'error';
+          job.error = '没有找到这条出题操作对应的预览记录，为避免重复出题，本次没有重新生成。请到题目草稿箱查看已保存草稿；如需新题，请重新提出出题请求。';
+          this.persist(job);
+          this.paintSlot(job);
+          this.show(job.id);
+        }
         return true;
       }
       if (job.status === 'need_input') {
         this.paintSlot(job);
+        return true;
+      }
+      if (job.status === 'stopped') {
+        this.show(job.id);
         return true;
       }
       this.show(plan.id);
@@ -460,11 +618,19 @@ const AgentUI = (() => {
       if (!(job.kpIds || []).length) throw new Error('请先确定要出题的知识点');
       if (!job.count) throw new Error('请先选择出题数量');
       if (!(job.types || []).length) job.types = ['single'];
+      job.taskId = this.newTaskId();
+      job.controller = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+      job.cancelRequested = false;
+      const taskId = job.taskId;
       job.status = 'running';
+      job.error = '';
+      this.persist(job);
       this.paintSlot(job);
+      this.notifyGenerationState();
       API.question.genStream({
         kpIds: job.kpIds, types: job.types, difficulty: job.difficulty, count: job.count,
         requirement: '题型：' + job.types.map(t => TYPE_LABEL[t] || t).join('、') + '。',
+        taskId,
       }, {
         onDraft: (d) => {
           const payload = (d && d.payload) || {};
@@ -476,23 +642,112 @@ const AgentUI = (() => {
             kpIds: (d && d.kpIds) || payload.kp_ids || [],
             chapterId: (d && d.chapterId) || payload.chapter_id || '',
           });
+          this.persist(job);
           this.paintSlot(job);
         },
-        onError: (d) => { job.error = (d && d.message) || '生成出错'; },
+        onError: (d) => {
+          job.error = (d && d.message) || '生成出错';
+          this.persist(job);
+        },
         onDone: (d) => {
-          job.status = job.drafts.length ? 'done' : 'error';
-          if (!job.drafts.length && !job.error) job.error = '本次没有产出题目，请调整范围后重试';
+          const stopped = job.cancelRequested || Boolean(d && d.stopped);
+          if (stopped) {
+            job.status = 'stopped';
+            job.error = job.drafts.length
+              ? '已停止生成，已生成的题目草稿保留在此处。'
+              : '已停止生成，没有未保存的题目写入草稿。';
+          } else {
+            job.status = job.drafts.length ? 'done' : 'error';
+            if (!job.drafts.length && !job.error) job.error = '本次没有产出题目，请调整范围后重试';
+          }
           if (d && d.count) job.count = d.count;
+          job.controller = null;
+          job.taskId = '';
+          this.persist(job);
           this.paintSlot(job);
-          this.show(job.id);
-          if (job.drafts.length) Toast.ok('题目已生成', `${job.drafts.length} 道可在右侧预览中编辑或组成试卷`);
+          this.notifyGenerationState();
+          if (stopped) {
+            this.refreshIfVisible(job);
+          } else {
+            this.show(job.id);
+            if (job.drafts.length) Toast.ok('题目已生成', `${job.drafts.length} 道可在右侧预览中编辑或发布`);
+          }
         },
-      }).catch(err => {
-        job.status = job.drafts.length ? 'done' : 'error';
-        job.error = (err && err.message) || '生成失败';
+      }, { signal: job.controller && job.controller.signal }).catch(err => {
+        const stopped = job.cancelRequested;
+        if (stopped) {
+          job.status = 'stopped';
+          job.error = job.drafts.length
+            ? '已停止生成，已生成的题目草稿保留在此处。'
+            : '已停止生成，没有未保存的题目写入草稿。';
+        } else {
+          job.status = job.drafts.length ? 'done' : 'error';
+          job.error = (err && err.message) || '生成失败';
+        }
+        job.controller = null;
+        job.taskId = '';
+        this.persist(job);
         this.paintSlot(job);
-        this.show(job.id);
+        this.notifyGenerationState();
+        if (stopped) this.refreshIfVisible(job);
+        else this.show(job.id);
       });
+      return true;
+    },
+    stopGeneration(job) {
+      if (!job || !['running', 'stopping'].includes(job.status) || job.cancelRequested) return false;
+      job.cancelRequested = true;
+      job.status = 'stopping';
+      job.error = '';
+      this.persist(job);
+      this.paintSlot(job);
+      if (this.current === job.id) this.render(job);
+      this.notifyGenerationState();
+      const settleAsFinished = () => {
+        job.cancelRequested = false;
+        if (job.status === 'stopped') {
+          job.status = job.drafts.length ? 'done' : 'error';
+          job.error = job.drafts.length ? '' : '生成任务已在停止请求前结束，未产出题目。';
+        }
+        this.persist(job);
+        this.paintSlot(job);
+        if (this.current === job.id) this.render(job);
+        this.notifyGenerationState();
+      };
+      const confirmStop = async () => {
+        let lastError = null;
+        for (let attempt = 0; attempt < 20; attempt += 1) {
+          try {
+            const result = await API.question.genStop({ taskId: job.taskId });
+            if (result && result.stopped === true) {
+              try { job.controller && job.controller.abort(); } catch (_) {}
+              return;
+            }
+            lastError = null;
+          } catch (error) {
+            lastError = error;
+          }
+          // SSE 若已自然结束，让尾部已保存草稿事件完成展示。
+          if (job.status !== 'stopping') {
+            settleAsFinished();
+            return;
+          }
+          if (attempt < 19) await new Promise(resolve => setTimeout(resolve, 80));
+        }
+        if (job.status === 'stopping') {
+          job.cancelRequested = false;
+          job.status = 'running';
+          job.error = '';
+          this.persist(job);
+          this.paintSlot(job);
+          if (this.current === job.id) this.render(job);
+          this.notifyGenerationState();
+          Toast.warn('停止请求未确认', lastError && lastError.message
+            ? lastError.message
+            : '出题仍在继续，请稍后重试停止。');
+        }
+      };
+      confirmStop();
       return true;
     },
     show(id) {
@@ -508,31 +763,30 @@ const AgentUI = (() => {
       const publish = this.wrap.querySelector('#apPublishAll');
       const hint = this.wrap.querySelector('#apHint');
       const made = job.drafts.length;
-      if (job.status === 'running') {
-        badge.textContent = made ? `已出 ${made} 题` : '生成中';
+      if (job.status === 'running' || job.status === 'stopping') {
+        badge.textContent = job.status === 'stopping' ? '正在停止' : (made ? `已出 ${made} 题` : '生成中');
         badge.className = 'badge badge--brand';
       } else if (job.status === 'error' && !made) {
         badge.textContent = '未完成';
         badge.className = 'badge badge--danger';
+      } else if (job.status === 'stopped') {
+        badge.textContent = '已停止';
+        badge.className = 'badge badge--warn';
       } else {
         badge.textContent = `${made} 题 · 草稿`;
         badge.className = 'badge badge--ok';
       }
-      const progress = job.status === 'running'
-        ? `<div class="callout callout--brand" style="margin-bottom:12px">${typeof icon === 'function' ? icon('sparkle') : ''}<div>正在生成第 ${Math.min(made + 1, job.count)} / ${job.count} 道题目</div></div>`
+      const progress = (job.status === 'running' || job.status === 'starting' || job.status === 'stopping')
+        ? this.progressHtml(job, true)
         : (job.error ? `<div class="callout callout--${made ? 'warn' : 'danger'}" style="margin-bottom:12px">${typeof icon === 'function' ? icon('alert') : ''}<div>${U.esc(job.error)}</div></div>` : '');
       body.innerHTML = progress + (made
         ? job.drafts.map((d, i) => this.cardHtml(d, i)).join('')
-        : (job.status === 'running' ? '' : '<div class="empty"><b>还没有题目</b><p>生成失败或被中断，请重新在对话里提出出题请求。</p></div>'));
-      hint.textContent = job.paperId
-        ? '试卷草稿已保存，可继续编辑题目或打开发布。'
-        : (made ? '可逐题编辑；组成试卷不会立刻发给学生。' : '草稿尚未进入正式题库。');
+        : (['running', 'stopping'].includes(job.status) ? '' : '<div class="empty"><b>还没有题目</b><p>生成失败或被中断，请重新在对话里提出出题请求。</p></div>'));
+      body.querySelectorAll('[data-ap-stop]').forEach(btn => {
+        btn.addEventListener('click', () => this.stopGeneration(job));
+      });
+      hint.textContent = made ? '可逐题编辑，或发布进题库。' : '草稿尚未进入正式题库。';
       publish.disabled = !job.drafts.some(d => d.status === 'draft');
-      const examBtn = this.wrap.querySelector('#apExam');
-      if (examBtn) {
-        examBtn.disabled = !job.drafts.some(d => d.status === 'draft' || d.status === 'published');
-        examBtn.textContent = job.paperId ? '打开试卷' : '组成试卷';
-      }
       body.querySelectorAll('[data-ap-edit]').forEach(btn => btn.addEventListener('click', () => {
         const draft = job.drafts[Number(btn.dataset.apEdit)];
         if (!draft) return;
@@ -545,6 +799,7 @@ const AgentUI = (() => {
             draft.payload = payload || draft.payload;
             if (res && res.status) draft.status = res.status;
             if (res && res.errors) draft.errors = res.errors;
+            this.persist(job);
             if (this.current === job.id) this.render(job);
           }
         });
@@ -598,82 +853,13 @@ const AgentUI = (() => {
         const res = await API.question.draftPublish({ draftId: draft.draftId });
         draft.status = 'published';
         draft.publishedQId = res && res.qId;
+        this.persist(job);
         Toast.ok('已发布进题库', res && res.qId ? ('题号 ' + res.qId) : '');
         if (this.current === job.id) this.render(job);
       } catch (err) {
         button.disabled = false;
         button.textContent = '发布进题库';
         Toast.err('发布失败', err && err.message);
-      }
-    },
-    examQuestionFromDraft(d, difficulty) {
-      const p = d.payload || {};
-      const type = p.type || 'single';
-      let options = p.options;
-      if (options && !Array.isArray(options)) {
-        options = Object.keys(options).sort().map(key => ({ key, text: String(options[key] || '') }));
-      }
-      if (!Array.isArray(options)) options = [];
-      const figure = (p.graph || p.options_graph)
-        ? { has_image: true, graph: p.graph, options_graph: p.options_graph }
-        : (p.figureJson || p.figure_json || null);
-      return {
-        stem: p.question || p.stem || '',
-        type,
-        difficulty: p.difficulty || difficulty || 3,
-        chapterId: p.chapter_id || d.chapterId || '',
-        kpIds: (p.kp_ids || d.kpIds || []).slice(),
-        options,
-        answer: p.answer || '',
-        analysis: p.analysis || '',
-        figureJson: figure,
-      };
-    },
-    async assembleExam() {
-      const job = this.jobs[this.current];
-      if (!job) return;
-      if (job.paperId && typeof TeacherExams !== 'undefined') {
-        try {
-          const paper = await API.question.exams.detail(job.paperId);
-          Question.tab = 'exam';
-          TeacherExams.courseId = API.config.activeCourseId;
-          TeacherExams.paper = paper;
-          TeacherExams.dirty = false;
-          Router.go('question');
-        } catch (err) {
-          Toast.err('无法打开试卷', err && err.message);
-        }
-        return;
-      }
-      const ready = job.drafts.filter(d => d.status === 'draft' || d.status === 'published');
-      if (!ready.length) { Toast.warn('还没有可组卷的题目'); return; }
-      if (!API.question || !API.question.exams || typeof API.question.exams.save !== 'function') {
-        Toast.warn('当前页无法组卷', '请到「AI 出题与题库 → 试卷测验」新建试卷');
-        return;
-      }
-      const btn = this.wrap.querySelector('#apExam');
-      btn.disabled = true;
-      btn.textContent = '组卷中…';
-      try {
-        const items = ready.map((d, i) => ({
-          id: 'AP' + (i + 1) + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
-          sourceQId: d.publishedQId || '',
-          score: 0,
-          question: this.examQuestionFromDraft(d, job.difficulty),
-        }));
-        const saved = await API.question.exams.save({
-          title: '课堂小测',
-          totalScore: 100,
-          scoreMode: 'auto',
-          items,
-        });
-        job.paperId = saved.paperId;
-        Toast.ok('已组成试卷草稿', '学生还看不到；发布后才会出现在测验列表');
-        this.render(job);
-      } catch (err) {
-        btn.disabled = false;
-        btn.textContent = '组成试卷';
-        Toast.err('组卷失败', err && err.message);
       }
     },
     async publishAll() {
@@ -689,6 +875,7 @@ const AgentUI = (() => {
           const res = await API.question.draftPublish({ draftId: draft.draftId });
           draft.status = 'published';
           draft.publishedQId = res && res.qId;
+          this.persist(job);
           ok += 1;
         } catch (err) {
           Toast.err('部分题目发布失败', err && err.message);
@@ -814,7 +1001,7 @@ const AgentUI = (() => {
       Toast.warn('当前有未保存内容，请先保存或关闭，再点击操作入口'); return false;
     }
     running = true;
-    const ctx = { files: options.files || [], allowCourseChange: false, targetView: snapshot.view };
+    const ctx = { files: options.files || [], allowCourseChange: false, targetView: snapshot.view, auto: options.auto === true };
     ctx.guard = () => role() === snapshot.role && userId() === snapshot.userId && loginId() === snapshot.login &&
       (ctx.allowCourseChange || currentCourse() === snapshot.course) && Router.current === ctx.targetView;
     try {

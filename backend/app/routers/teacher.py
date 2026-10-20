@@ -1489,6 +1489,11 @@ class GenQuestionReq(BaseModel):
     count: int = 3
     skillId: Optional[str] = None
     requirement: Optional[str] = None
+    taskId: Optional[str] = None
+
+
+class GenQuestionStopReq(BaseModel):
+    taskId: str
 
 
 class ReviewReq(BaseModel):
@@ -1571,6 +1576,8 @@ def ai_generate_questions(
     由 retrieve_chunks 工具据此过滤 RAG 切片 —— 缺少它会导致跨课程全库混搜。
     """
     from sse_starlette.sse import EventSourceResponse
+    from ..agent_st.agent import llm
+    from ..agent_st.agent import cancel
     from ..agent_st.agent.runtime import run_turn
     from ..agent_st.rag import structure
     from ..agent_st.rag.bank import get_question as load_st_question
@@ -1583,6 +1590,11 @@ def ai_generate_questions(
         return fail("请至少指定一个知识点或一道例题", 400)
 
     count = max(1, min(req.count or 3, 10))
+    task_id = str(req.taskId or "").strip()
+    if len(task_id) > 128:
+        return fail("出题任务标识无效", 400)
+    if task_id and not cancel.register_task(task_id, user.user_id, course_id):
+        return fail("出题任务标识已在使用，请重新发起", 409)
     # 知识点 → (名称, 所属章 id)；一律以本课程图谱为准，传错 id 直接忽略
     kp_infos = [info for info in (structure.kp_info(course_id, k) for k in kp_ids) if info]
     kp_names = [info["kp_name"] for info in kp_infos]
@@ -1610,9 +1622,15 @@ def ai_generate_questions(
     if not picked_types:
         picked_types = ["single"]
 
-    def _message(seq: int) -> str:
-        qtype = picked_types[(seq - 1) % len(picked_types)]
-        parts = [f"请出第 {seq}/{count} 道{_GEN_TYPE_LABEL[qtype]}。{_GEN_TYPE_HINT[qtype]}"]
+    question_types = [picked_types[index % len(picked_types)] for index in range(count)]
+
+    def _message() -> str:
+        type_sequence = "、".join(
+            f"第 {index + 1} 道{_GEN_TYPE_LABEL[qtype]}"
+            for index, qtype in enumerate(question_types)
+        )
+        parts = [f"请一次性生成 {count} 道题，题型顺序为：{type_sequence}。"]
+        parts.extend(_GEN_TYPE_HINT[qtype] for qtype in dict.fromkeys(question_types))
         if kp_names:
             parts.append("指定知识点：" + "、".join(kp_names) + "。")
         else:
@@ -1629,60 +1647,113 @@ def ai_generate_questions(
             parts.append("必须先构思并重算答案，禁止对原题做数值微扰。")
         return "".join(parts)
 
-    def gen():
+    def generate_events():
         batch_id = "BT" + uuid.uuid4().hex[:10].upper()
         draft_ids: list[str] = []
         demo = False
         yield {"event": "meta", "data": json.dumps({"batchId": batch_id, "count": count}, ensure_ascii=False)}
-        for i in range(count):
-            chapter_id = _chapter_hint(i)
+
+        def forward_turn(message: str, context: dict):
+            nonlocal demo
+            for event in run_turn(
+                message=message,
+                flow_id="generate_items",
+                context=context,
+                user_id=user.user_id,
+                course_id=course_id,
+            ):
+                event_type = event.get("type")
+                if event_type == "draft":
+                    draft_id = event.get("draft_id") or ""
+                    if draft_id:
+                        draft_ids.append(draft_id)
+                    yield {"event": "draft", "data": json.dumps(event, ensure_ascii=False)}
+                elif event_type == "done":
+                    demo = demo or bool(event.get("demo"))
+                elif event_type == "action":
+                    # 写操作的待批准卡片（P2c）：前端仍使用原事件契约。
+                    yield {"event": "action", "data": json.dumps(event, ensure_ascii=False)}
+                elif event_type in ("text", "tool_start", "tool_end", "citations"):
+                    yield {"event": event_type if event_type != "text" else "log",
+                           "data": json.dumps(event, ensure_ascii=False)}
+                elif event_type == "error":
+                    yield {"event": "error", "data": json.dumps(event, ensure_ascii=False)}
+
+        if llm.chat_available():
+            # 实际模型一次准备课程资料并生成整批，避免每题重复启动完整 Agent 流程。
             context = {
-                "courseId": course_id,          # 课程隔离边界：RAG 检索据此过滤
-                "role": (getattr(user, "role", "") or "").strip(),  # 出题流角色校验（教师/管理员）
+                "courseId": course_id,
+                "role": (getattr(user, "role", "") or "").strip(),
                 "batch_id": batch_id,
+                "count": count,
                 "difficulty": req.difficulty,
-                "seq": i + 1,
-                # 教师选定的知识点 → resolve_topic 的结构定位入口（首个为主）
                 "kpId": kp_ids[0] if kp_ids else "",
-                "chapterId": chapter_id,
+                "chapterId": (kp_infos[0]["chapter_id"] if kp_infos else example_chapter_id),
                 "kp_ids": kp_ids,
                 "kp_names": kp_names,
-                "question_type": picked_types[i % len(picked_types)],
+                "question_types": question_types,
+                "allowed_chapter_ids": kp_chapter_ids or ([example_chapter_id] if example_chapter_id else []),
                 "example_question_ids": example_ids,
-                # 出题页的保存直接落草稿并推预览，不再弹出「确认执行」。
+                "requirement": (req.requirement or "").strip(),
+                "cancelKey": task_id,
                 "autoApproveDraft": True,
             }
             try:
-                for ev in run_turn(
-                    message=_message(i + 1),
-                    flow_id="generate_items",
-                    context=context,
-                    user_id=user.user_id,
-                    course_id=course_id,
-                ):
-                    etype = ev.get("type")
-                    if etype == "draft":
-                        did = ev.get("draft_id") or ""
-                        if did:
-                            draft_ids.append(did)
-                        yield {"event": "draft", "data": json.dumps(ev, ensure_ascii=False)}
-                    elif etype == "done":
-                        demo = demo or bool(ev.get("demo"))
-                    elif etype == "action":
-                        # 写操作的待批准卡片（P2c）：与答疑流一致地透出，前端渲染确认卡片
-                        yield {"event": "action", "data": json.dumps(ev, ensure_ascii=False)}
-                    elif etype in ("text", "tool_start", "tool_end", "citations"):
-                        yield {"event": etype if etype != "text" else "log",
-                               "data": json.dumps(ev, ensure_ascii=False)}
-                    elif etype == "error":
-                        yield {"event": "error", "data": json.dumps(ev, ensure_ascii=False)}
-            except Exception as exc:  # noqa: BLE001  单题失败不中断整批
-                yield {"event": "error", "data": json.dumps({"message": f"第 {i + 1} 题生成失败：{exc}"}, ensure_ascii=False)}
+                yield from forward_turn(_message(), context)
+            except Exception as exc:  # noqa: BLE001  整批失败时给出可见错误，不伪装成完成
+                yield {"event": "error", "data": json.dumps(
+                    {"message": f"整批题目生成失败：{exc}"}, ensure_ascii=False)}
+        else:
+            # 演示模式沿用逐题骨架预览，维持未配置模型时的既有行为。
+            for index in range(count):
+                context = {
+                    "courseId": course_id,
+                    "role": (getattr(user, "role", "") or "").strip(),
+                    "batch_id": batch_id,
+                    "difficulty": req.difficulty,
+                    "seq": index + 1,
+                    "kpId": kp_ids[0] if kp_ids else "",
+                    "chapterId": _chapter_hint(index),
+                    "kp_ids": kp_ids,
+                    "kp_names": kp_names,
+                    "question_type": question_types[index],
+                    "example_question_ids": example_ids,
+                    "cancelKey": task_id,
+                    "autoApproveDraft": True,
+                }
+                try:
+                    yield from forward_turn(_message(), context)
+                except Exception as exc:  # noqa: BLE001  演示模式单题失败不影响后续题目
+                    yield {"event": "error", "data": json.dumps(
+                        {"message": f"第 {index + 1} 题生成失败：{exc}"}, ensure_ascii=False)}
+                if task_id and cancel.is_requested(task_id):
+                    break
         yield {"event": "done", "data": json.dumps(
             {"batchId": batch_id, "draftIds": draft_ids, "demo": demo, "count": len(draft_ids)},
             ensure_ascii=False)}
 
+    def gen():
+        try:
+            yield from generate_events()
+        finally:
+            if task_id:
+                cancel.unregister_task(task_id)
+
     return EventSourceResponse(gen())
+
+
+@question_router.post("/gen/stop")
+def stop_question_generation(
+    req: GenQuestionStopReq,
+    user: User = Depends(get_current_user),
+    course_id: str = Depends(get_current_course_id),
+):
+    """停止当前教师在当前课程中发起的出题生成任务。"""
+    from ..agent_st.agent import cancel
+
+    task_id = (req.taskId or "").strip()
+    stopped = cancel.request_task(task_id, user.user_id, course_id)
+    return ok({"stopped": stopped})
 
 
 @question_router.post("/gen/stream")

@@ -367,3 +367,21 @@ def on_startup():
             _db.close()
     except Exception as e:
         print(f"[alert-detect] 跳过（{e}）", flush=True)
+
+    try:
+        from .services.daily_learning_analysis import start_scheduler
+
+        if not start_scheduler():
+            print("[learning-analysis] APScheduler 未安装，每 5 分钟学情分析未启动；请安装 backend/requirements.txt", flush=True)
+    except Exception as e:
+        print(f"[learning-analysis] 定时任务启动失败（{type(e).__name__}）", flush=True)
+
+
+@app.on_event("shutdown")
+def on_shutdown():
+    try:
+        from .services.daily_learning_analysis import stop_scheduler
+
+        stop_scheduler()
+    except Exception as e:
+        print(f"[learning-analysis] 定时任务关闭失败（{type(e).__name__}）", flush=True)

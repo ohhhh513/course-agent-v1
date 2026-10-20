@@ -10,12 +10,13 @@
 - **复用业务口径**：正确率走 `services/scoring`（按题去重取最近一次；主 KP 权重 1.0 / 标签 0.3），
   掌握率走 `services/kp_stats.mastery_by_kp`，预警门槛复用 `services/alert_detector` 的常量。
   工具本身不实现统计口径。
-- **只读**：这些工具都不写库。提问热点只聚合已有 tool_log，不把学生私聊全文返回。
+- **只读**：这些工具都不写库。提问热点只聚合知识点、章节和次数，不返回学生原始问句。
 - **结果截断**：全班规模不可控，`class_alerts` / `kp_heatmap` / `hot_wrong_questions`
   都在工具里强制截断 —— 不指望模型自己克制。
 """
 from __future__ import annotations
 
+from collections import defaultdict
 from datetime import datetime, timedelta
 
 from sqlalchemy import func
@@ -311,8 +312,9 @@ def class_alerts(ctx: ToolContext, level: str = "all", limit: int = 20):
 @tool(
     name="student_profile",
     description=(
-        "看**当前课程内**某个学生的学情画像：整体正确率、预警条数、薄弱知识点、最近作答。"
-        "教师问「XX 最近怎么样」「他为什么会被预警」时调用。"
+        "看**当前课程内**某个学生的学情画像：整体正确率、预警、薄弱知识点、近期做题和学习路径进度，"
+        "以及每五分钟增量更新的智能答疑知识点、章节和概括性疑惑；不返回学生原始问句。"
+        "教师问「XX 最近怎么样」「他为什么会被预警」「他最近问 AI 哪些知识点」时调用。"
         "student_id 用 class_alerts / class_overview 返回的 studentId，"
         "或学生学号（studentNo）；不属于本课程的学生会返回错误，不会返回该生任何数据。"
     ),
@@ -322,13 +324,14 @@ def class_alerts(ctx: ToolContext, level: str = "all", limit: int = 20):
             "student_id": {"type": "string",
                            "description": "学生 user_id（如 2026010101）或学号"},
             "limit": {"type": "integer", "description": "薄弱知识点返回条数，默认 5（最多 10）"},
+            "days": {"type": "integer", "description": "近期答题及 AI 分析范围天数，默认 7（最多 30）"},
         },
         "required": ["student_id"],
     },
     flows=_FLOW,
     roles=_TEACHER_ROLES,
 )
-def student_profile(ctx: ToolContext, student_id: str = "", limit: int = 5):
+def student_profile(ctx: ToolContext, student_id: str = "", limit: int = 5, days: int = 7):
     course_id = _course_id(ctx)
     sid = (student_id or "").strip()
     if not course_id:
@@ -353,8 +356,9 @@ def student_profile(ctx: ToolContext, student_id: str = "", limit: int = 5):
         name, no = _student_names(db, [sid]).get(sid, (sid, ""))
         from app.services.alert_detector import ENGAGE_MIN, YELLOW_BELOW
         from app.services.scoring import quiz_accuracy_by_kp
+        recent_days = _clamp(days, 1, 30, 7)
 
-        acc = quiz_accuracy_by_kp(db, sid)
+        acc = quiz_accuracy_by_kp(db, sid, course_id=course_id)
         weak = [
             {"kpId": kp, "rate": round(rate, 1), "questions": hits}
             for kp, (rate, hits) in acc.items()
@@ -365,7 +369,11 @@ def student_profile(ctx: ToolContext, student_id: str = "", limit: int = 5):
         if weak:
             node_names = dict(db.query(
                 persistence.GraphNode.id, persistence.GraphNode.name,
-            ).filter(persistence.GraphNode.id.in_([w["kpId"] for w in weak])).all())
+            ).filter(
+                persistence.GraphNode.course_id == course_id,
+                persistence.GraphNode.graph_type == "knowledge",
+                persistence.GraphNode.id.in_([w["kpId"] for w in weak]),
+            ).all())
             for w in weak:
                 w["kpName"] = node_names.get(w["kpId"], w["kpId"])
 
@@ -378,7 +386,45 @@ def student_profile(ctx: ToolContext, student_id: str = "", limit: int = 5):
 
         recent = db.query(persistence.AnswerRecord).filter(
             persistence.AnswerRecord.user_id == sid,
+            persistence.AnswerRecord.course_id == course_id,
         ).order_by(persistence.AnswerRecord.id.desc()).limit(5).all()
+
+        practice_since = datetime.utcnow() - timedelta(days=recent_days)
+        practice_rows = db.query(
+            persistence.AnswerRecord.kp_id,
+            persistence.AnswerRecord.is_correct,
+        ).filter(
+            persistence.AnswerRecord.user_id == sid,
+            persistence.AnswerRecord.course_id == course_id,
+            persistence.AnswerRecord.created_at >= practice_since,
+        ).all()
+        practice_correct = sum(1 for _kp, is_correct in practice_rows if bool(is_correct))
+        practice_wrong = len(practice_rows) - practice_correct
+        wrong_by_kp = defaultdict(int)
+        for kp_id, is_correct in practice_rows:
+            if not bool(is_correct):
+                wrong_by_kp[(kp_id or "").strip()] += 1
+        practice_kp_names = dict(db.query(
+            persistence.GraphNode.id, persistence.GraphNode.name,
+        ).filter(
+            persistence.GraphNode.course_id == course_id,
+            persistence.GraphNode.graph_type == "knowledge",
+            persistence.GraphNode.id.in_([kp for kp in wrong_by_kp if kp]),
+        ).all()) if wrong_by_kp else {}
+
+        learning_rows = db.query(
+            persistence.LearningPath.status,
+            persistence.LearningPath.mastery,
+        ).filter(
+            persistence.LearningPath.user_id == sid,
+            persistence.LearningPath.course_id == course_id,
+        ).all()
+        path_total = len(learning_rows)
+        path_done = sum(1 for status, _mastery in learning_rows if status == "done")
+
+        from app.services.daily_learning_analysis import recent_ai_summary
+
+        ai_analysis = recent_ai_summary(db, course_id, sid, recent_days)
 
         return {
             "courseId": course_id,
@@ -394,6 +440,25 @@ def student_profile(ctx: ToolContext, student_id: str = "", limit: int = 5):
             },
             "weakPoints": weak,
             "weakBasis": f"只列命中的不同题数 ≥ {ENGAGE_MIN} 且正确率 < {YELLOW_BELOW}% 的知识点",
+            "recentLearning": {
+                "days": recent_days,
+                "practiceAttempts": len(practice_rows),
+                "correctAnswers": practice_correct,
+                "wrongAnswers": practice_wrong,
+                "practiceAccuracy": round(practice_correct / len(practice_rows) * 100, 1)
+                if practice_rows else None,
+                "wrongKnowledgePoints": [
+                    {"kpId": kp, "kpName": practice_kp_names.get(kp, kp or "未关联知识点"),
+                     "wrongCount": count}
+                    for kp, count in sorted(wrong_by_kp.items(), key=lambda item: (-item[1], item[0]))[:5]
+                ],
+                "learningPath": {
+                    "steps": path_total,
+                    "completedSteps": path_done,
+                    "completionPercent": round(path_done / path_total * 100, 1) if path_total else None,
+                },
+            },
+            "aiInteractionAnalysis": ai_analysis,
             "recentAnswers": [{
                 "qId": r.q_id, "kpId": r.kp_id, "isCorrect": bool(r.is_correct),
                 "answeredAt": fmt_dt(r.created_at),
@@ -505,13 +570,6 @@ def kp_heatmap(ctx: ToolContext, dimension: str = "accuracy", limit: int = 10, k
         db.close()
 
 
-def _clip_question(text: str) -> str:
-    compact = " ".join((text or "").split())
-    if len(compact) > 80:
-        return compact[:80] + "…"
-    return compact
-
-
 def _resolve_logged_topic(course_id: str, args: dict) -> dict:
     """从已落库的 resolve_topic 参数还原知识点。不读取助手回答正文。"""
     from app.agent_st.rag.topic import resolve_topic as resolve_topic_impl
@@ -530,8 +588,8 @@ def _resolve_logged_topic(course_id: str, args: dict) -> dict:
     name="class_question_hotspots",
     description=(
         "统计**当前课程学生**最近一段时间在智能答疑里问得最多的知识点和章节。"
-        "只根据助手消息 tool_log 里已经记录的 resolve_topic 聚合，不返回私聊全文，"
-        "也不返回学生姓名。每个知识点最多带 3 条匿名问句样例。"
+        "只根据助手消息 tool_log 里已经记录的 resolve_topic 聚合，只返回知识点、章节和提问次数；"
+        "不返回、引用或改写学生原始问句，也不返回学生姓名或身份信息。"
         "教师问「这周学生都在问什么」「哪一章提问最多」时调用。"
         "days 默认 7，问今天传 1，问这个月最多传 30。"
     ),
@@ -559,7 +617,7 @@ def class_question_hotspots(ctx: ToolContext, days: int = 7, limit: int = 5):
     try:
         uids = _students(db, course_id)
         if not uids:
-            return {"courseId": course_id, "days": window, "total": 0, "items": [],
+            return {"days": window, "total": 0, "items": [], "chapters": [], "unlocated": 0,
                     "note": "当前课程还没有学生成员"}
         sessions = db.query(persistence.ChatSession.session_id).filter(
             persistence.ChatSession.course_id == course_id,
@@ -567,12 +625,13 @@ def class_question_hotspots(ctx: ToolContext, days: int = 7, limit: int = 5):
         ).all()
         sids = [row[0] for row in sessions]
         if not sids:
-            return {"courseId": course_id, "days": window, "total": 0, "items": [],
-                    "chapters": [], "unlocated": 0,
+            return {"days": window, "total": 0, "items": [], "chapters": [], "unlocated": 0,
                     "note": "这段时间没有学生答疑记录"}
-        rows = db.query(persistence.ChatMessage).filter(
+        # 只读取助手消息中的知识点定位日志；不加载用户消息正文，避免原始问句进入工具结果。
+        rows = db.query(persistence.ChatMessage.tool_log).filter(
             persistence.ChatMessage.session_id.in_(sids),
             persistence.ChatMessage.created_at >= since,
+            persistence.ChatMessage.role == "ai",
         ).order_by(
             persistence.ChatMessage.session_id,
             persistence.ChatMessage.id,
@@ -581,24 +640,14 @@ def class_question_hotspots(ctx: ToolContext, days: int = 7, limit: int = 5):
         buckets: dict[str, dict] = {}
         chapters: dict[str, int] = {}
         unlocated = 0
-        unlocated_samples: list[str] = []
-        last_question: dict[str, str] = {}
         total = 0
-        for row in rows:
-            if row.role == "me":
-                sample = _clip_question(row.content or "")
-                if sample:
-                    last_question[row.session_id] = sample
-                continue
-            if row.role != "ai":
-                continue
+        for (tool_log,) in rows:
             try:
-                logged = json.loads(row.tool_log or "[]")
+                logged = json.loads(tool_log or "[]")
             except (TypeError, json.JSONDecodeError):
                 continue
             if not isinstance(logged, list):
                 continue
-            sample = last_question.get(row.session_id) or ""
             for item in logged:
                 if not isinstance(item, dict) or item.get("name") != "resolve_topic":
                     continue
@@ -612,20 +661,14 @@ def class_question_hotspots(ctx: ToolContext, days: int = 7, limit: int = 5):
                         chapters[chapter_only] = chapters.get(chapter_only, 0) + 1
                     else:
                         unlocated += 1
-                        if sample and sample not in unlocated_samples and len(unlocated_samples) < 3:
-                            unlocated_samples.append(sample)
                     total += 1
                     continue
                 bucket = buckets.setdefault(kp_id, {
-                    "kpId": kp_id,
                     "kpName": located.get("kp_name") or kp_id,
                     "chapter": located.get("chapter_name") or "",
                     "count": 0,
-                    "samples": [],
                 })
                 bucket["count"] += 1
-                if sample and sample not in bucket["samples"] and len(bucket["samples"]) < 3:
-                    bucket["samples"].append(sample)
                 chapter = bucket["chapter"] or "未分章"
                 chapters[chapter] = chapters.get(chapter, 0) + 1
                 total += 1
@@ -636,14 +679,12 @@ def class_question_hotspots(ctx: ToolContext, days: int = 7, limit: int = 5):
             key=lambda r: (-r["count"], r["chapter"]),
         )[:top]
         return {
-            "courseId": course_id,
             "days": window,
             "total": total,
             "unlocated": unlocated,
-            "unlocatedSamples": unlocated_samples,
             "items": items,
             "chapters": chapter_rows,
-            "note": ("按学生答疑里已记录的知识点定位聚合，问句已截断且不含姓名。"
+            "note": ("按当前课程学生答疑中已记录的知识点定位聚合，仅返回知识点、章节和次数，不包含原始问句。"
                      "点名某个学生时改用 student_profile，不要从这里推断是谁。"),
         }
     finally:

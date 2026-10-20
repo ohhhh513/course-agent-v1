@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
+from functools import lru_cache
 
 from app.agent_st.agent.config import get_settings
 
@@ -15,12 +16,17 @@ def chat_available() -> bool:
     return bool(settings.llm_api_key) and OpenAI is not None
 
 
-def _client():
-    settings = get_settings()
+@lru_cache(maxsize=4)
+def _client_for(base_url: str, api_key: str):
     # 统一走 agent_st.net 构造客户端（超时按流式对话设定，网络策略遵循标准环境变量）
     from ..net import sync_client
 
-    return sync_client(settings.llm_base_url, settings.llm_api_key)
+    return sync_client(base_url, api_key)
+
+
+def _client():
+    settings = get_settings()
+    return _client_for(settings.llm_base_url, settings.llm_api_key)
 
 
 def complete(messages: list[dict], tools: list[dict] | None) -> dict:
@@ -51,6 +57,7 @@ def complete_stream(
     tools: list[dict] | None,
     on_text_delta=None,
     on_reasoning_delta=None,
+    cancel_key: str | None = None,
 ) -> dict:
     """真实 token 流式调用。
 
@@ -68,35 +75,51 @@ def complete_stream(
 
     content_parts: list[str] = []
     calls: dict[int, dict] = {}
+    cancel_module = None
+    if cancel_key:
+        from . import cancel as cancel_module
 
     stream = client.chat.completions.create(**kwargs, stream=True)
-    for chunk in stream:
-        if not chunk.choices:
-            continue
-        delta = chunk.choices[0].delta
-        if delta is None:
-            continue
-        # 思考模型的内部推理（deepseek: reasoning_content）——实时转发
-        reasoning = getattr(delta, "reasoning_content", None) or getattr(delta, "reasoning", None)
-        if reasoning and on_reasoning_delta:
-            on_reasoning_delta(reasoning)
-        if delta.content:
-            content_parts.append(delta.content)
-            if on_text_delta:
-                on_text_delta(delta.content)
-        if delta.tool_calls:
-            for frag in delta.tool_calls:
-                slot = calls.setdefault(
-                    frag.index,
-                    {"id": "", "name": "", "arguments": ""},
-                )
-                if frag.id:
-                    slot["id"] = frag.id
-                if frag.function:
-                    if frag.function.name:
-                        slot["name"] += frag.function.name
-                    if frag.function.arguments:
-                        slot["arguments"] += frag.function.arguments
+    aborter = stream.close
+    if cancel_module and not cancel_module.register_aborter(cancel_key, aborter):
+        raise cancel_module.Stopped()
+    try:
+        for chunk in stream:
+            if cancel_module and cancel_module.is_requested(cancel_key):
+                raise cancel_module.Stopped()
+            if not chunk.choices:
+                continue
+            delta = chunk.choices[0].delta
+            if delta is None:
+                continue
+            # 思考模型的内部推理（deepseek: reasoning_content）——实时转发
+            reasoning = getattr(delta, "reasoning_content", None) or getattr(delta, "reasoning", None)
+            if reasoning and on_reasoning_delta:
+                on_reasoning_delta(reasoning)
+            if delta.content:
+                content_parts.append(delta.content)
+                if on_text_delta:
+                    on_text_delta(delta.content)
+            if delta.tool_calls:
+                for frag in delta.tool_calls:
+                    slot = calls.setdefault(
+                        frag.index,
+                        {"id": "", "name": "", "arguments": ""},
+                    )
+                    if frag.id:
+                        slot["id"] = frag.id
+                    if frag.function:
+                        if frag.function.name:
+                            slot["name"] += frag.function.name
+                        if frag.function.arguments:
+                            slot["arguments"] += frag.function.arguments
+    finally:
+        if cancel_module:
+            cancel_module.unregister_aborter(cancel_key, aborter)
+        try:
+            stream.close()
+        except Exception:
+            pass
 
     tool_calls = [calls[i] for i in sorted(calls)]
     return {"content": "".join(content_parts), "tool_calls": tool_calls}

@@ -51,7 +51,8 @@ GENERATE_GROUNDING = (
     "chapter_id / kp_ids 必须取自 resolve_topic 的结果，不要自造 id；"
     "定位用整词，不要拆词。"
     "禁止输出 q_id 字段或自编题号，题号由系统在保存时分配。"
-    "保存前必须 submit_item_plan（含解题过程）、validate_question、check_novelty 均通过。"
+    "每道题都要在 plan 中写明构思与逐步解题过程；整批通过 save_question_batch 保存，"
+    "服务端会逐题检查结构、新颖度、题型及课程范围，任一题未通过就不得保存。"
 )
 
 

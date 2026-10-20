@@ -909,7 +909,7 @@ window.API = (function () {
 
     /**
      * POST /question/gen  AI 生成习题
-     * body: { materialIds[], kpIds[], types[], difficulty, count, skillId?, requirement? }
+     * body: { materialIds[], kpIds[], types[], difficulty, count, skillId?, requirement?, taskId? }
      */
     generate: (p) => request('POST', '/question/gen', p, (q) => ({
       taskId: 'GT' + Date.now(), count: q.count || 3,
@@ -921,7 +921,10 @@ window.API = (function () {
      * handlers: onMeta({batchId,count}) / onDraft({draftId,status,errors,payload}) /
      *           onLog(过程事件) / onDone({batchId,draftIds,count,demo}) / onError
      */
-    genStream: (p, handlers) => streamRequest('POST', '/question/gen', p, handlers),
+    genStream: (p, handlers, opts) => streamRequest('POST', '/question/gen', p, handlers, opts),
+
+    /** POST /question/gen/stop  停止当前教师发起的智能出题任务 */
+    genStop: (p) => request('POST', '/question/gen/stop', { taskId: p && p.taskId }),
 
     /** GET /agent/ingest/stats  RAG 知识库切片统计（教师） */
     ingestStats: (p) => request('GET', '/agent/ingest/stats', p, () => ({ chunks: 0 })),

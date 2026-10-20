@@ -12,11 +12,10 @@
 
 ## 必须按顺序做
 
-1. `resolve_topic`。上下文若有 `example_question_ids`，对每道例题 `get_question(include_answer=true)`。
-2. `retrieve_chunks` 约束考点表述。
-3. `search_similar_questions`：只用来避免抄题库，不要照抄题干/选项/权值。
-4. `submit_item_plan`：先交构思。必须包含提问目标、实例草图、**逐步解题与正确结论**、干扰项对应的易错点、相对对照题怎么变。没有 plan 不得出 JSON。
-5. 按本轮指定题型输出闭集 JSON：
+1. `resolve_topic` 一次定位整批题目。上下文若有 `example_question_ids`，对每道例题 `get_question(include_answer=true)`。
+2. `retrieve_chunks` 一次检索整批题目的课程证据；`search_similar_questions` 一次检索防抄参考。两者只作课程依据与防抄检查，不得照抄题干、选项或图结构。
+3. 一次规划并生成整批题目。数量取上下文 `count`，每道题的题型按 `question_types` 顺序匹配。每道题都必须在 `plan` 中写明提问目标、实例草图、**逐步解题与正确结论**、干扰项易错点、相对对照题的实质变化；没有完整 plan 不得生成该题。
+4. 每道题按本轮指定题型输出闭集 JSON：
    `type, chapter_id, kp_ids, question, options, answer, analysis, has_image`
    可选：`graph`, `options_graph`
    - 单选 `type=single`：`options` 为 A–D，`answer` 一个字母，并设计 3 个错误选项
@@ -24,11 +23,10 @@
    - 判断 `type=judge`：`options` 为 `{"A":"正确","B":"错误"}`，`answer` 为 A 或 B
    - 填空 `type=blank`：题干用 `____` 标空，`answer` 按空位用中文分号连接，`options` 可为空对象
    **不要输出 `q_id` 字段**（见下方「题号」）。
-6. `validate_question`；失败则按 `errors` 改，最多两轮。
-7. `check_novelty`；失败必须加大变动后重做 plan 或改 JSON，禁止只改一个数字再提交。
-8. 两项都通过后 `save_question_draft`。看工具返回，不要凭猜测说已经保存：
-   - 返回里有 `draft_id`：草稿已经写入，题目会出现在出题预览里。不要再说「请点确认执行」，
-     也不要报题号，不要说已经进入正式题库。
+5. 对整批题目只调用一次 `save_question_batch`。服务端会逐题执行结构、章节/知识点、题型、plan 与较大变动检查；只有全部通过才会写入。
+6. 若工具返回校验错误，只修正错误对应的题目，再提交完整批次；不要为修一题重写其他已通过检查的题。
+7. 看工具返回，不要凭猜测说已经保存：
+   - 返回 `ok=true` 且有 `draft_ids`：整批草稿已写入，题目会逐题显示在预览里。不要再说「请点确认执行」，也不要报题号，不要说已经进入正式题库。
    - 返回 `pending`：还没有落库。正文只说「已生成待批准动作，请点确认执行」，不要报题号。
 
 ## 定位约定：整词交给 resolve_topic，不要自己拆词

@@ -33,7 +33,7 @@ from app.agent_st.agent import registry                      # noqa: E402
 from app.agent_st.agent.context import ToolContext           # noqa: E402
 from app.agent_st.agent.loader import load_flow              # noqa: E402
 from app.agent_st.agent.tools import (admin_import, admin_ops, analytics,  # noqa: E402,F401
-                                      bank, draft, plan, rag, teacher_analytics,
+                                      bank, batch_draft, draft, plan, rag, teacher_analytics,
                                       topic, validate, ui_actions)
 
 FAILS: list[str] = []
@@ -44,7 +44,8 @@ KNOWN_TEACHER_TOOLS: dict[str, set[str]] = {
     "explain": {"class_overview", "class_alerts", "student_profile",
                 "kp_heatmap", "hot_wrong_questions", "class_question_hotspots"},
     "generate_items": {"search_similar_questions", "submit_item_plan",
-                       "check_novelty", "validate_question", "save_question_draft"},
+                       "check_novelty", "validate_question", "save_question_draft",
+                       "save_question_batch"},
 }
 
 

@@ -728,10 +728,11 @@ html.auth-skin body {
   .hero__main { flex-basis: 100%; min-width: 0; }
   .hero__main h2 { font-size: 20px; }
   .hero__stats, .hero__rings { width: 100%; flex-basis: 100%; gap: 12px; }
-  .hero__stat--streak { min-width: 0; width: 100%; }
+  .hero--learning > .hero__stats { width: fit-content; max-width: 100%; flex: 0 1 auto; }
+  .hero__stat--streak { min-width: 0; max-width: 100%; width: fit-content; }
   .hero__rings { overflow-x: auto; justify-content: flex-start; }
   .hero__ring { flex: 0 0 150px; }
-  .streak-cal { overflow-x: auto; }
+  .streak-cal { overflow: visible; }
   .todo { align-items: flex-start; flex-wrap: wrap; }
   .todo__main { flex: 1 1 calc(100% - 46px); }
   .todo > .btn { margin-left: 42px; }

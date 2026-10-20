@@ -168,11 +168,12 @@ def execute(name: str, args: dict, ctx) -> Any:
 
     # 写操作闸门：带 approval 的工具默认不执行，只排一条待批准动作；
     # 只有 approve 接口（服务端回放，带 approval_replay 标记）才真正执行。
-    # 出题页单独放行 save_question_draft：教师点「生成习题」即视为准许写入草稿，
+    # 出题页单独放行草稿写入工具：教师点「生成习题」即视为准许写入草稿，
     # 结果直接出现在题目预览里。答疑里的同名工具仍要确认。
     extra = getattr(ctx, "extra", None) or {}
     draft_already_allowed = (
-        spec.name == "save_question_draft" and bool(extra.get("autoApproveDraft"))
+        spec.name in {"save_question_draft", "save_question_batch"}
+        and bool(extra.get("autoApproveDraft"))
     )
     if spec.approval is not None and not is_approval_replay(ctx) and not draft_already_allowed:
         return _enqueue_pending(spec, args or {}, ctx)

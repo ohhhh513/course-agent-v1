@@ -41,7 +41,7 @@ def _kp_tags(raw) -> list[str]:
     return [str(x).strip() for x in data if str(x or "").strip()]
 
 
-def _weighted_records(db: Session, user_id: str) -> list[tuple]:
+def _weighted_records(db: Session, user_id: str, course_id: str | None = None) -> list[tuple]:
     """每题「最近一次作答」的加权归属记录 —— 正确率与逐题拆解共用的唯一取数入口。
 
     返回 [(q_id, primary_kp, related_kps, is_correct, created_at)]：
@@ -51,12 +51,15 @@ def _weighted_records(db: Session, user_id: str) -> list[tuple]:
     """
     from ..models.question import Question
 
-    latest = db.query(
-        func.max(AnswerRecord.id).label("last_id"),
-    ).filter(
+    answer_scope = [
         AnswerRecord.user_id == user_id,
         AnswerRecord.kp_id.isnot(None),
-    ).group_by(AnswerRecord.q_id).subquery()
+    ]
+    if course_id:
+        answer_scope.append(AnswerRecord.course_id == course_id)
+    latest = db.query(
+        func.max(AnswerRecord.id).label("last_id"),
+    ).filter(*answer_scope).group_by(AnswerRecord.q_id).subquery()
     rows = db.query(
         AnswerRecord.q_id, AnswerRecord.kp_id, AnswerRecord.is_correct,
         AnswerRecord.created_at,
@@ -68,9 +71,12 @@ def _weighted_records(db: Session, user_id: str) -> list[tuple]:
     primary_map: dict[str, str] = {}
     tags_map: dict[str, list[str]] = {}
     if qids:
-        for qid, kp_id, kp_ids in db.query(
-                Question.q_id, Question.kp_id, Question.kp_ids).filter(
-                Question.q_id.in_(qids)).all():
+        question_query = db.query(Question.q_id, Question.kp_id, Question.kp_ids).filter(
+            Question.q_id.in_(qids),
+        )
+        if course_id:
+            question_query = question_query.filter(Question.course_id == course_id)
+        for qid, kp_id, kp_ids in question_query.all():
             primary_map[qid] = (kp_id or "").strip()
             tags_map[qid] = _kp_tags(kp_ids)
 
@@ -91,12 +97,13 @@ def quiz_accuracy_by_kp(
     db: Session,
     user_id: str,
     secondary_weight: float = SECONDARY_KP_WEIGHT,
+    course_id: str | None = None,
 ) -> dict:
     """每知识点：(加权答题正确率%, 含次要命中的不同题数)。按题去重、取最近一次作答。"""
     num: dict[str, float] = defaultdict(float)   # 加权答对数
     den: dict[str, float] = defaultdict(float)   # 加权作答数
     hits: dict[str, int] = defaultdict(int)      # 该点上的不同题数（主命中 ∪ 次要命中）
-    for _qid, primary, related, ok, _created in _weighted_records(db, user_id):
+    for _qid, primary, related, ok, _created in _weighted_records(db, user_id, course_id=course_id):
         for kp in related:
             w = 1.0 if kp == primary else float(secondary_weight)
             hits[kp] += 1                 # 只要挂了这个点就算"做过 1 道题"

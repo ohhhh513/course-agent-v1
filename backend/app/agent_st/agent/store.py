@@ -133,6 +133,56 @@ class AgentStore:
         return {"draft_id": draft_id, "status": status, "errors": check["errors"],
                 "q_id": payload.get("q_id")}
 
+    def save_drafts(self, payloads: list[dict], batch_id: str = "") -> list[dict]:
+        """一次事务保存同一批已通过校验的题目草稿。"""
+        from app.agent_st.rag.bank import next_ai_q_id
+        STQuestionDraft = self.persistence.STQuestionDraft
+
+        reserved = self.reserved_q_ids()
+        rows = []
+        saved = []
+        for source in payloads:
+            payload = dict(source)
+            q_id = next_ai_q_id(self.course_id, reserved=reserved)
+            reserved.add(q_id)
+            payload["q_id"] = q_id
+            check = validate_question(
+                payload,
+                course_id=self.course_id,
+                used_q_ids=reserved - {q_id},
+            )
+            if not check["ok"]:
+                raise ValueError("批量保存前再次校验失败：" + "；".join(check["errors"]))
+            draft_id = f"QD{uuid.uuid4().hex[:10].upper()}"
+            status = "draft"
+            rows.append(STQuestionDraft(
+                draft_id=draft_id,
+                user_id=self.user_id or None,
+                course_id=self.course_id or None,
+                batch_id=batch_id,
+                payload_json=json.dumps(payload, ensure_ascii=False),
+                status=status,
+                errors_json=json.dumps(check["errors"], ensure_ascii=False),
+            ))
+            saved.append({
+                "draft_id": draft_id,
+                "status": status,
+                "errors": check["errors"],
+                "q_id": q_id,
+                "payload": payload,
+            })
+
+        db = self.persistence.SessionLocal()
+        try:
+            db.add_all(rows)
+            db.commit()
+        except Exception:
+            db.rollback()
+            raise
+        finally:
+            db.close()
+        return saved
+
     def list_drafts(
         self, limit: int = 50, user_id: str | None = None, course_id: str | None = None
     ) -> list[dict]:

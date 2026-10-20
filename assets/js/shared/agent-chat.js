@@ -403,6 +403,9 @@ window.AgentChatView = (function () {
       _filePreviewUrls: new WeakMap(),
       _previewUrlSet: new Set(),
       _imagePreviewClose: null,
+      _historyCloseTimer: 0,
+      _historyKeydown: null,
+      _sideWidth: 360,
       _ctrl: null,          // 本轮流式请求的 AbortController（「停止生成」用）
       _stopped: false,      // 用户点了停止 → 收尾时保留「已生成的部分」而不是报错
       _settled: false,      // 本轮是否已收尾（finish/fail），防止 abort 与 done 双重渲染
@@ -410,6 +413,10 @@ window.AgentChatView = (function () {
       render() {
         this._closeAddMenu();
         this._menuEvents?.abort();
+        if (this._historyKeydown) document.removeEventListener('keydown', this._historyKeydown);
+        this._historyKeydown = null;
+        if (this._historyCloseTimer) clearTimeout(this._historyCloseTimer);
+        this._historyCloseTimer = 0;
         this._clearPreviewUrls();
         const el = U.$(cfg.containerId);
         if (!el) return;
@@ -417,10 +424,12 @@ window.AgentChatView = (function () {
         <div class="chat-shell">
           <div class="card chat chat--empty">
             <div class="chat__method">
-              <button class="btn btn--ghost btn--sm" id="newSessBtn">${icon('plus')} 新建会话</button>
               <span class="spacer"></span>
               ${cfg.badges}
-              <button class="btn btn--ghost btn--sm" id="toggleHistoryBtn" aria-expanded="false" title="显示历史会话" aria-label="显示历史会话">${icon('clock')} 历史会话</button>
+              <div class="chat__session-actions" role="group" aria-label="对话操作">
+                <button class="btn btn--ghost btn--sm" id="toggleHistoryBtn" aria-controls="chatHistory" aria-expanded="false" title="显示历史对话" aria-label="显示历史对话">${icon('clock')} 历史对话</button>
+                <button class="btn btn--primary btn--sm" id="newSessBtn">${icon('plus')} 新建对话</button>
+              </div>
             </div>
             <div class="chat__workspace">
               <div class="chat__intro" id="chatIntro">
@@ -451,11 +460,12 @@ window.AgentChatView = (function () {
             </div>
           </div>
 
-          <aside class="card chat__history" id="chatHistory" aria-label="历史会话" hidden>
+          <div class="chat__resize-handle" id="chatSideResizeHandle" role="separator" aria-label="拖动调整右侧面板宽度" aria-orientation="vertical" aria-valuemin="260" aria-valuemax="1920" aria-valuenow="360" aria-valuetext="360 像素" tabindex="0" hidden></div>
+          <aside class="card chat__history" id="chatHistory" aria-label="历史对话" aria-hidden="true" inert hidden>
             <div class="card__head">
-              <h3>${icon('clock')} 历史会话</h3>
+              <h3>${icon('clock')} 历史对话</h3>
               <span class="spacer"></span>
-              <button class="btn btn--ghost btn--icon btn--sm" id="closeHistoryBtn" title="收起历史会话" aria-label="收起历史会话">${icon('x')}</button>
+              <button class="btn btn--ghost btn--icon btn--sm" id="closeHistoryBtn" title="隐藏扩展栏" aria-label="隐藏扩展栏">${icon('panelRightClose')}</button>
             </div>
             <div class="card__body card__body--flush"><div class="list" id="sessBox"></div></div>
           </aside>
@@ -470,13 +480,13 @@ window.AgentChatView = (function () {
         A.sessions().then(r => {
           if (U.$('#sessBox') === sessBox) this.renderSessions(r);
         }).catch(() => {
-          if (U.$('#sessBox') === sessBox) sessBox.innerHTML = '<p class="chat__history-empty">历史会话加载失败，请重新进入页面。</p>';
+          if (U.$('#sessBox') === sessBox) sessBox.innerHTML = '<p class="chat__history-empty">历史对话加载失败，请重新进入页面。</p>';
         });
 
         // 发送 / 停止（主流智能体形态：同一个按钮，生成中变成「停止」）
         const input = U.$('#chatInput');
         const submit = () => {
-          if (this.busy) return;             // 生成中按 Enter 不发送（也不会误触停止）
+          if (this._isWorking()) return;    // 聊天或出题生成中按 Enter 不发送（也不会误触停止）
           const v = input.value.trim();
           if (!v) return;
           const skill = this._activeSkill();
@@ -487,13 +497,17 @@ window.AgentChatView = (function () {
           this.ask(question);
         };
         U.$('#chatSend').addEventListener('click', () => {
-          if (this.busy) { this.stop(); return; }
+          if (this._isWorking()) { this.stop(); return; }
           submit();
         });
         input.addEventListener('keydown', e => {
           if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit(); }
         });
-        this._setSendMode(false);            // 初始态（重进页面时复位）
+        if (!this._previewStateListener) {
+          this._previewStateListener = () => this._setSendMode(this._isWorking());
+          window.addEventListener('agent-preview-state', this._previewStateListener);
+        }
+        this._setSendMode(this._isWorking()); // 同时恢复智能体及出题任务的停止状态
         input.addEventListener('input', () => {
           input.style.height = 'auto';
           const cap = U.$('.chat')?.classList.contains('chat--empty') ? 148 : 88;
@@ -516,22 +530,148 @@ window.AgentChatView = (function () {
           Toast.info('已创建新会话');
         });
 
-        // 历史会话侧栏：默认隐藏，点击右上方"历史会话"按钮滑出
+        // 历史与生成预览共用右侧停靠栏，打开时平滑展开，不在聊天区外形成浮层
         const historyEl = U.$('#chatHistory');
+        const resizeHandle = U.$('#chatSideResizeHandle');
         const toggleBtn = U.$('#toggleHistoryBtn');
         const closeBtn = U.$('#closeHistoryBtn');
         const chatShell = el.querySelector('.chat-shell') || el;
+        chatShell.style.setProperty('--chat-side-width', `${this._sideWidth}px`);
+        const viewportWidth = () => Math.max(320, Math.round(window.innerWidth || document.documentElement.clientWidth || 0));
+        const resizeBounds = (rightEdge) => {
+          const right = Number.isFinite(rightEdge) ? rightEdge : chatShell.getBoundingClientRect().right;
+          return { min: 260, max: Math.max(260, Math.min(viewportWidth(), Math.round(right))) };
+        };
+        const applySideWidth = (width, bounds = resizeBounds()) => {
+          const next = Math.max(bounds.min, Math.min(bounds.max, Math.round(width)));
+          this._sideWidth = next;
+          chatShell.style.setProperty('--chat-side-width', `${this._sideWidth}px`);
+          const paneOpen = chatShell.classList.contains('is-history-open') || chatShell.classList.contains('is-preview-open');
+          const fullScreenThreshold = Math.min(Math.round(viewportWidth() * 0.8), bounds.max);
+          const fullScreen = paneOpen && next >= fullScreenThreshold;
+          chatShell.classList.toggle('is-side-fullscreen', fullScreen);
+          resizeHandle?.setAttribute('aria-valuemin', String(bounds.min));
+          resizeHandle?.setAttribute('aria-valuemax', String(viewportWidth()));
+          resizeHandle?.setAttribute('aria-valuenow', String(fullScreen ? viewportWidth() : this._sideWidth));
+          resizeHandle?.setAttribute('aria-valuetext', fullScreen ? '全屏' : `${this._sideWidth} 像素`);
+        };
+        applySideWidth(this._sideWidth);
+        chatShell.addEventListener('agent:sidepane-close', () => applySideWidth(360));
+        if (resizeHandle) {
+          let resizing = false;
+          let resizeFrame = 0;
+          let pointerX = 0;
+          let normalRightEdge = 0;
+          const applyPointerResize = () => {
+            resizeFrame = 0;
+            if (!resizing) return;
+            const rightEdge = chatShell.classList.contains('is-side-fullscreen') ? viewportWidth() : normalRightEdge;
+            applySideWidth(rightEdge - pointerX, resizeBounds(rightEdge));
+          };
+          const moveResize = event => {
+            if (!resizing) return;
+            pointerX = event.clientX;
+            if (!resizeFrame) resizeFrame = requestAnimationFrame(applyPointerResize);
+          };
+          const endResize = event => {
+            if (!resizing || (event && event.pointerId !== undefined && resizeHandle.hasPointerCapture?.(event.pointerId) === false)) return;
+            if (resizeFrame) {
+              cancelAnimationFrame(resizeFrame);
+              applyPointerResize();
+            }
+            resizing = false;
+            chatShell.classList.remove('is-resizing');
+            if (event?.pointerId !== undefined && resizeHandle.hasPointerCapture?.(event.pointerId)) {
+              resizeHandle.releasePointerCapture(event.pointerId);
+            }
+          };
+          resizeHandle.addEventListener('pointerdown', event => {
+            if (event.button !== undefined && event.button !== 0) return;
+            event.preventDefault();
+            resizing = true;
+            pointerX = event.clientX;
+            const normalBoundsElement = chatShell.classList.contains('is-side-fullscreen')
+              ? (chatShell.parentElement || chatShell)
+              : chatShell;
+            normalRightEdge = Math.round(normalBoundsElement.getBoundingClientRect().right);
+            chatShell.classList.add('is-resizing');
+            resizeHandle.setPointerCapture?.(event.pointerId);
+          });
+          resizeHandle.addEventListener('pointermove', moveResize);
+          resizeHandle.addEventListener('pointerup', endResize);
+          resizeHandle.addEventListener('pointercancel', endResize);
+          resizeHandle.addEventListener('keydown', event => {
+            if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+            event.preventDefault();
+            const bounds = resizeBounds();
+            const step = event.shiftKey ? 48 : 24;
+            const next = event.key === 'Home' ? bounds.min
+              : event.key === 'End' ? bounds.max
+                : this._sideWidth + (event.key === 'ArrowLeft' ? step : -step);
+            applySideWidth(next);
+          });
+        }
+        let historyOpen = false;
+        const finishHistoryClose = () => {
+          if (historyOpen || !historyEl) return;
+          historyEl.hidden = true;
+          if (!chatShell.classList.contains('is-preview-open') && resizeHandle) resizeHandle.hidden = true;
+          this._historyCloseTimer = 0;
+        };
+        const onHistoryKeydown = event => {
+          if (event.key === 'Escape' && historyOpen) {
+            event.preventDefault();
+            _setHistoryOpen(false);
+          }
+        };
+        historyEl?.addEventListener('transitionend', event => {
+          if (event.target === historyEl && event.propertyName === 'transform') finishHistoryClose();
+        });
         const _setHistoryOpen = (open) => {
-          if (!historyEl || !toggleBtn) return;
-          if (open && typeof AgentUI !== 'undefined' && AgentUI.preview) AgentUI.preview.close();
-          historyEl.hidden = !open;
-          chatShell.classList.toggle('is-history-open', !!open);
-          toggleBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
-          toggleBtn.title = open ? '隐藏历史会话' : '显示历史会话';
+          const next = !!open;
+          if (!historyEl || !toggleBtn || next === historyOpen) return;
+          if (next && typeof AgentUI !== 'undefined' && AgentUI.preview) AgentUI.preview.close({ immediate: true });
+          historyOpen = next;
+          clearTimeout(this._historyCloseTimer);
+          this._historyCloseTimer = 0;
+          if (next) {
+            this._historyKeydown = onHistoryKeydown;
+            document.addEventListener('keydown', onHistoryKeydown);
+            if (resizeHandle) resizeHandle.hidden = false;
+            historyEl.hidden = false;
+            historyEl.inert = false;
+            historyEl.setAttribute('aria-hidden', 'false');
+            requestAnimationFrame(() => {
+              if (!historyOpen) return;
+              historyEl.classList.add('is-open');
+              closeBtn?.focus({ preventScroll: true });
+            });
+          } else {
+            document.removeEventListener('keydown', onHistoryKeydown);
+            this._historyKeydown = null;
+            chatShell.classList.remove('is-side-fullscreen');
+            historyEl.classList.remove('is-open');
+            historyEl.inert = true;
+            historyEl.setAttribute('aria-hidden', 'true');
+            if (historyEl.contains(document.activeElement)) toggleBtn.focus({ preventScroll: true });
+            if (!chatShell.classList.contains('is-preview-open') && resizeHandle) resizeHandle.hidden = true;
+            // 网格收起动画完成后再隐藏面板，避免立刻切 hidden 导致动画中断。
+            this._historyCloseTimer = setTimeout(finishHistoryClose, 320);
+          }
+          chatShell.classList.toggle('is-history-open', next);
+          if (next) applySideWidth(this._sideWidth);
+          else chatShell.dispatchEvent(new Event('agent:sidepane-close'));
+          toggleBtn.setAttribute('aria-expanded', next ? 'true' : 'false');
+          toggleBtn.title = next ? '隐藏历史对话' : '显示历史对话';
           toggleBtn.setAttribute('aria-label', toggleBtn.title);
         };
-        toggleBtn?.addEventListener('click', () => _setHistoryOpen(historyEl.hidden));
+        toggleBtn?.addEventListener('click', () => _setHistoryOpen(!historyOpen));
         closeBtn?.addEventListener('click', () => _setHistoryOpen(false));
+        historyEl?.addEventListener('click', event => {
+          if (event.target.closest('#sessBox [data-sid]') && !event.target.closest('[data-del]')) {
+            _setHistoryOpen(false);
+          }
+        });
 
         // 其他视图带入的草稿：填入输入框，由用户自行决定是否发送
         this._applyPendingDraft();
@@ -931,6 +1071,10 @@ window.AgentChatView = (function () {
         // meta 条目是随消息落库的内部标记（如越界判定），不是工具调用，不进面板
         entries = (entries || []).filter(e => e && e.kind !== 'meta' && e.kind !== 'ui_action');
         if (!entries.length) return '';
+        const hasRunning = entries.some(e => (e.kind || (e.text ? 'think' : 'tool')) !== 'think' && (e.ok === undefined || e.ok === null));
+        const heading = hasRunning
+          ? '<span class="tools__spinner tools__spinner--head" aria-hidden="true"></span><span>\u6b63\u5728\u5904\u7406</span>'
+          : icon('bot') + ' \u601d\u8003\u4e0e\u5de5\u5177\u8c03\u7528\uff08' + entries.length + '\uff09';
         // live 标记只允许存在一个（最后一个），避免重复 id="thinkLive" 导致内容写错位置
         const liveIdx = entries.reduce((acc, e, i) => (e.live ? i : acc), -1);
         const rows = entries.map((e, i) => {
@@ -941,19 +1085,22 @@ window.AgentChatView = (function () {
           }
           const running = e.ok === undefined || e.ok === null;
           const waiting = !running && !!e.pending;           // 写操作被闸门拦下 = 待批准
-          const dot = running ? 'is-run' : (waiting ? 'is-pend' : (e.ok ? 'is-ok' : 'is-bad'));
+          const dot = waiting ? 'is-pend' : (e.ok ? 'is-ok' : 'is-bad');
+          const indicator = running
+            ? '<span class="tools__spinner" aria-hidden="true"></span>'
+            : `<span class="tools__dot ${dot}" aria-hidden="true"></span>`;
           const stateText = running ? '运行中…' : (waiting ? '待批准' : (e.ok ? '完成' : '失败'));
           const args = JSON.stringify(e.args || {});
           const short = args.length > 150 ? args.slice(0, 150) + '…' : args;
           return `<div class="tools__item">
-            <span class="tools__dot ${dot}"></span>
+            ${indicator}
             <b>${U.esc(e.name || '工具')}</b>
             <span class="tools__state">${stateText}</span>
             <code class="tools__args" title="${U.esc(args)}">${U.esc(short)}</code>
           </div>`;
         }).join('');
         return `<div class="tools ${isOpen ? 'is-open' : ''}">
-          <button class="tools__head">${icon('bot')} 思考与工具调用（${entries.length}）<span class="caret" style="width:14px;height:14px">${icon('chevronDown')}</span></button>
+          <button type="button" class="tools__head" aria-live="polite">${heading}<span class="caret" style="width:14px;height:14px">${icon('chevronDown')}</span></button>
           <div class="tools__body">${rows}</div>
         </div>`;
       },
@@ -1735,11 +1882,17 @@ window.AgentChatView = (function () {
       _syncSendReady() {
         const btn = U.$('#chatSend');
         const input = U.$('#chatInput');
-        if (!btn || !input || this.busy) return;
+        if (!btn || !input || this._isWorking()) return;
         btn.classList.toggle('is-ready', !!input.value.trim());
       },
 
+      _isWorking() {
+        const preview = typeof AgentUI !== 'undefined' && AgentUI.preview;
+        return !!(this.busy || (preview && preview.hasActiveGeneration && preview.hasActiveGeneration()));
+      },
+
       _setSendMode(busy) {
+        busy = !!(busy || this._isWorking());
         const add = U.$('#chatAdd');
         if (add) add.disabled = !!busy;
         if (busy) this._closeAddMenu();
@@ -1756,18 +1909,23 @@ window.AgentChatView = (function () {
       },
 
       /**
-       * 停止生成：先请服务端在本轮的下个检查点收尾（把已生成的部分落库），
-       * 再中止前端这条 SSE 连接 —— 立即回到空闲态，保留已经显示出来的内容。
+       * 停止当前的聊天回答和教师出题任务：请求服务端取消，再关闭对应的前端 SSE。
+       * 出题流由 AgentPreview 单独收尾，已保存的题目草稿继续保留。
        */
       stop() {
-        if (!this.busy) return;
-        this._stopped = true;
-        const sid = this.sessionId;
-        if (sid && sid !== 'new' && A.stopChat) {
-          // 先请服务端收尾（失败也不阻塞 UI；吞掉 rejection，避免未捕获异常）
-          Promise.resolve().then(() => A.stopChat({ sessionId: sid })).catch(() => {});
+        const preview = typeof AgentUI !== 'undefined' && AgentUI.preview;
+        const previewBusy = !!(preview && preview.hasActiveGeneration && preview.hasActiveGeneration());
+        if (!this.busy && !previewBusy) return;
+        if (this.busy) {
+          this._stopped = true;
+          const sid = this.sessionId;
+          if (sid && sid !== 'new' && A.stopChat) {
+            // 先请服务端收尾（失败也不阻塞 UI；吞掉 rejection，避免未捕获异常）
+            Promise.resolve().then(() => A.stopChat({ sessionId: sid })).catch(() => {});
+          }
         }
-        if (this._ctrl && this._ctrl.abort) {
+        if (previewBusy && preview.stopActiveGeneration) preview.stopActiveGeneration();
+        if (this.busy && this._ctrl && this._ctrl.abort) {
           try { this._ctrl.abort(); } catch (e) { /* 已结束则忽略 */ }
         }
       },
@@ -1786,7 +1944,7 @@ window.AgentChatView = (function () {
             <div class="list__main"><b class="clamp-2">${U.esc(s.title)}</b>
               <p>${s.time} · ${s.rounds} 轮 · ${U.esc(s.kp)}</p></div>
             <button class="sess-del" data-del="${U.esc(s.sessionId)}" title="删除会话">${icon('trash')}</button>
-          </div>`).join('') : '<p class="chat__history-empty">暂无历史会话<br>开始对话后会保存在这里</p>';
+        </div>`).join('') : '<p class="chat__history-empty">暂无历史对话<br>开始对话后会保存在这里</p>';
         // 打开会话
         U.$$('#sessBox [data-sid]').forEach(item => {
           item.addEventListener('click', () => {

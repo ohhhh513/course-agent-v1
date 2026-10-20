@@ -36,7 +36,7 @@ from ..net import async_client
 Event = dict
 
 # 注册工具（与 runtime 保持一致： import 即注册，逐个显式列出）
-from .tools import (admin_ops, analytics, bank, draft, plan, rag,  # noqa: E402,F401
+from .tools import (admin_ops, analytics, bank, batch_draft, draft, plan, rag,  # noqa: E402,F401
                     teacher_analytics, topic, validate, ui_actions)
 
 _SDK_ERROR: str = ""
@@ -56,24 +56,37 @@ def available() -> bool:
 
 def _make_invoker(tool_name: str, ctx: ToolContext, emit: Callable[[Event], None]):
     """把 registry 里的工具包成 SDK 的 on_invoke_tool(ctx, json_args) -> str。"""
-    from .runtime import _log_tool      # 函数内导入，避免与 runtime 的相互引用
+    from .runtime import _log_tool, draft_events_for_tool  # 函数内导入，避免循环引用
 
     async def _invoke(_run_ctx, args_json: str) -> str:
+        from . import cancel
+
         try:
             args = json.loads(args_json or "{}")
         except json.JSONDecodeError:
             args = {}
         if not isinstance(args, dict):
             args = {}
+        cancel_key = str((ctx.extra or {}).get("cancelKey") or "")
+        if cancel_key and cancel.is_requested(cancel_key):
+            return json.dumps({"ok": False, "cancelled": True}, ensure_ascii=False)
         emit({"type": "tool_start", "name": tool_name, "args": args})
         # registry.execute 是同步的（DB / 向量检索），丢线程池执行
         result = await asyncio.to_thread(execute, tool_name, args, ctx)
+        saved_batch = (
+            tool_name == "save_question_batch"
+            and isinstance(result, dict)
+            and result.get("ok") is True
+        )
+        if cancel_key and cancel.is_requested(cancel_key) and not saved_batch:
+            return json.dumps({"ok": False, "cancelled": True}, ensure_ascii=False)
         _log_tool(ctx, tool_name, args, result)
         preview = result if not isinstance(result, list) else result[:4]
         emit({"type": "tool_end", "name": tool_name, "ok": True, "preview": preview})
-        # 与旧实现一致：每保存一道题就推一个 draft 事件（教师端流式预览用）
-        if tool_name == "save_question_draft" and isinstance(result, dict) and result.get("draft_id"):
-            emit({"type": "draft", **result})
+        for event in draft_events_for_tool(tool_name, result, ctx):
+            emit(event)
+        if cancel_key and cancel.is_requested(cancel_key) and not saved_batch:
+            return json.dumps({"ok": False, "cancelled": True}, ensure_ascii=False)
         return json.dumps(result, ensure_ascii=False)
 
     return _invoke
@@ -102,12 +115,14 @@ def _build_tools(flow_id: str, whitelist: list[str], ctx: ToolContext,
     return tools
 
 
-def _map_raw_event(data: Any, emit: Callable[[Event], None]) -> None:
+def _map_raw_event(data: Any, emit: Callable[[Event], None], text_parts: list[str] | None = None) -> None:
     """把 SDK 透出的原始事件映射成我们的事件（只关心文本/推理增量）。"""
     kind = getattr(data, "type", "") or ""
     if kind == "response.output_text.delta":
         delta = getattr(data, "delta", "")
         if delta:
+            if text_parts is not None:
+                text_parts.append(delta)
             emit({"type": "text", "delta": delta})
     elif kind in ("response.reasoning_text.delta", "response.reasoning_summary_text.delta"):
         delta = getattr(data, "delta", "")
@@ -116,9 +131,11 @@ def _map_raw_event(data: Any, emit: Callable[[Event], None]) -> None:
 
 
 async def _run_async(message: str, flow_id: str, session_id: str, context: dict | None,
-                     store: AgentStore, user_id: str, emit: Callable[[Event], None]) -> None:
+                     store: AgentStore, user_id: str, cancel_key: str,
+                     emit: Callable[[Event], None]) -> None:
     """真正的执行体（异步）：跑一轮 SDK Agent，把事件交给 emit。"""
     from ..rag.ingest import ensure_bank_indexed
+    from . import cancel
     from .runtime import (_citations_from_turn, _explain_out_of_scope, attachment_ground_text,
                           attachment_image_parts,
                           action_events, persist_side_effects)
@@ -169,10 +186,55 @@ async def _run_async(message: str, flow_id: str, session_id: str, context: dict 
     run_input = list(history) + [{"role": "user", "content": user_content}]
     result = Runner.run_streamed(agent, input=run_input, context=ctx, max_turns=max_turns)
 
-    async for ev in result.stream_events():
+    text_parts: list[str] = []
+    event_stream = result.stream_events().__aiter__()
+    stopped = False
+    while True:
+        if cancel.is_requested(cancel_key):
+            stopped = True
+            break
+        next_event = asyncio.create_task(event_stream.__anext__())
+        while True:
+            completed, _ = await asyncio.wait({next_event}, timeout=0.1)
+            if completed:
+                try:
+                    ev = next_event.result()
+                except StopAsyncIteration:
+                    ev = None
+                break
+            if cancel.is_requested(cancel_key):
+                stopped = True
+                next_event.cancel()
+                await asyncio.gather(next_event, return_exceptions=True)
+                ev = None
+                break
+        if stopped or ev is None:
+            break
         data = getattr(ev, "data", None)
         if data is not None:
-            _map_raw_event(data, emit)
+            _map_raw_event(data, emit, text_parts)
+
+    if stopped:
+        cancel_runner = getattr(result, "cancel", None)
+        if callable(cancel_runner):
+            try:
+                cancelled = cancel_runner()
+                if asyncio.iscoroutine(cancelled):
+                    await cancelled
+            except (Exception, asyncio.CancelledError):
+                pass
+        close_stream = getattr(event_stream, "aclose", None)
+        if callable(close_stream):
+            try:
+                await close_stream()
+            except (Exception, asyncio.CancelledError):
+                pass
+        partial = "".join(text_parts).strip()
+        if partial:
+            store.add_message(session_id, "assistant", partial)
+        emit({"type": "citations", "items": []})
+        emit({"type": "done", "drafts": ctx.turn.get("drafts") or [], "out_of_scope": False})
+        return
 
     final_text = getattr(result, "final_output", "") or ""
     if not isinstance(final_text, str):
@@ -226,6 +288,11 @@ def run_turn_sdk(message: str, flow_id: str | None = None, session_id: str | Non
     if course_id and not store.course_id:
         store.course_id = course_id
     session_id = store.ensure_session(session_id, flow_id)
+    from . import cancel
+
+    cancel_key = str((context or {}).get("cancelKey") or session_id)
+    if cancel_key == session_id:
+        cancel.clear(session_id)
     yield {"type": "session", "session_id": session_id, "flow_id": flow_id}
     # 附件随消息落库的标记（与 legacy 路径一致）：历史会话据此回显附件名
     from .runtime import attachment_log_entries
@@ -240,7 +307,8 @@ def run_turn_sdk(message: str, flow_id: str | None = None, session_id: str | Non
 
     def worker() -> None:
         try:
-            asyncio.run(_run_async(message, flow_id, session_id, context, store, user_id, emit))
+            asyncio.run(_run_async(message, flow_id, session_id, context, store,
+                                   user_id, cancel_key, emit))
         except Exception as exc:  # noqa: BLE001 - 任何异常都要变成可读事件
             emit({"type": "error", "message": f"模型调用失败：{exc}"})
             emit({"type": "done", "drafts": [], "out_of_scope": False})
