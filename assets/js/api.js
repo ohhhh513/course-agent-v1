@@ -346,6 +346,7 @@ window.API = (function () {
         const fd = new FormData();
         fd.append('question', p.question || '');
         fd.append('sessionId', p.sessionId || 'new');
+        if (p.skillId) fd.append('skillId', p.skillId);
         files.forEach(f => fd.append('files', f, f.name));
         return streamRequest('POST', '/admin/agent/chat/stream', fd, handlers, opts);
       }
@@ -573,6 +574,7 @@ window.API = (function () {
         const fd = new FormData();
         fd.append('question', p.question || '');
         fd.append('sessionId', p.sessionId || 'new');
+        if (p.skillId) fd.append('skillId', p.skillId);
         files.forEach(f => fd.append('files', f, f.name));
         return streamRequest('POST', '/ai/chat/stream', fd, handlers, opts);
       }

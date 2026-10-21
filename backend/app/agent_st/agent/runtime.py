@@ -10,6 +10,7 @@ from collections.abc import Iterator
 from app.agent_st.agent import llm
 from app.agent_st.agent.config import get_settings
 from app.agent_st.agent.context import ToolContext
+from app.agent_st.agent.chat_skills import bind_skill
 from app.agent_st.agent.loader import bind_course_identity, build_system_prompt, load_flow, load_persona
 from app.agent_st.agent.registry import execute, openai_tools, tool_ok
 from app.agent_st.agent.store import AgentStore
@@ -730,8 +731,7 @@ def run_turn(
         return
 
     ensure_bank_indexed(course_id=course_id or (context or {}).get("courseId") or None)
-    persona = load_persona()
-    flow_id = flow_id or persona.get("default_flow", "explain")
+    flow_id = flow_id or load_persona().get("default_flow", "explain")
     if flow_id in {"qa", "tutoring"}:
         flow_id = "explain"
     try:
@@ -740,6 +740,7 @@ def run_turn(
         yield {"type": "error", "message": f"未知任务流 {flow_id}"}
         yield {"type": "done"}
         return
+    persona = load_persona(str(flow.get("persona") or "course_tutor"))
 
     # 任务流级角色校验：flow 里声明的 roles 是"谁能用这条流"（服务端按登录用户角色判断，
     # 模型无法指定）。出题流会写草稿，只允许教师/管理员。
@@ -748,6 +749,12 @@ def run_turn(
     if role and allowed_roles and role not in allowed_roles:
         yield {"type": "error",
                "message": f"当前角色（{role}）不能使用「{flow.get('name') or flow_id}」"}
+        yield {"type": "done"}
+        return
+    extra_for_skill = dict(context or {})
+    skill, skill_tools, skill_err = bind_skill(flow, extra_for_skill)
+    if skill_err:
+        yield {"type": "error", "message": skill_err}
         yield {"type": "done"}
         return
 
@@ -766,7 +773,7 @@ def run_turn(
     if cancel_key == session_id:
         _cancel.clear(session_id)
 
-    extra = dict(context or {})
+    extra = extra_for_skill
     extra["message"] = message
     # 检索工具统一从 extra['courseId'] 取课程，这里保证它一定被填上
     if store.course_id:
@@ -828,7 +835,9 @@ def run_turn(
     )
     messages = [{
         "role": "system",
-        "content": build_system_prompt(persona, flow, prompt_extra, course_catalog=catalog),
+        "content": build_system_prompt(
+            persona, flow, prompt_extra, course_catalog=catalog, skill=skill,
+        ),
     }]
     messages.extend(history)
     # 附件正文注入「本轮用户消息」：只改内存里的 LLM 消息，不写库、不影响历史其它轮
@@ -847,7 +856,7 @@ def run_turn(
                 else:
                     _m["content"] = current_content + _ground
                 break
-    whitelist = flow.get("tools") or persona.get("tools") or []
+    whitelist = skill_tools
     tools = openai_tools(flow_id, whitelist, role=role)
     settings = get_settings()
     max_steps = int(flow.get("max_steps") or persona.get("max_steps") or settings.max_steps)

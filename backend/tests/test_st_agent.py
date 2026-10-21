@@ -756,6 +756,25 @@ def test_prompt_grounding_splits_by_flow():
     assert "禁止说成数据结构" in named
 
 
+def test_chat_skill_prompt_is_isolated():
+    from app.agent_st.agent.chat_skills import resolve_chat_skill
+    from app.agent_st.agent.loader import build_system_prompt, load_flow, load_persona
+
+    persona = load_persona("course_tutor")
+    flow = load_flow("explain")
+    general = build_system_prompt(persona, flow, {"role": "student"})
+    assert "智能讲解 Skill" in general
+    skill, err = resolve_chat_skill("explain", "student", "course_qa")
+    assert skill and not err
+    focused = build_system_prompt(
+        persona, flow, {"role": "student", "skillId": "course_qa"}, skill=skill,
+    )
+    assert "当前技能：课程答疑" in focused
+    assert "智能讲解 Skill" not in focused
+    assert "教师视角" not in focused
+    assert "独立技能" in focused
+
+
 # ---------------- 回归：定位「整词优先」 ----------------
 def test_resolve_topic_chapter_cn_keeps_kp(st_env):
     """「第N章 + 知识点」应同时给出章与知识点，而不是只给章。"""

@@ -4,7 +4,7 @@
 
     python dev_tools/check_agent_roles.py
 
-校验九件事：
+校验十件事：
 1. 任务流的 roles 声明（explain 三端可用；generate_items 只允许教师/管理员）；
 2. 组装给模型的工具清单按角色过滤（学生看不到教师专用工具）；
 3. 管理员档：只进平台治理流 admin_ops（5 个只读治理查询 + 4 个账号治理工具，写操作挂审批闸门），
@@ -31,7 +31,8 @@ sys.path.insert(0, str(REPO / "backend"))
 
 from app.agent_st.agent import registry                      # noqa: E402
 from app.agent_st.agent.context import ToolContext           # noqa: E402
-from app.agent_st.agent.loader import load_flow              # noqa: E402
+from app.agent_st.agent.chat_skills import SKILLS, files_for_skill, resolve_chat_skill  # noqa: E402
+from app.agent_st.agent.loader import load_flow, load_skill  # noqa: E402
 from app.agent_st.agent.tools import (admin_import, admin_ops, analytics,  # noqa: E402,F401
                                       bank, batch_draft, draft, plan, rag, teacher_analytics,
                                       topic, validate, ui_actions)
@@ -239,6 +240,54 @@ def main() -> int:
           f"explain 流的教师专用工具都在例外集合内：{sorted(exp_only)} ⊆ {sorted(covered)}")
     check({"my_alerts", "breakdown", "explain_metric", "weak_ranking", "my_last_attempt"} <= covered,
           "学生学情工具也在例外集合内")
+
+    print("10) 对话技能：角色隔离、工具 ⊆ 任务流、提示词文件存在")
+    for sid, spec in SKILLS.items():
+        flow_tools = set(load_flow(spec["flow"]).get("tools") or [])
+        skill_tools = set(spec["tools"])
+        missing_file = [n for n in files_for_skill(spec) if not load_skill(n)]
+        check(not missing_file, f"{sid} 技能文件可读：{missing_file}")
+        check(skill_tools <= flow_tools,
+              f"{sid} 工具都在 {spec['flow']} 白名单内：{sorted(skill_tools - flow_tools)}")
+        leaked_teacher = skill_tools & teacher_only("explain") if spec["flow"] == "explain" else set()
+        if "student" in spec["roles"]:
+            check(not leaked_teacher, f"学生技能 {sid} 不含教师工具：{sorted(leaked_teacher)}")
+            check("my_last_attempt" not in skill_tools or sid == "wrong_review",
+                  f"仅错题复盘可含 my_last_attempt：{sid}")
+        if "teacher" in spec["roles"]:
+            check("my_last_attempt" not in skill_tools, f"教师技能 {sid} 不含 my_last_attempt")
+        for role in spec["roles"]:
+            ok_spec, err = resolve_chat_skill(spec["flow"], role, sid)
+            check(ok_spec is not None and not err, f"{role} 可解析 {sid}：{err}")
+        for other in ("student", "teacher", "admin"):
+            if other in spec["roles"]:
+                continue
+            denied, err = resolve_chat_skill(spec["flow"], other, sid)
+            check(denied is None and "不能使用" in err, f"{other} 不能使用 {sid}")
+    none_spec, none_err = resolve_chat_skill("explain", "student", "")
+    check(none_spec is None and none_err == "", "未选技能时保持通用助手")
+    bogus, bogus_err = resolve_chat_skill("explain", "student", "class")
+    check(bogus is None and "不能使用" in bogus_err, "学生不能选用教师技能 class")
+    skill_ctx = ToolContext(store=_Store(), flow_id="explain",
+                            extra={"role": "student", "skillTools": ["resolve_topic"]},
+                            user_id="U_TEST")
+    blocked = registry.execute("my_alerts", {}, skill_ctx)
+    check(isinstance(blocked, dict) and "当前技能不能调用" in str(blocked.get("error", "")),
+          f"技能白名单拦截未授权工具：{blocked}")
+
+    def js_skill_ids(rel: str) -> list[str]:
+        text = (REPO / rel).read_text(encoding="utf-8")
+        return re.findall(r"id:\s*'([^']+)'", text)
+
+    fe_student = js_skill_ids("assets/js/student/views/chat.js")
+    fe_teacher = js_skill_ids("assets/js/teacher/views/chat.js")
+    fe_admin = js_skill_ids("assets/js/admin/views/assistant.js")
+    check(fe_student == [s for s, spec in SKILLS.items() if "student" in spec["roles"]],
+          f"学生前端技能 id 与目录一致：{fe_student}")
+    check(fe_teacher == [s for s, spec in SKILLS.items() if "teacher" in spec["roles"]],
+          f"教师前端技能 id 与目录一致：{fe_teacher}")
+    check(fe_admin == [s for s, spec in SKILLS.items() if "admin" in spec["roles"]],
+          f"管理员前端技能 id 与目录一致：{fe_admin}")
 
     print()
     if FAILS:

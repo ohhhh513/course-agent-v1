@@ -35,6 +35,8 @@ class ChatReq(BaseModel):
     # 课程上下文以请求头 X-Course-Id 为准（get_current_course_id 依赖）。
     # 这里的 body 字段仅作无头调用时的兜底，**不再默认演示课 C2026DS001**。
     courseId: str = ""
+    # 对话技能：空 = 通用助手（原任务流）；有值则按角色校验后只加载该技能。
+    skillId: Optional[str] = None
 
 
 class FeedbackReq(BaseModel):
@@ -166,6 +168,9 @@ def _agent_events(req: ChatReq, user, course_id=None, flow_id: str = "explain", 
         context["courseId"] = resolved
     if req.kpId:
         context["kpId"] = req.kpId
+    skill_id = (req.skillId or "").strip()
+    if skill_id:
+        context["skillId"] = skill_id
     # 服务端注入调用者角色：任务流级校验 + 工具清单过滤都靠它（模型无法指定）。
     context["role"] = (getattr(user, "role", "") or "").strip()
     # 调用方额外上下文（如附件）：合并进 context，run_turn 会据此注入本轮 prompt
@@ -308,7 +313,11 @@ async def ai_chat_stream(
             persist_chat_uploads(raw_uploads, attachments)
         except ChatAttachmentStorageError:
             return JSONResponse(status_code=500, content=fail("附件保存失败，请重新上传"))
-        req = ChatReq(sessionId=session_id, question=question)
+        req = ChatReq(
+            sessionId=session_id,
+            question=question,
+            skillId=(str(form.get("skillId") or "").strip() or None),
+        )
         if attachments:
             extra = {"attachments": attachments}
     else:
@@ -327,6 +336,7 @@ async def ai_chat_stream(
             method=str(body.get("method") or "guided"),
             kpId=body.get("kpId"),
             courseId=str(body.get("courseId") or ""),
+            skillId=(str(body.get("skillId") or "").strip() or None),
         )
 
     return EventSourceResponse(agent_sse_events(req, user, course_id, extra_context=extra))

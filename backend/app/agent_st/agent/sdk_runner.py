@@ -28,6 +28,7 @@ from typing import Any, Callable
 from . import llm
 from .config import get_settings
 from .context import ToolContext
+from .chat_skills import bind_skill
 from .loader import bind_course_identity, build_system_prompt, load_flow, load_persona
 from .registry import execute, openai_tools
 from .store import AgentStore
@@ -141,14 +142,19 @@ async def _run_async(message: str, flow_id: str, session_id: str, context: dict 
                           action_events, persist_side_effects)
 
     settings = get_settings()
-    persona = load_persona()
     flow = load_flow(flow_id)
+    persona = load_persona(str(flow.get("persona") or "course_tutor"))
     ensure_bank_indexed(course_id=store.course_id or None)
 
     extra = dict(context or {})
     extra["message"] = message
     if store.course_id:
         extra.setdefault("courseId", store.course_id)
+    skill, skill_tools, skill_err = bind_skill(flow, extra)
+    if skill_err:
+        emit({"type": "error", "message": skill_err})
+        emit({"type": "done"})
+        return
     ctx = ToolContext(store=store, flow_id=flow_id, extra=extra,
                       user_id=user_id or store.user_id)
 
@@ -165,11 +171,11 @@ async def _run_async(message: str, flow_id: str, session_id: str, context: dict 
             {k: v for k, v in extra.items() if k not in ("attachments", "account_import")},
             store.course_id,
         ),
-        course_catalog=catalog)
+        course_catalog=catalog,
+        skill=skill)
 
     role = str(extra.get("role") or "").strip()
-    whitelist = flow.get("tools") or persona.get("tools") or []
-    tools = _build_tools(flow_id, whitelist, ctx, emit, role=role)
+    tools = _build_tools(flow_id, skill_tools, ctx, emit, role=role)
     max_turns = int(flow.get("max_steps") or persona.get("max_steps") or settings.max_steps)
 
     model = OpenAIChatCompletionsModel(
@@ -262,8 +268,7 @@ def run_turn_sdk(message: str, flow_id: str | None = None, session_id: str | Non
                  context: dict | None = None, store: AgentStore | None = None,
                  user_id: str = "", course_id: str = "") -> Iterator[Event]:
     """与 runtime.run_turn 同签名的同步生成器（内部用线程 + 事件循环驱动 async SDK）。"""
-    persona = load_persona()
-    flow_id = flow_id or persona.get("default_flow", "explain")
+    flow_id = flow_id or load_persona().get("default_flow", "explain")
     if flow_id in {"qa", "tutoring"}:
         flow_id = "explain"
 
@@ -274,11 +279,18 @@ def run_turn_sdk(message: str, flow_id: str | None = None, session_id: str | Non
         yield {"type": "error", "message": f"未知任务流 {flow_id}"}
         yield {"type": "done"}
         return
+    persona = load_persona(str(flow.get("persona") or "course_tutor"))
     role = str((context or {}).get("role") or "").strip()
     allowed_roles = flow.get("roles") or persona.get("roles") or []
     if role and allowed_roles and role not in allowed_roles:
         yield {"type": "error",
                "message": f"当前角色（{role}）不能使用「{flow.get('name') or flow_id}」"}
+        yield {"type": "done"}
+        return
+    bound_context = dict(context or {})
+    _, _, skill_err = bind_skill(flow, bound_context)
+    if skill_err:
+        yield {"type": "error", "message": skill_err}
         yield {"type": "done"}
         return
 
@@ -297,7 +309,7 @@ def run_turn_sdk(message: str, flow_id: str | None = None, session_id: str | Non
     # 附件随消息落库的标记（与 legacy 路径一致）：历史会话据此回显附件名
     from .runtime import attachment_log_entries
 
-    _atts = [a for a in ((context or {}).get("attachments") or []) if isinstance(a, dict)]
+    _atts = [a for a in (bound_context.get("attachments") or []) if isinstance(a, dict)]
     store.add_message(session_id, "user", message, tool_log=attachment_log_entries(_atts))
 
     out: "queue.Queue[Event | None]" = queue.Queue()
@@ -307,7 +319,7 @@ def run_turn_sdk(message: str, flow_id: str | None = None, session_id: str | Non
 
     def worker() -> None:
         try:
-            asyncio.run(_run_async(message, flow_id, session_id, context, store,
+            asyncio.run(_run_async(message, flow_id, session_id, bound_context, store,
                                    user_id, cancel_key, emit))
         except Exception as exc:  # noqa: BLE001 - 任何异常都要变成可读事件
             emit({"type": "error", "message": f"模型调用失败：{exc}"})

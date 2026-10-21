@@ -171,6 +171,10 @@ def execute(name: str, args: dict, ctx) -> Any:
     # 出题页单独放行草稿写入工具：教师点「生成习题」即视为准许写入草稿，
     # 结果直接出现在题目预览里。答疑里的同名工具仍要确认。
     extra = getattr(ctx, "extra", None) or {}
+    allowed_by_skill = extra.get("skillTools")
+    if isinstance(allowed_by_skill, (list, tuple, set)) and name not in set(allowed_by_skill):
+        return {"error": f"当前技能不能调用 {name}"}
+
     draft_already_allowed = (
         spec.name in {"save_question_draft", "save_question_batch"}
         and bool(extra.get("autoApproveDraft"))

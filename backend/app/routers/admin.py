@@ -471,6 +471,7 @@ async def admin_agent_chat_stream(request: Request, admin: User = Depends(requir
     ct = (request.headers.get("content-type") or "").lower()
     attachments: list = []
     account_files: list = []
+    skill_id = None
 
     if ct.startswith("multipart/form-data"):
         try:
@@ -479,6 +480,7 @@ async def admin_agent_chat_stream(request: Request, admin: User = Depends(requir
             return JSONResponse(status_code=400, content=fail(f"表单解析失败：{exc}"))
         question = str(form.get("question") or "").strip()
         session_id = (str(form.get("sessionId") or "").strip() or None)
+        skill_id = (str(form.get("skillId") or "").strip() or None)
         raw_files = [f for f in form.getlist("files") if getattr(f, "filename", None)]
         if not question:
             return JSONResponse(status_code=400, content=fail("请输入问题内容后再发送"))
@@ -524,10 +526,11 @@ async def admin_agent_chat_stream(request: Request, admin: User = Depends(requir
             return JSONResponse(status_code=400, content=fail("请求体必须是 JSON 对象"))
         question = str(body.get("question") or "").strip()
         session_id = (str(body.get("sessionId") or "").strip() or None)
+        skill_id = (str(body.get("skillId") or "").strip() or None)
         if not question:
             return JSONResponse(status_code=400, content=fail("请输入问题内容"))
 
-    chat_req = ChatReq(sessionId=session_id, question=question)
+    chat_req = ChatReq(sessionId=session_id, question=question, skillId=skill_id)
     extra: dict = {}
     if attachments:
         extra["attachments"] = attachments

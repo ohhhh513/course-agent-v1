@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import yaml
 
+from app.agent_st.agent.chat_skills import files_for_skill
 from app.agent_st.agent.config import AGENT_DIR
 from app.agent_st.agent.system_guide import feature_index
 
@@ -73,7 +74,26 @@ ADMIN_GROUNDING = (
 )
 
 
-def _grounding_for_flow(flow: dict) -> str:
+SKILL_GROUNDING = (
+    "当前已启用一个独立技能：只做该技能职责内的事。"
+    "问题明显超出时用一两句说明，并提示可以改选其它技能或直接提问；不要调用未授权工具，"
+    "不要把其它技能的流程（出题、班级统计、账号写入、课程讲解等）套进来。"
+    "跳转界面必须经用户本轮确认：本轮明确要求打开/跳转到该界面才 auto=true；"
+    "否则 auto=false 只给真实按钮，由用户点击后才跳转。suggest_action 永不自动跳。"
+    "保存、发送、加入、正式导入和删除仍需用户确认。"
+    "直接调用工具，不输出检索或分析过程的进度旁白；最终回答只保留回答问题所需的结论。"
+)
+
+
+def _grounding_for_flow(flow: dict, skill: dict | None = None) -> str:
+    if skill:
+        extra = ""
+        if str(flow.get("id") or "") == "admin_ops":
+            extra = (
+                "账号录入与删除只排成待批准动作，绝不能说已经录入或已经删除。"
+                "数字一律来自工具。不能跳转师生教学页面。"
+            )
+        return SKILL_GROUNDING + extra
     flow_id = str(flow.get("id") or "")
     if flow_id == "generate_items":
         return GENERATE_GROUNDING
@@ -121,20 +141,28 @@ def build_system_prompt(
     flow: dict,
     extra_context: dict | None = None,
     course_catalog: str = "",
+    skill: dict | None = None,
 ) -> str:
-    skill_names = flow.get("skills") or persona.get("skills") or []
-    skills = [load_skill(name) for name in skill_names]
-    flow_text = yaml.safe_dump({k: flow[k] for k in flow if k != "skills"}, allow_unicode=True)
     ctx = extra_context or {}
+    if skill:
+        skill_names = files_for_skill(skill)
+    else:
+        skill_names = flow.get("skills") or persona.get("skills") or []
+    skills = [load_skill(name) for name in skill_names]
     parts = [persona.get("system", "")]
     identity = _course_identity_line(flow, ctx)
     if identity:
         parts.append(identity)
-    parts.extend([
-        "\n\n".join(s for s in skills if s),
-        _flow_header(flow) + "\n" + flow_text,
-    ])
-    if course_catalog:
+    if skill:
+        parts.append(f"当前技能：{skill.get('label') or skill.get('id')}。只履行该技能。")
+    parts.append("\n\n".join(s for s in skills if s))
+    if not skill:
+        flow_text = yaml.safe_dump({k: flow[k] for k in flow if k != "skills"}, allow_unicode=True)
+        parts.append(_flow_header(flow) + "\n" + flow_text)
+    need_catalog = bool(course_catalog) and (
+        not skill or "resolve_topic" in set(skill.get("tools") or [])
+    )
+    if need_catalog:
         parts.append(
             "本课程「章 + 知识点」清单（术语以这些名称为准；"
             "用户提到的说法若与某个知识点名称一致，就定位到它，不要臆造其它知识点）：\n"
@@ -146,6 +174,7 @@ def build_system_prompt(
             parts.append(index)
         from .ui_actions import action_index
         parts.append(action_index(str(ctx.get("role") or "")))
-    parts.append("当前页面上下文：" + str(ctx))
-    parts.append(_grounding_for_flow(flow))
+    prompt_ctx = {k: v for k, v in ctx.items() if k not in ("skillTools",)}
+    parts.append("当前页面上下文：" + str(prompt_ctx))
+    parts.append(_grounding_for_flow(flow, skill))
     return "\n\n".join(parts)
