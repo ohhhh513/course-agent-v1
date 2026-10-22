@@ -102,7 +102,7 @@
           const name = (s.student || '').trim();
           return `
           <div class="an-row">
-            <span class="an-avatar" style="background:${t.bg};color:${t.c}">${U.esc(Auth.defaultAvatarText(name))}</span>
+            <span class="an-avatar" style="background:${t.bg};color:${t.c}">${Auth.avatarHtml({ name: name, avatarUrl: s.avatarUrl || '' })}</span>
             <div class="an-row__main">
               <div class="an-row__head">
                 <b>${U.esc(name)}</b>

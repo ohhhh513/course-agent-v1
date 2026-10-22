@@ -40,18 +40,22 @@ const AdminCourses = {
       const content = (c.chapters || c.knowledgePoints || c.resources || c.questions)
         ? `${c.chapters || 0} 章 · ${c.knowledgePoints || 0} 知识点<br>${c.resources || 0} 资源 · ${c.questions || 0} 题`
         : '空课程';
+      // ownerId 还在但课程里已没有教师成员 —— 说明负责人已退绑（软退绑），
+      // 课程处于「待指派负责人」状态，此时可以直接删除。
+      const pendingOwner = c.ownerId && !(c.teacherCount || 0);
       return `<tr>
         <td>
           <b>${U.esc(c.name)}</b>
           <div class="fz-12 t-dim">${U.esc(bits.join(' · '))}</div>
           <div class="mono fz-11 t-dim">${U.esc(c.courseId)}</div>
           <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">
-            <button class="btn btn--xs" type="button" data-act="members" data-course="${U.esc(c.courseId)}">学生</button>
+            <button class="btn btn--xs" type="button" data-act="members" data-course="${U.esc(c.courseId)}">成员</button>
             <button class="btn btn--xs" type="button" data-act="edit" data-course="${U.esc(c.courseId)}">编辑</button>
             <button class="btn btn--xs btn--danger" type="button" data-act="del" data-course="${U.esc(c.courseId)}">删除</button>
           </div>
         </td>
-        <td style="white-space:nowrap">${U.esc(c.teacher || '—')}<div class="mono fz-11 t-dim">${U.esc(c.ownerUsername || '')}</div></td>
+        <td style="white-space:nowrap">${U.esc(c.teacher || '—')}<div class="mono fz-11 t-dim">${U.esc(c.ownerUsername || '')}</div>
+          ${pendingOwner ? '<div class="badge badge--warn" style="margin-top:4px">待指派负责人</div>' : ''}</td>
         <td style="white-space:nowrap">学生 ${c.studentCount || 0}<div class="t-dim fz-12">教师 ${c.teacherCount || 0}</div></td>
         <td class="fz-12">${content}</td>
         <td style="white-space:nowrap"><span class="mono fz-11">${U.esc(c.inviteCode || '—')}</span>
@@ -151,7 +155,7 @@ const AdminCourses = {
             </label>
             <label class="stack" style="gap:4px"><span class="fz-12 t-dim">课程负责人</span>
               <select class="select" id="cTeacher">${options}</select>
-              <span class="fz-12 t-dim">负责人会成为这门课的授课教师，并在教师端看到它。更换负责人不会把原教师移出课程。</span>
+              <span class="fz-12 t-dim">负责人会成为这门课的授课教师，并在教师端看到它。更换负责人只是新增一位授课教师，不会把原教师移出课程；要把原教师移出，请到「成员」里勾选后移出。</span>
             </label>
           </form>`,
         footer: `<button class="btn btn--primary" id="cGo" type="button">${isEdit ? '保存' : '创建'}</button><button class="btn" data-close>取消</button>`,
@@ -235,12 +239,14 @@ const AdminCourses = {
     let tab = 'class';
     let classes = [];
     let members = [];
+    let meta2 = null;          // courseMembers 的完整返回（含 ownerBound）
+    let picked = new Set();    // 「当前成员」里勾选的 userId
     let preview = null;
     let rosterFile = null;
     let classNo = course.classNo || '';
 
     Modal.open({
-      title: '课程学生 · ' + course.name,
+      title: '课程成员 · ' + course.name,
       closeOnBackdrop: false,
       size: 'full',
       body: `
@@ -258,10 +264,13 @@ const AdminCourses = {
         const meta = () => {
           const latest = AdminCourses.find(course.courseId) || course;
           classNo = latest.classNo || '';
+          // ownerBound=false 说明负责人已退绑但课程还记着他（软退绑），提示管理员可以去删课了
+          const pending = meta2 && meta2.ownerBound === false && meta2.ownerId;
           U.$('#courseBindMeta', ov).textContent =
             `${latest.name} · 学生 ${latest.studentCount || 0} 人 · 教师 ${latest.teacherCount || 0} 人` +
             (classNo ? ` · 教学班 ${classNo}` : ' · 未填教学班号') +
-            (latest.inviteCode ? ` · 邀请码 ${latest.inviteCode}` : '');
+            (latest.inviteCode ? ` · 邀请码 ${latest.inviteCode}` : '') +
+            (pending ? ` · 待指派负责人（原负责人 ${meta2.ownerName || meta2.ownerId} 已退绑，可直接删除本课程）` : '');
         };
         const setTab = () => {
           U.$$('#courseBindTabs button', ov).forEach(btn => {
@@ -274,7 +283,7 @@ const AdminCourses = {
           const pane = U.$('#courseBindPane', ov);
           if (tab === 'class') pane.innerHTML = AdminCourses.classPane(classes, classNo);
           else if (tab === 'roster') pane.innerHTML = AdminCourses.rosterPane(preview, rosterFile);
-          else pane.innerHTML = AdminCourses.membersPane(members);
+          else pane.innerHTML = AdminCourses.membersPane(members, picked);
         };
         const reload = () => Promise.all([
           API.admin.courseClasses(course.courseId),
@@ -283,7 +292,11 @@ const AdminCourses = {
         ]).then(([c, m]) => {
           classes = (c && c.list) || [];
           classNo = (c && c.classNo) || classNo;
+          meta2 = m || null;
           members = (m && m.list) || [];
+          // 成员列表变了以后，之前勾的 id 可能已经不在课程里，丢掉这些陈旧勾选
+          const alive = new Set(members.map(m => m.userId));
+          picked = new Set([...picked].filter(uid => alive.has(uid)));
           render();
         }).catch(err => {
           U.$('#courseBindPane', ov).innerHTML = `<div class="t-danger">${U.esc(err.message || '加载失败')}</div>`;
@@ -356,15 +369,70 @@ const AdminCourses = {
             kick.disabled = true;
             API.admin.unbindMember(course.courseId, userId).then(() => {
               Toast.ok('已移出课程', who ? who.name : '');
+              picked.delete(userId);
               reload();
             }).catch(err => {
               kick.disabled = false;
               Toast.error('移出失败', (err && err.message) || '');
             });
+            return;
+          }
+          if (e.target.closest('#memberPickAll')) {
+            // 全选 / 取消全选：范围是当前成员列表，不是全库
+            const all = members.map(m => m.userId);
+            const alreadyAll = all.length > 0 && all.every(uid => picked.has(uid));
+            picked = alreadyAll ? new Set() : new Set(all);
+            render();
+            return;
+          }
+          const bulk = e.target.closest('#memberUnbindPicked');
+          if (bulk) {
+            if (!picked.size) {
+              Toast.warn('请先勾选要移出的成员');
+              return;
+            }
+            const targets = [...picked];
+            const names = targets
+              .map(uid => (members.find(m => m.userId === uid) || {}).name || uid)
+              .slice(0, 3);
+            const hasOwner = targets.some(uid => {
+              const m = members.find(x => x.userId === uid);
+              return m && m.isOwner;
+            });
+            const tip = `将移出 ${targets.length} 人：${names.join('、')}` +
+              (targets.length > names.length ? ` 等 ${targets.length} 人` : '') +
+              '。移出只取消成员关系，不删除学习记录。' +
+              (hasOwner ? '\n\n其中包含课程负责人。移出后这门课进入「待指派负责人」状态，可以直接删除课程。' : '');
+            if (!window.confirm(tip)) return;
+            bulk.disabled = true;
+            API.admin.unbindMembers(course.courseId, targets).then(res => {
+              const n = (res && res.removed) || 0;
+              Toast.ok(`已移出 ${n} 人`, hasOwner ? '课程现为「待指派负责人」，可直接删除' : '');
+              picked = new Set();
+              reload();
+            }).catch(err => {
+              bulk.disabled = false;
+              Toast.error('批量移出失败', (err && err.message) || '');
+            });
           }
         });
 
         ov.addEventListener('change', (e) => {
+          const pick = e.target.closest('[data-member-pick]');
+          if (pick) {
+            // 勾选变化：只更新按钮可用态与计数，不整块重渲染 ——
+            // 重渲染会重建 DOM、把焦点从复选框上抢走，连续勾选手感很差。
+            const uid = pick.dataset.memberPick;
+            if (pick.checked) picked.add(uid); else picked.delete(uid);
+            const counter = U.$('#memberPickCount', ov);
+            if (counter) counter.textContent = `已选 ${picked.size} 人`;
+            const btn = U.$('#memberUnbindPicked', ov);
+            if (btn) btn.disabled = picked.size === 0;
+            const all = members.map(m => m.userId);
+            const allBtn = U.$('#memberPickAll', ov);
+            if (allBtn) allBtn.textContent = (all.length > 0 && all.every(x => picked.has(x))) ? '取消全选' : '全选';
+            return;
+          }
           if (e.target.id !== 'rosterFile') return;
           const file = e.target.files && e.target.files[0];
           if (!file) return;
@@ -487,24 +555,36 @@ const AdminCourses = {
       </div>`;
   },
 
-  membersPane(members) {
+  membersPane(members, picked) {
+    picked = picked || new Set();
     if (!members.length) {
       return `<div class="t-dim" style="padding:12px 0">这门课还没有成员。</div>`;
     }
     const roleName = { teacher: '教师', student: '学生' };
+    const allPicked = members.length > 0 && members.every(m => picked.has(m.userId));
     return `
-      <div style="max-height:52vh;overflow:auto;border:1px solid var(--border-soft);border-radius:var(--r-sm)">
-        <table class="tbl">
-          <thead><tr><th>用户名</th><th>姓名</th><th>角色</th><th>班级 / 学号</th><th>操作</th></tr></thead>
-          <tbody>${members.map(m => `<tr>
-            <td class="mono fz-11">${U.esc(m.username)}</td>
-            <td>${U.esc(m.name)}</td>
-            <td><span class="badge ${m.role === 'teacher' ? 'badge--brand' : 'badge--outline'}">${roleName[m.role] || U.esc(m.role)}</span>
+      <div class="stack" style="gap:12px">
+        <div class="callout callout--info">${icon('info')}<div>勾选若干成员后可一次移出课程。移出只取消成员关系，不删除已有的学习记录；勾选「负责人」也可以移出，移出后这门课进入「待指派负责人」状态，之后就能直接删除。</div></div>
+        <div class="row" style="gap:8px;flex-wrap:wrap;align-items:center">
+          <button class="btn btn--sm" id="memberPickAll" type="button">${allPicked ? '取消全选' : '全选'}</button>
+          <span class="fz-12 t-dim" id="memberPickCount">已选 ${picked.size} 人</span>
+          <span class="spacer"></span>
+          <button class="btn btn--sm btn--danger" id="memberUnbindPicked" type="button"${picked.size ? '' : ' disabled'}>移出勾选的成员</button>
+        </div>
+        <div style="max-height:44vh;overflow:auto;border:1px solid var(--border-soft);border-radius:var(--r-sm)">
+          <table class="tbl">
+            <thead><tr><th style="width:36px"></th><th>用户名</th><th>姓名</th><th>角色</th><th>班级 / 学号</th><th>操作</th></tr></thead>
+            <tbody>${members.map(m => `<tr>
+              <td><input type="checkbox" data-member-pick="${U.esc(m.userId)}"${picked.has(m.userId) ? ' checked' : ''}></td>
+              <td class="mono fz-11">${U.esc(m.username)}</td>
+              <td>${U.esc(m.name)}</td>
+              <td><span class="badge ${m.role === 'teacher' ? 'badge--brand' : 'badge--outline'}">${roleName[m.role] || U.esc(m.role)}</span>
               ${m.isOwner ? '<span class="badge badge--ok">负责人</span>' : ''}</td>
-            <td>${U.esc(m.className || '—')}<div class="mono fz-11 t-dim">${U.esc(m.studentNo || '')}</div></td>
-            <td>${m.isOwner ? '<span class="t-dim fz-12">不可移出</span>' : `<button class="btn btn--xs" type="button" data-unbind="${U.esc(m.userId)}">移出</button>`}</td>
-          </tr>`).join('')}</tbody>
-        </table>
+              <td>${U.esc(m.className || '—')}<div class="mono fz-11 t-dim">${U.esc(m.studentNo || '')}</div></td>
+              <td><button class="btn btn--xs" type="button" data-unbind="${U.esc(m.userId)}">移出</button></td>
+            </tr>`).join('')}</tbody>
+          </table>
+        </div>
       </div>`;
   },
 };

@@ -90,7 +90,7 @@ def _grounding_for_flow(flow: dict, skill: dict | None = None) -> str:
         extra = ""
         if str(flow.get("id") or "") == "admin_ops":
             extra = (
-                "账号录入与删除只排成待批准动作，绝不能说已经录入或已经删除。"
+                "账号录入、账号删除与课程删除只排成待批准动作，绝不能说已经录入、已经删除或已经删课。"
                 "数字一律来自工具。不能跳转师生教学页面。"
             )
         return SKILL_GROUNDING + extra
@@ -106,7 +106,7 @@ def _flow_header(flow: dict) -> str:
     """「当前任务流」那句的措辞：按流区分，避免把检索约束套到不检索的流上。"""
     if str(flow.get("id") or "") == "admin_ops":
         return ("当前任务流（必须按步骤调用工具；本流不做教材检索，"
-                "账号录入 / 账号删除是写操作、必须经确认卡片）：")
+                "账号录入 / 账号删除 / 课程删除是写操作、必须经确认卡片）：")
     return "当前任务流（按用户问题选择系统操作、数据查询或课程讲解步骤；课程讲解不得跳过检索）："
 
 

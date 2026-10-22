@@ -106,9 +106,10 @@ def main() -> int:
 
     print("4) 管理员档：只进平台治理流（admin_ops），不进教学流")
     # 2026-10-06 收紧：管理员不再共享教师视角（班级学情），也不再进 explain / 出题流；
-    # 管理员唯一的任务流是 admin_ops（5 个只读治理查询 + 4 个账号治理工具：
-    # preview_account_import / import_accounts / preview_account_delete / delete_accounts，
-    # 其中 import_accounts 与 delete_accounts 是写操作、必须挂审批闸门）。
+    # 管理员唯一的任务流是 admin_ops（5 个只读治理查询 + 6 个治理写入相关工具：
+    # preview_account_import / import_accounts / preview_account_delete / delete_accounts /
+    # preview_course_delete / delete_course，
+    # 其中 import_accounts、delete_accounts 与 delete_course 是写操作、必须挂审批闸门）。
     # 旧行为（admin 与教师同权）的断言已随之废弃。
     check("admin" not in (load_flow("explain").get("roles") or []),
           "explain 流不再对管理员开放")
@@ -116,12 +117,14 @@ def main() -> int:
           "出题流不再对管理员开放")
     admin_tools = set(load_flow("admin_ops").get("tools") or [])
     # 业务治理权限保持原有九个工具；系统使用手册与导航是新增的共享只读能力。
+    # 2026-10-22 新增课程删除（preview_course_delete 只读 + delete_course 写），故为十一个。
     shared_guidance = {"get_system_guide", "suggest_action", "prepare_ui_action", "offer_choices"}
     business_admin_tools = admin_tools - shared_guidance
     expected_admin_tools = {"system_overview", "account_overview", "course_overview", "kb_status", "data_check",
-                            "preview_account_import", "import_accounts", "preview_account_delete", "delete_accounts"}
+                            "preview_account_import", "import_accounts", "preview_account_delete", "delete_accounts",
+                            "preview_course_delete", "delete_course"}
     check(business_admin_tools == expected_admin_tools and admin_tools <= set(registry.TOOLS),
-          f"admin_ops 原有九个业务治理工具保持完整：{sorted(business_admin_tools)}")
+          f"admin_ops 十一个业务治理工具保持完整：{sorted(business_admin_tools)}")
     check(shared_guidance <= admin_tools and all(registry.TOOLS[n].approval is None for n in shared_guidance),
           "新增系统手册与页面导航均无业务写权限")
     check(all(registry.TOOLS[n].roles == ("admin",) for n in business_admin_tools),
@@ -137,8 +140,17 @@ def main() -> int:
           "preview_account_delete 是只读工具（无审批闸门、不写库）")
     check(registry.TOOLS["delete_accounts"].approval is not None,
           "delete_accounts 是写操作（挂审批闸门，管理员确认后才真删）")
+    check(registry.TOOLS["preview_course_delete"].approval is None,
+          "preview_course_delete 是只读工具（无审批闸门、不写库）")
+    check(registry.TOOLS["delete_course"].approval is not None,
+          "delete_course 是写操作（挂审批闸门，管理员确认后才真删课程）")
+    # 课程删除工具必须只挂 admin_ops 流，且不得出现在任何教学流里
+    check(all("admin_ops" in registry.TOOLS[n].flows and
+              not any(f in registry.TOOLS[n].flows for f in ("explain", "generate_items"))
+              for n in ("preview_course_delete", "delete_course")),
+          "课程删除工具只挂 admin_ops 流、不进任何教学流")
     # 两个写工具都要有摘要 / 影响面文案（确认卡片靠它说明「在做什么」）
-    for _n in ("import_accounts", "delete_accounts"):
+    for _n in ("import_accounts", "delete_accounts", "delete_course"):
         _spec = registry.TOOLS[_n].approval
         check(bool(_spec.summarize and _spec.impact.strip()),
               f"{_n} 的审批规格含 summarize 与 impact（确认卡片可读）")

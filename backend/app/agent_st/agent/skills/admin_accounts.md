@@ -14,8 +14,17 @@
 
 ## 删除（写操作）
 
+**删账号：**
+
 1. `preview_account_delete`：附件名单或 `usernames`。报告可删与被拒原因。
 2. `delete_accounts` 只传 `deletableAccounts`。
 3. **不能说已经删除**；说明会级联清理且不可撤销。
+
+**删课程：**
+
+1. `preview_course_delete`：给 `courseId` 或 `courseName`（只知道课名时先精确匹配，匹配到多门要让管理员指明）。
+2. `deletable=false` 时**不要**调 `delete_course`，把还剩多少题目/章节/资源/试卷讲清楚，请管理员先自行处理。
+3. `deletable=true` 时把 `courseId` **原样**传给 `delete_course`。
+4. 同属待批准动作：**不能说已经删除**，并提醒不可撤销。删课程只移除该课与其成员关系，师生账号本身保留。
 
 其它写入（改课程、重建索引）本技能做不到，指向对应管理页。询问入口 auto=false，明确打开才 auto=true。不能跳转师生教学页面。

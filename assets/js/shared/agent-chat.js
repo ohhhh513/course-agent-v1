@@ -1204,7 +1204,6 @@ window.AgentChatView = (function () {
         const suggests = navReady ? this.suggestCardsOf(m) : [];
         const uiPlans = navReady ? this.uiCardsOf(m) : [];
         const choices = this.choiceCardsOf(m);
-        const oos = this.outOfScopeOf(m);                                 // 越界（历史从 toolLog 里的 meta 标记恢复）
         if (m.role === 'me') {
           const me = this._meAvatar();
           const atts = this.attachChipsOf(m);
@@ -1242,7 +1241,6 @@ window.AgentChatView = (function () {
                   </div>`).join('')}
                 </div>
               </div>` : ''}
-              ${oos ? `<div class="callout callout--warn" style="margin-top:10px">${icon('alert')}<div><b>超出课程材料范围</b>已按「严格溯源」约束拒绝推测性回答，建议换一个更贴近课程知识点的问法。</div></div>` : ''}
               ${confirms.length ? `<div class="msg__confirms">${confirms.map(c => confirmCardHtml(c)).join('')}</div>` : ''}
               ${uiPlans.map(plan => (typeof AgentUI !== 'undefined' && AgentUI.preview && AgentUI.preview.slotHtml)
                 ? AgentUI.preview.slotHtml(plan)
@@ -1269,22 +1267,6 @@ window.AgentChatView = (function () {
               </span>
             </div>
           </div></div>`;
-      },
-
-      /**
-       * 这条回答是否被判成「超出课程材料范围」。
-       * 两个来源：① 本轮实时 —— SSE done 事件里的 outOfScope；
-       *          ② 历史消息 —— 消息接口不返回该字段，从 toolLog 里随消息落库的
-       *             {kind:'meta', out_of_scope:true} 标记恢复。
-       * （该判定依赖本轮的检索分与话题确定性，事后无法重算，所以由服务端存下来。）
-       */
-      outOfScopeOf(m) {
-        if (!m) return false;
-        // 已经在给出教学选项或界面入口时，不再同时显示「超出课程材料范围」。
-        if ((this.choiceCardsOf(m) || []).length || (this.uiCardsOf(m) || []).length) return false;
-        if (m.outOfScope) return true;
-        const log = m.toolLog || [];
-        return log.some(x => x && x.kind === 'meta' && x.out_of_scope);
       },
 
       /**

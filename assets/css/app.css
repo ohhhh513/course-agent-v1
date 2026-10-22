@@ -18,6 +18,9 @@
 /* ---------- 欢迎横幅 ---------- */
 /* ---------- 三端个人中心与头像裁剪 ---------- */
 .avatar img { width: 100%; height: 100%; object-fit: cover; border-radius: inherit; display: block; }
+/* 圆形头像容器同样承载 <img>：教师端消息推送选人、个人中心等未加 .avatar 类名的圆底容器 */
+.teacher-message-push__avatar img,
+.an-avatar img { width: 100%; height: 100%; object-fit: cover; border-radius: inherit; display: block; }
 .user-chip__info > span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .profile-center { display: grid; gap: 20px; }
 .profile-center__fields { border: 0; padding: 0; margin: 0; min-width: 0; display: grid; gap: 12px; }

@@ -13,8 +13,14 @@
   带 `approval_replay` 标记）才真正执行 —— 执行时**重新核对一遍**（不信任前端、也防期间变化），
   逐行级联删除、被拒 / 失败的行进报告，不整体回滚（与批量删除同一语义）。
 
+课程删除（`preview_course_delete` / `delete_course`）是同一套约定的第三、第四个工具：
+管理员在助手里直接说「把某门课删掉」，先只读核对（顺带报出还剩多少教学内容），
+点确认后才删。与账号删除并列，口径同样复用服务层。
+
 口径一致性：定位 / 保护规则 / 级联范围复用 `services.account_import`
-（find_user / delete_block_reason / delete_user_cascade / DELETION_SCOPE），不写第二套实现。
+（find_user / delete_block_reason / delete_user_cascade / DELETION_SCOPE），
+课程侧复用 `services.course_admin`（_get_course / content_blockers / delete_course），
+两处都不在本文件里另写实现。
 """
 from __future__ import annotations
 
@@ -238,6 +244,173 @@ def delete_accounts(ctx: ToolContext, accounts=None):
             "hint": ("账号已从 users 表删除并级联清理其个人数据；"
                      "请如实向管理员汇报成功 / 被拒 / 失败的数量与原因，不要夸大，"
                      "也不要声称删掉了未成功的行。"),
+        }
+    finally:
+        db.close()
+
+
+# ---------------------------------------------------------------- 课程删除
+# 与上面「账号删除」同一套约定：只读预览 + 挂审批闸门的写操作。
+# 口径完全复用 services/course_admin（_get_course / content_blockers / delete_course），
+# 与「课程管理 → 删除」按钮走同一条实现，不另写一套判断。
+
+
+def _course_precheck(ctx: ToolContext, args: dict) -> list[str]:
+    """课程删除的前置校验（拦截那一刻跑）。
+
+    只做形状校验 —— 课程是否存在、里面有没有教学内容（那是**执行时**按库内真实状态判，
+    因为审批发生在新请求里，此刻判出来的「内容为空」可能已经变了）。
+    """
+    cid = str((args or {}).get("courseId") or "").strip()
+    if not cid:
+        return ["courseId 不能为空：请先调用 preview_course_delete 并传入它给出的 courseId"]
+    return []
+
+
+def _course_summary(args: dict) -> str:
+    cid = str((args or {}).get("courseId") or "").strip()
+    name = str((args or {}).get("courseName") or "").strip()
+    return f"删除课程 {cid}{('（' + name + '）') if name else ''}（含其成员关系）"
+
+
+@tool(
+    name="preview_course_delete",
+    description=(
+        "核对**待删除课程**（只读，不写库）：按课程 ID 或课程名在库里定位，"
+        "返回该课程的基本信息、成员数量，以及**是否真的可以删除**"
+        "（有题目 / 章节 / 资源 / 试卷时不能删，会给出具体数量）。"
+        "当管理员要「删除 / 移除某门课」时先调用本工具；"
+        "把返回的 courseId **原样**传给 delete_course（不要自己改动）。"
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "courseId": {"type": "string", "description": "课程 ID（如 CCHYJTKE）；与 courseName 二选一"},
+            "courseName": {"type": "string", "description": "课程名（便于管理员只记得课名时用）"},
+        },
+    },
+    flows=_FLOW,
+    roles=_ADMIN_ROLES,
+)
+def preview_course_delete(ctx: ToolContext, courseId: str = "", courseName: str = ""):
+    cid = str(courseId or "").strip()
+    cname = str(courseName or "").strip()
+    if not cid and not cname:
+        return {"error": "请给出要删除的课程：至少提供 courseId 或 courseName（可先用 course_overview 查）"}
+
+    from app.services.course_admin import CourseAdminError, content_blockers
+
+    db = persistence.SessionLocal()
+    try:
+        if not cid:
+            # 只给了课名：精确匹配优先，匹配不到再按「包含」找，最多 5 条让管理员确认
+            hits = db.query(persistence.Course).filter(
+                persistence.Course.name == cname,
+            ).order_by(persistence.Course.course_id).all()
+            if not hits:
+                hits = db.query(persistence.Course).filter(
+                    persistence.Course.name.like(f"%{cname}%"),
+                ).order_by(persistence.Course.course_id).limit(5).all()
+            if not hits:
+                return {"error": f"没有找到名称包含「{cname}」的课程；可先用 course_overview 看全部课程"}
+            if len(hits) > 1:
+                return {
+                    "error": f"有 {len(hits)} 门课程名称匹配「{cname}」，请指明 courseId",
+                    "candidates": [{"courseId": c.course_id, "name": c.name, "term": c.term or ""}
+                                   for c in hits],
+                }
+            cid = hits[0].course_id
+
+        course = db.query(persistence.Course).filter(
+            persistence.Course.course_id == cid,
+        ).first()
+        if course is None:
+            return {"error": f"课程 {cid} 不存在"}
+
+        members = int(db.query(persistence.UserCourse)
+                      .filter(persistence.UserCourse.course_id == cid).count())
+        try:
+            blockers = [{"item": label, "count": n} for label, n in content_blockers(db, cid)]
+        except CourseAdminError as exc:          # pragma: no cover - 防御性
+            return {"error": exc.message}
+
+        return {
+            "courseId": course.course_id,
+            "courseName": course.name,
+            "term": course.term or "",
+            "owner": course.owner_id or "",
+            "memberCount": members,
+            "deletable": not blockers,
+            "blockers": blockers,
+            "hint": ("deletable=true 时把 courseId 原样传给 delete_course。"
+                     "deletable=false 时**不要**调用 delete_course —— 把有哪些教学内容、"
+                     "共多少条讲清楚，让管理员先自行处理课程内容。"),
+            "basis": ("与「课程管理 → 删除」完全同一套实现（services/course_admin）："
+                      "课程仍有题目 / 章节 / 资源 / 试卷时不允许删除。"),
+        }
+    finally:
+        db.close()
+
+
+@tool(
+    name="delete_course",
+    description=(
+        "删除**一门课程**（写操作：会先生成「待批准」确认卡片，管理员点确认后才真正删除）。"
+        "只传 preview_course_delete 返回的 courseId（原样，不要自己改）。"
+        "执行时会重新核对一遍：期间若课程被新增了题目 / 资源，会被拒绝并在结果里说明，"
+        "不会误删。"
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "courseId": {"type": "string", "description": "课程 ID（来自 preview_course_delete）"},
+            "courseName": {"type": "string", "description": "课程名（仅用于确认卡片的显示文案，可不传）"},
+        },
+        "required": ["courseId"],
+    },
+    flows=_FLOW,
+    roles=_ADMIN_ROLES,
+    # 写操作：必须由管理员在界面上点「确认执行」后才真正删库（P2c 审批闸门）
+    approval=ApprovalSpec(
+        summarize=_course_summary,
+        precheck=_course_precheck,
+        impact=("会删除 courses 里的该课程行，并移除其全部课程成员关系（user_courses）。"
+                "**该操作不可撤销**。课程内若仍有题目 / 章节 / 资源 / 试卷会被拒绝；"
+                "师生账号本身不会被删除。"),
+    ),
+)
+def delete_course(ctx: ToolContext, courseId: str = "", courseName: str = ""):
+    cid = str(courseId or "").strip()
+    if not cid:
+        return {"ok": False, "error": "courseId 不能为空"}
+
+    from app.services.course_admin import CourseAdminError, delete_course as svc_delete_course
+
+    db = persistence.SessionLocal()
+    try:
+        # 执行前重新核对（不信任入参，也不信任审批前的那份状态）：
+        # 期间课程可能被新增了教学内容 → 此时必须拒绝，而不是照删。
+        try:
+            data = svc_delete_course(db, cid)
+            db.commit()
+        except CourseAdminError as exc:
+            db.rollback()
+            return {
+                "ok": False,
+                "error": exc.message,
+                "hint": "课程没有被删除；请把拒绝原因如实转达给管理员。",
+            }
+        except Exception as exc:  # noqa: BLE001
+            db.rollback()
+            return {"ok": False, "error": f"删除失败：{exc}"}
+
+        return {
+            "ok": True,
+            "courseId": data.get("courseId", cid),
+            "courseName": data.get("name", ""),
+            "membersRemoved": data.get("membersRemoved", 0),
+            "hint": ("课程已删除（成员关系已一并移除，师生账号本身保留）。"
+                     "请如实汇报删除结果，不要夸大。"),
         }
     finally:
         db.close()

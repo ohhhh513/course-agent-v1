@@ -28,6 +28,7 @@ from ..services.course_admin import (
     read_roster_upload,
     unbind_classes,
     unbind_member,
+    unbind_members,
     update_course,
 )
 
@@ -48,6 +49,10 @@ class CourseWrite(BaseModel):
 
 class ClassKeysBody(BaseModel):
     classKeys: List[str] = []
+
+
+class UserIdsBody(BaseModel):
+    userIds: List[str] = []
 
 
 def _guard(fn):
@@ -155,6 +160,24 @@ def admin_unbind_member(course_id: str, user_id: str, db: Session = Depends(get_
     except CourseAdminError as exc:
         db.rollback()
         return fail(exc.message, 400)
+    except Exception as exc:  # noqa: BLE001
+        db.rollback()
+        return fail(f"移出失败：{exc}", 500)
+
+
+@router.post("/courses/{course_id}/unbind-members")
+def admin_unbind_members(course_id: str, body: UserIdsBody, db: Session = Depends(get_db)):
+    """批量退绑：管理端「当前成员」勾选若干人后一次移出。负责人也可勾选（软退绑）。"""
+    try:
+        data = unbind_members(db, course_id, body.userIds)
+        db.commit()
+        return ok(data)
+    except CourseAdminError as exc:
+        db.rollback()
+        return fail(exc.message, 400)
+    except Exception as exc:  # noqa: BLE001
+        db.rollback()
+        return fail(f"移出失败：{exc}", 500)
 
 
 @router.get("/courses/{course_id}/classes")

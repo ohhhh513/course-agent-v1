@@ -118,6 +118,9 @@ SKILLS: dict[str, dict[str, Any]] = {
             "import_accounts",
             "preview_account_delete",
             "delete_accounts",
+            # 删课程与删账号同属「治理写入」，管理员在账号治理里点名删课也走得通
+            "preview_course_delete",
+            "delete_course",
         ),
     ),
     "courses": _spec(
@@ -125,7 +128,8 @@ SKILLS: dict[str, dict[str, Any]] = {
         roles=("admin",),
         flow="admin_ops",
         file="admin_courses.md",
-        tools=("course_overview", "data_check"),
+        tools=("course_overview", "data_check",
+              "preview_course_delete", "delete_course"),
     ),
     "kb": _spec(
         label="知识库体检",

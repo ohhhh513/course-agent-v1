@@ -316,8 +316,12 @@ window.API = (function () {
     deleteCourse: (courseId) => request('DELETE', `/admin/courses/${courseId}`),
     /** GET /admin/courses/{courseId}/members  课程成员 */
     courseMembers: (courseId) => request('GET', `/admin/courses/${courseId}/members`),
-    /** DELETE /admin/courses/{courseId}/members/{userId}  移出一名成员（不能移出负责人） */
+    /** DELETE /admin/courses/{courseId}/members/{userId}  移出一名成员。
+     *  负责人也能移出（软退绑：保留 owner_id，课程进入「待指派负责人」，
+     *  之后即可直接删课）。 */
     unbindMember: (courseId, userId) => request('DELETE', `/admin/courses/${courseId}/members/${userId}`),
+    /** POST /admin/courses/{courseId}/unbind-members  批量移出成员 {userIds:[]} */
+    unbindMembers: (courseId, userIds) => request('POST', `/admin/courses/${courseId}/unbind-members`, { userIds }),
     /** GET /admin/courses/{courseId}/classes  按学生班级归组，并标出已在本课的人数 */
     courseClasses: (courseId) => request('GET', `/admin/courses/${courseId}/classes`),
     /** POST /admin/courses/{courseId}/bind-classes  按班级绑定学生 {classKeys:[]} */

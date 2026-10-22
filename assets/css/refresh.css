@@ -208,13 +208,22 @@ html:has(.app) body {
 .user-chip__info span { color: #8b939c; font-size: 13px; }
 .avatar { background: var(--brand-500); }
 
-.main { background: transparent; min-height: 0; overflow: hidden; }
+/* 主区域自己滚动，顶栏才能真正吸在顶端。
+   原来滚动容器是 .content（overflow:auto），而 .topbar 是它的**兄弟节点**（同在 .main 内）——
+   sticky 的吸附位置相对「最近的有滚动祖先」计算，顶栏不在 .content 内部，
+   于是滑动时顶栏与内容错位、卡片像悬浮在顶上。 */
+.main { background: transparent; min-height: 0; overflow-y: auto; overflow-x: hidden; }
 .topbar {
   height: 68px;
-  flex-basis: 68px;
+  flex: 0 0 68px;
+  /* 显式声明：吸附参照物现在是 .main（见上方注释）。显式写出来而不是靠 base.css 继承，
+     避免以后有人改 base.css 时这里的吸附悄悄失效。 */
+  position: sticky;
+  top: 0;
+  z-index: 30;
   padding: 0 24px;
   background: #F8F8FF;
-  border-bottom-color: #E6E6F0;
+  border-bottom: 1px solid #E6E6F0;
   backdrop-filter: blur(18px) saturate(1.2);
 }
 .topbar__title h1 { font-size: 19px; letter-spacing: -.025em; }
@@ -259,11 +268,36 @@ html:has(.app) body {
 .content {
   padding: 24px;
   max-width: 1640px;
+  flex: 1 0 auto;
+  /* 滚动已上移到 .main（见上方注释）：内容层不再自己滚，
+     否则顶栏不在滚动容器内、吸附会错位。高度按内容撑开，让 .main 真正滚得起来。 */
+  overflow: visible;
+}
+/* 「整屏视图」：账号管理 / 课程管理这类自带内部滚动表格的板块。
+   它们需要**恰好铺满顶栏之下的可视高度**，卡片体内的表格才能自己滚（表头固定、列表滚动）。
+   直接锚到 100dvh 减顶栏高度，不再依赖「父级有确定高度」的传递链——
+   .content 高度是内容决定的，height:100% 在它上面是失效的。
+   高度写死成 height（不是 min-height）：min-height 会让长表格把卡片撑开、退化成整页滚动。 */
+.view.is-active.fill {
+  display: flex;
+  flex-direction: column;
+  height: calc(100dvh - var(--topbar-h) - 48px);
+}
+/* 内容少时（空列表）卡片不撑出多余空白，同时仍允许内部滚动 */
+.view.is-active.fill > .card {
+  flex: 1 1 auto;
+  max-height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+/* 卡片体内那层滚动容器必须真正可滚（表格板块靠它固定表头） */
+.view.is-active.fill > .card > .card__body {
   flex: 1 1 auto;
   min-height: 0;
-  overflow: auto;
-  overflow-x: hidden;
+  overflow-y: auto;
 }
+/* 窄屏回退见文件下方 760px 断点块内（那里 .app 改成文档流、整页滚动）。 */
 
 /* ---------- Editorial data components ---------- */
 .card {
@@ -635,7 +669,10 @@ html.auth-skin body {
 }
 
 @media (max-width: 760px) {
-  :root { --sidebar-w: 100%; --topbar-h: auto; }
+  /* 窄屏下 .app 变成 display:block，侧栏与主区是上下排列的块级流，
+     两者都要 sticky 吸附在顶部 —— 顶栏必须让开侧栏的实际高度，否则两者会叠在一起。
+     侧栏窄屏高度 = 品牌行 54px + 导航行（nav-item min-height 38px + 上下 padding 10px + 1px 边框）。 */
+  :root { --sidebar-w: 100%; --topbar-h: auto; --sidebar-stack-h: 103px; }
   html:has(.app),
   html:has(.app) body {
     height: auto;
@@ -698,8 +735,21 @@ html.auth-skin body {
   .sidebar__foot { display: none; }
 
   .main { width: 100%; min-width: 0; overflow: visible; }
+  /* 整页滚动了，.view.is-active.fill 的 100dvh 高度约束必须撤销，
+     否则卡片按视口高度固定、短列表下方留大片空白。
+     （桌面端的 fill 定义见文件上方，这里只做窄屏回退。） */
+  .view.is-active.fill,
+  .view.is-active.fill > .card {
+    height: auto;
+    max-height: none;
+  }
+  /* 顶栏随页面滑动吸附在顶部。
+     之前这里写的是 position:static —— 滚动时顶栏跟着内容一起滚走，滑动过程中无法对齐顶部。
+     吸附位置用 --sidebar-stack-h 让开窄屏下同样 sticky 的侧栏（z-index 35 < 侧栏 40）。 */
   .topbar {
-    position: static;
+    position: sticky;
+    top: var(--sidebar-stack-h);
+    z-index: 35;
     height: auto;
     min-height: 58px;
     flex-wrap: wrap;

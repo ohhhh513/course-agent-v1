@@ -34,6 +34,7 @@ from ..utils import (
     fmt_dt,
 )
 from ..services.blank_questions import is_blank_type, pack_blank
+from ..services.user_profiles import profile_metadata
 from ..media_utils import (
     BASE_DIR, COVERS_DIR, mp4_duration, pdf_pages,
     guess_type, chapter_id_of, parse_title, save_upload_file, generate_cover,
@@ -590,6 +591,9 @@ def students(
         return format_china_time(ts, "%m-%d")
 
     items = []
+    # 学生头像与个性签名存在 account_profile JSON 里，与管理端共用同一份读取口径，
+    # 避免教师端看到默认文字头像而管理端看到图片头像。
+    profiles = profile_metadata(db, student_ids)
     for s in students:
         lp = lp_stats.get(s.user_id, {})
         ans = ans_stats.get(s.user_id, {})
@@ -597,12 +601,15 @@ def students(
         mastery = lp.get("mastery", 0)
         a = alert_by_user.get(s.user_id, {"top": "green", "red": 0, "yellow": 0})
         target = round(mastery + 15, 1) if mastery < 60 else round(mastery + 5, 1)
+        profile = profiles.get(s.user_id) or {}
         items.append({
             "userId": s.user_id,
             "name": s.name,
             "no": s.student_no or "",
             "avatar": s.avatar_char or s.name[:1],
             "avatarColor": s.avatar_color or "indigo",
+            "avatarUrl": profile.get("avatarUrl", ""),
+            "signature": profile.get("signature", ""),
             "completion": completion,
             "mastery": mastery,
             "goal": min(target, 100),
@@ -1383,6 +1390,8 @@ def analysis_errors(
     lp_by_user = defaultdict(list)
     for r in class_lps: lp_by_user[r.user_id].append(r)
     individual = []
+    # 与 /students 同一口径读取学生头像，保证归因分析里的头像和管理端一致。
+    analysis_profiles = profile_metadata(db, [s.user_id for s in students])
     for sid, lps in lp_by_user.items():
         # 只统计学习过（status != todo）的知识点
         active_lps = [r for r in lps if r.status != "todo"]
@@ -1396,6 +1405,7 @@ def analysis_errors(
             issue = "掌握率极低" if avg_m < 40 else "进度严重滞后"
             individual.append({
                 "userId": sid, "student": stu.name if stu else sid,
+                "avatarUrl": (analysis_profiles.get(sid) or {}).get("avatarUrl", ""),
                 "issue": issue,
                 "desc": f"平均掌握率 {round(avg_m, 1)}% · 完成 {done_cnt}/{total_active} 学习点",
             })

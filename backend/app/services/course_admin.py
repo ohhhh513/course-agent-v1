@@ -317,7 +317,19 @@ def list_members(db: Session, course_id: str) -> dict:
             "isOwner": user.user_id == course.owner_id,
             "joinedAt": uc.joined_at.isoformat(sep=" ", timespec="seconds") if uc.joined_at else "",
         })
-    return {"courseId": course.course_id, "name": course.name, "total": len(members), "list": members}
+    # ownerBound：负责人是否仍在成员表里。
+    # 软退绑会删掉这行但保留 courses.owner_id，所以可能出现
+    # ownerId 非空、而 ownerBound=false —— 那就是「待指派负责人」的课。
+    owner_bound = any(m["isOwner"] for m in members)
+    return {
+        "courseId": course.course_id,
+        "name": course.name,
+        "total": len(members),
+        "ownerId": course.owner_id or "",
+        "ownerName": course.teacher or "",
+        "ownerBound": owner_bound,
+        "list": members,
+    }
 
 
 def list_classes(db: Session, course_id: str) -> dict:
@@ -413,31 +425,73 @@ def unbind_classes(db: Session, course_id: str, class_keys: list[str]) -> dict:
 
 
 def unbind_member(db: Session, course_id: str, user_id: str) -> dict:
+    """退绑一名成员。
+
+    负责人（owner）**可以退绑**，这是刻意放开的一条路：以前这里直接拒绝，
+    而 update_course 又只能「换成另一位教师」、无法设为「无负责人」，
+    于是出现死锁 —— 教师自己建的课（owner 就是他）既换不掉也移不出，
+    管理端永远删不掉这门课。
+
+    软退绑语义：只删 user_courses 这一行，courses.owner_id 保留原值。
+    课程因此处于「待指派负责人」状态：管理员仍能在编辑里改负责人，
+    也可以直接删课（delete_course 会清掉剩余成员关系）。
+    代价是该教师此刻已不再是该课成员，教师端权限校验
+    （teacher.py 按 user_courses.role_in_course == "teacher" 判定）会拒绝他 ——
+    这正是「退绑生效」的预期表现。
+    """
     course = _get_course(db, course_id)
     user = db.query(User).filter(User.user_id == user_id).first()
     if user is None:
         raise CourseAdminError("账号不存在")
-    if user.user_id == course.owner_id:
-        raise CourseAdminError("不能移出课程负责人。请先在编辑课程里更换负责人。")
     return _unbind(db, course, [user])
 
 
 def _unbind(db: Session, course: Course, users: list[User]) -> dict:
-    removed = kept_owner = 0
+    """退绑一批成员，逐个删 user_courses 行。
+
+    负责人也照删（软退绑，见 unbind_member 的说明）——课程因此进入
+    「待指派负责人」状态，但 courses.owner_id 保留原值，管理员之后仍可改派。
+    ownerUnbound 单独回报，用来告诉调用方这次退绑里有没有动到负责人。
+    """
+    removed = 0
+    owner_unbound = False
     for user in users:
-        if user.user_id == course.owner_id:
-            kept_owner += 1
-            continue
         n = db.query(UserCourse).filter(
             UserCourse.user_id == user.user_id,
             UserCourse.course_id == course.course_id,
         ).delete(synchronize_session=False)
-        removed += int(n or 0)
+        if n:
+            removed += int(n)
+        if user.user_id == course.owner_id:
+            owner_unbound = True
     return {
         "courseId": course.course_id,
         "removed": removed,
-        "keptOwner": kept_owner,
+        "ownerUnbound": owner_unbound,
     }
+
+
+def unbind_members(db: Session, course_id: str, user_ids: list[str]) -> dict:
+    """批量退绑（管理端「当前成员」勾选后一次移出多个）。"""
+    course = _get_course(db, course_id)
+    wanted = []
+    seen = set()
+    for raw in user_ids or []:
+        uid = (raw or "").strip()
+        if uid and uid not in seen:
+            seen.add(uid)
+            wanted.append(uid)
+    if not wanted:
+        raise CourseAdminError("请先勾选要移出的成员")
+    if len(wanted) > MAX_ROSTER_ROWS:
+        raise CourseAdminError(f"单次最多移出 {MAX_ROSTER_ROWS} 名成员")
+    users = db.query(User).filter(User.user_id.in_(wanted)).all()
+    missing = [uid for uid in wanted if uid not in {u.user_id for u in users}]
+    if missing:
+        raise CourseAdminError(f"有 {len(missing)} 个账号不存在：{'、'.join(missing[:3])}")
+    result = _unbind(db, course, users)
+    result["requested"] = len(wanted)
+    return result
 
 
 def _cell(value: str) -> str:

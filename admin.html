@@ -6,7 +6,7 @@
   <title>管理员 · 课程智能体系统</title>
   <link rel="stylesheet" href="assets/css/base.css">
   <link rel="stylesheet" href="assets/css/refresh.css?v=20261019-blue">
-  <link rel="stylesheet" href="assets/css/app.css?v=20261021-plus-menu">
+  <link rel="stylesheet" href="assets/css/app.css?v=20261022-teacher-avatar">
   <script src="assets/js/ui-enhancements.js" defer></script>
 </head>
 <body>
@@ -41,8 +41,8 @@
     <main class="content">
 
       <!-- 账号管理（原单页逻辑整体迁入 views/users.js，行为不变） -->
-      <section class="view" id="view-users">
-        <div class="card" style="height:100%;display:flex;flex-direction:column;min-height:0">
+      <section class="view fill" id="view-users">
+        <div class="card">
           <div class="card__head">
             <h3>教师 / 学生账号</h3>
             <span class="spacer"></span>
@@ -71,8 +71,8 @@
       </section>
 
       <!-- 课程管理 -->
-      <section class="view" id="view-courses">
-        <div class="card" style="height:100%;display:flex;flex-direction:column;min-height:0">
+      <section class="view fill" id="view-courses">
+        <div class="card">
           <div class="card__head">
             <h3>课程</h3>
             <span class="spacer"></span>
@@ -103,7 +103,7 @@
 <script src="assets/js/api.js?v=20261022-ai-report"></script>
 <script src="assets/js/auth.js?v=20261022-avatar-name"></script>
 <script src="assets/js/shared/profile-center.js?v=20261016-avatar-sync"></script>
-<script src="assets/js/shared/agent-chat.js?v=20261022-avatar-name"></script>
+<script src="assets/js/shared/agent-chat.js?v=20261022-no-oos-callout"></script>
   <script src="assets/js/shared/agent-ui.js?v=20261022-ai-report"></script>
 <script src="assets/js/admin/views/users.js?v=20261016-profile-center"></script>
 <script src="assets/js/admin/views/courses.js?v=20261015-edit-backdrop"></script>
