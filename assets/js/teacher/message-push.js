@@ -139,7 +139,7 @@
               const id = String(student.userId);
               return `<label class="teacher-message-push__student">
                 <input type="checkbox" data-student-id="${U.esc(id)}"${selected.has(id) ? ' checked' : ''}>
-                <span class="teacher-message-push__avatar">${U.esc(student.avatar || (student.name || '学').slice(0, 1))}</span>
+                <span class="teacher-message-push__avatar">${U.esc(Auth.defaultAvatarText(student.name))}</span>
                 <span class="teacher-message-push__student-name">${U.esc(student.name || id)}</span>
                 <span class="teacher-message-push__student-no">${student.no ? `学号 ${U.esc(student.no)}` : ''}</span>
               </label>`;

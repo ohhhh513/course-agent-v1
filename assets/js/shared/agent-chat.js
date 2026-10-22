@@ -1189,10 +1189,9 @@ window.AgentChatView = (function () {
       /** 当前登录用户头像（与顶栏 user-chip 同一数据源：Auth.currentUser） */
       _meAvatar() {
         const u = (window.Auth && Auth.currentUser) ? Auth.currentUser() : null;
-        const ch = (u && (u.avatarChar || (u.name ? u.name.charAt(0) : null))) || '我';
         return {
           userId: u?.userId || '',
-          html: window.Auth && typeof Auth.avatarHtml === 'function' ? Auth.avatarHtml(u) : U.esc(ch),
+          html: window.Auth && typeof Auth.avatarHtml === 'function' ? Auth.avatarHtml(u) : '我',
           color: (u && u.avatarColor) || ''
         };
       },

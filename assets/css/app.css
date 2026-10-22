@@ -1899,6 +1899,9 @@
 }
 .report__hd { text-align: center; padding-bottom: 20px; border-bottom: 2px solid var(--brand-500); margin-bottom: 24px; }
 .report__hd h2 { font-size: 22px; }
+.report__evidence { margin: 10px 0 20px; padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--r-sm); color: var(--text-3); font-size: 12px; }
+.report__evidence summary { cursor: pointer; color: var(--brand-500); }
+.report__evidence ul { margin: 10px 0 0; }
 .report__hd p { font-size: 13.5px; color: var(--text-3); margin-top: 6px; }
 .report h3 {
   font-size: 16px; margin: 26px 0 12px; padding-left: 10px;

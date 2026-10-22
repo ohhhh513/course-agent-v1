@@ -111,10 +111,17 @@ window.Auth = (function () {
       if (revision === userRevision && request === refreshSequence && current?.loginStartedAt === session.loginStartedAt && current?.user?.userId === session.user.userId) this.updateUser(user);
     },
 
+    /** 默认头像显示名字；两字姓名去掉姓氏，其余取最后两字。 */
+    defaultAvatarText(name) {
+      const chars = Array.from(String(name || '').trim());
+      return (chars.length === 2 ? chars.slice(1) : chars.slice(-2)).join('') || '?';
+    },
+
     avatarHtml(user) {
       const url = String(user?.avatarUrl || '');
-      if (/^\/api\/v1\/auth\/avatars\/[a-f0-9]{32}\.png$/.test(url)) return `<img src="${U.esc(url)}" alt="${U.esc(user.name || '')}的头像" data-avatar-fallback="${U.esc(user.avatarChar || user.name?.charAt(0) || '?')}">`;
-      return U.esc(user?.avatarChar || user?.name?.charAt(0) || '?');
+      const text = U.esc(this.defaultAvatarText(user?.name));
+      if (/^\/api\/v1\/auth\/avatars\/[a-f0-9]{32}\.png$/.test(url)) return `<img src="${U.esc(url)}" alt="${U.esc(user.name || '')}的头像" data-avatar-fallback="${text}">`;
+      return text;
     },
 
     /**

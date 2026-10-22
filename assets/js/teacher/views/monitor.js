@@ -347,7 +347,7 @@
         box.innerHTML = r.list.map(s => `
           <div class="list__item list__item--clickable" data-uid="${s.userId}">
             <div class="stu-row" style="flex:1;min-width:0">
-              <span class="avatar" style="width:34px;height:34px;flex:0 0 34px;font-size:14px">${s.avatar}</span>
+              <span class="avatar" style="width:34px;height:34px;flex:0 0 34px;font-size:14px">${U.esc(Auth.defaultAvatarText(s.name))}</span>
               <div class="stu-row__info"><b>${U.esc(s.name)}</b></div>
             </div>
             <div style="width:140px">

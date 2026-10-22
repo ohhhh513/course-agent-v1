@@ -211,12 +211,7 @@ const AgentUI = (() => {
         await wait(() => find('#rgScope'), '报告章节范围', ctx.guard);
         find('#rgScope').querySelectorAll('input[type="checkbox"]').forEach(input => { input.checked = names.includes(input.value); input.dispatchEvent(new Event('change', { bubbles: true })); });
       }
-      if (plan.values.sections) {
-        const root = await wait(() => find('#rgSec'), '报告章节', ctx.guard);
-        const buttons = Array.from(root.querySelectorAll('.chip'));
-        if (plan.values.sections.some(section => !buttons.some(button => button.textContent.trim() === section))) throw new Error('报告章节名称不正确');
-        buttons.forEach(button => { if (button.classList.contains('is-active') !== plan.values.sections.includes(button.textContent.trim())) button.click(); });
-      }
+      // 新报告固定六部分；兼容旧操作卡携带的 sections，不再按旧模板裁剪内容。
     },
     'user-edit': async (plan, ctx) => {
       const response = await API.admin.listUsers({ keyword: plan.object.name });

@@ -58,12 +58,14 @@
             <span>人数：${U.esc(meta.studentCount != null && meta.studentCount !== '' ? meta.studentCount : '—')}</span>
             <span>章节：${U.esc(meta.chapter || '全课程')}</span>
             <span>区间：${U.esc(period)}</span>
+            ${meta.generationMethod === 'ai' ? '<span>AI 学情分析</span>' : ''}
             <span>生成者：${U.esc(meta.generator || '系统')}</span>
             <span>${U.esc(meta.generatedAt || '—')}</span></div></div>
         ${sections.map(s => `
           <h3>${U.esc(s.title)}</h3>
           ${(s.paragraphs || []).map(p => `<p>${U.esc(p)}</p>`).join('')}
-          ${s.bullets && s.bullets.length ? `<ul>${s.bullets.map(b => `<li>${U.esc(b)}</li>`).join('')}</ul>` : ''}`).join('')}
+          ${s.bullets && s.bullets.length ? `<ul>${s.bullets.map(b => `<li>${U.esc(b)}</li>`).join('')}</ul>` : ''}
+          ${Array.isArray(s.evidence) && s.evidence.length ? `<details class="report__evidence"><summary>查看分析依据</summary><ul>${s.evidence.map(e => `<li>${U.esc(e)}</li>`).join('')}</ul></details>` : ''}`).join('')}
       </div>`
     };
   }
@@ -155,7 +157,7 @@
       box.innerHTML = `<div class="sr-empty">
         ${icon('file')}
         <b>还没有学情分析报告</b>
-        <p>${U.esc(msg || '生成后将按当前课程真实学情汇总整体掌握度、共性短板、个体预警与目标达成度，便于教研与上报。')}</p>
+        <p>${U.esc(msg || 'AI 将分析当前课程的学习进度、知识掌握、练习测验、问答关注与预警，并给出有依据的教学建议。')}</p>
         ${showBtn !== false ? `<button class="btn btn--primary" type="button" id="srEmptyGen">${icon('sparkle')} 生成本次报告</button>` : ''}
       </div>`;
       const btn = U.$('#srEmptyGen');
@@ -219,7 +221,7 @@
         body: `<div class="stack" style="gap:14px">
           <div><p class="fz-12 t-dim" style="margin-bottom:6px">报告标题</p>
             <input class="input" id="rgTitle" type="text" maxlength="256" value="${U.esc(presetTitle)}" placeholder="${U.esc(presetTitle || '学情分析报告')}">
-            <p class="fz-12 t-dim" style="margin-top:6px">按当前课程生成，可改标题；章节与学情数据不会混入其他课。</p></div>
+            <p class="fz-12 t-dim" style="margin-top:6px">AI 分析当前课程的真实学情，可修改标题；期间活动按日期筛选，学习进度注明为当前快照。</p></div>
           <div>
             <div class="report-scope-head">
               <p class="fz-12 t-dim" style="margin:0">统计范围（可多选章节）</p>
@@ -234,14 +236,12 @@
             <div><p class="fz-12 t-dim" style="margin-bottom:6px">结束日期</p>
             <input class="input" id="rgEnd" type="date" min="${minDate}" max="${maxDate}" value="${maxDate}"></div></div>
           <p class="report-date-tip">可选择最近一年内的日期，不能选择未来日期</p>
-          <div><p class="fz-12 t-dim" style="margin-bottom:6px">包含章节（可多选）</p>
+          <div><p class="fz-12 t-dim" style="margin-bottom:6px">报告内容（固定六部分）</p>
             <div class="chips" id="rgSec">
-              <button class="chip is-active">整体掌握度</button><button class="chip is-active">共性短板归因</button>
-              <button class="chip is-active">个体预警</button><button class="chip is-active">目标达成度</button></div></div>
+              ${['学习概况', '学习进度与投入', '知识掌握与薄弱点', '练习测验与错题', 'AI 互动疑惑与预警', '下一步行动计划'].map(s => `<span class="badge badge--outline">${s}</span>`).join('')}</div></div>
         </div>`,
         footer: `<button class="btn" data-close>取消</button><button class="btn btn--primary" id="rgGo">${icon('sparkle')} 生成</button>`,
         onMount(ov, close) {
-          U.$$('#rgSec .chip', ov).forEach(c => c.addEventListener('click', () => c.classList.toggle('is-active')));
           const titleInput = U.$('#rgTitle', ov);
           const startInput = U.$('#rgStart', ov);
           const endInput = U.$('#rgEnd', ov);
@@ -321,17 +321,15 @@
             if (!startDate || !endDate) return Toast.warn('请选择完整的日期范围');
             if (startDate > endDate) return Toast.warn('开始日期不能晚于结束日期');
             if (startDate < minDate || endDate > maxDate) return Toast.warn('请选择最近一年内的日期');
-            const sections = U.$$('#rgSec .chip.is-active', ov).map(c => c.textContent);
-            if (!sections.length) return Toast.warn('请至少选择一个报告部分');
             const courseId = currentCourseId;
             if (!courseId) return Toast.warn('请先选择或创建课程');
             generating = true;
             const button = U.$('#rgGo', ov), original = button.innerHTML;
-            button.disabled = true; button.textContent = '生成中…';
+            button.disabled = true; button.innerHTML = '<span class="tools__spinner" aria-hidden="true"></span> AI 分析中…';
             reportView._generating = API.report.generate({
               courseId, classIds: [courseId], title,
-              chapter: selectedChapters.join('、'),
-              startDate, endDate, sections
+              chapter: selectedChapters.join('、'), chapters: selectedChapters,
+              startDate, endDate
             }).then(async r => {
               const error = r && r.detail && r.detail.error;
               if (!r || r.status === 'error' || error || !r.reportId) {

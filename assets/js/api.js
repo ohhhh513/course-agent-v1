@@ -521,7 +521,7 @@ window.API = (function () {
      * 与教师端的 report.* 不是同一组接口（教师前缀学生一律 403）。
      */
     report: {
-      /** POST /student/reports/generate  按真实学情统计生成自己的报告 */
+      /** POST /student/reports/generate  AI 分析本人当前课程事实，输出完整六部分报告 */
       generate: () => request('POST', '/student/reports/generate', {}),
 
       /** GET /student/reports/list  本人 + 当前课程的报告归档 */
@@ -1031,10 +1031,10 @@ window.API = (function () {
 
     /**
      * POST /report/generate  一键生成报告
-     * body: { courseId?, title?, chapter?|kpIds[], startDate, endDate, sections[] }
+     * body: { courseId?, title?, chapters[]|chapter?, kpIds?, startDate, endDate }
+     * 固定六部分，生成失败不使用模拟报告替代。
      */
-    generate: (p) => request('POST', '/report/generate', p, () =>
-      ({ reportId: 'RP' + Date.now(), status: 'ready', detail: M().reportDetail })),
+    generate: (p) => request('POST', '/report/generate', p),
 
     /** GET /report/{reportId}  报告详情 */
     detail: (p) => request('GET', '/report/' + p.reportId, p, () => M().reportDetail),

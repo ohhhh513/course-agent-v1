@@ -53,10 +53,11 @@ class GenerateReportReq(BaseModel):
     courseId: Optional[str] = None
     title: Optional[str] = None
     chapter: Optional[str] = None
+    chapters: Optional[List[str]] = None
     kpIds: Optional[List[str]] = None
     startDate: str = ""
     endDate: str = ""
-    sections: Optional[List[str]] = None
+    sections: Optional[List[str]] = None  # 兼容旧请求；新报告统一输出完整六部分。
 
 
 class ExportReportReq(BaseModel):
@@ -465,7 +466,7 @@ def report_list(
     return ok(list_response(items[start:start + size], total))
 
 
-# ====== 生成报告（真实统计数据） ======
+# ====== AI 学情报告（核验事实后生成） ======
 @report_router.post("/generate")
 def generate_report(
     req: GenerateReportReq,
@@ -473,228 +474,27 @@ def generate_report(
     user=Depends(get_current_user),
     course_id: str = Depends(get_current_course_id),
 ):
-    """一键生成学情分析报告 — 按当前课程成员真实统计"""
+    """按当前课程及筛选范围生成六部分 AI 分析，通过校验才归档。"""
+    from ..services.ai_learning_report import build_learning_report
+
     claimed = (req.courseId or "").strip()
     if not claimed:
         claimed = next((str(x).strip() for x in (req.classIds or []) if str(x).strip()), "")
     if claimed and claimed != course_id:
         return fail("报告只能按当前课程生成。请先在顶栏切换到对应课程，或在弹窗里选对课程。", 400)
-    from ..models.user_course import UserCourse as _UC
-    from ..models.course import Course as _Course
-    students = (
-        db.query(User)
-        .join(_UC, _UC.user_id == User.user_id)
-        .filter(_UC.course_id == course_id, User.role == "student")
-        .all()
+    detail = build_learning_report(
+        db, user, course_id, title=req.title,
+        chapters=req.chapters, chapter=req.chapter, kp_ids=req.kpIds,
+        start_date=req.startDate, end_date=req.endDate,
     )
-    # 课程名：优先从 courses 表读真实名（如"数据结构与算法"）；读不到则回退到"课程 {course_id}"。
-    course_row = db.query(_Course).filter(_Course.course_id == course_id).first()
-    course_name = (course_row.name if course_row and course_row.name else "").strip() or f"课程 {course_id}"
-    class_name = course_name
-    student_ids = [s.user_id for s in students]
-
-    # 1. 真实统计：整体概况（按课程学习路径）
-    lp_rows = db.query(LearningPath).filter(
-        LearningPath.user_id.in_(student_ids),
-        LearningPath.course_id == course_id,
-    ).all()
-    graph_kps = db.query(GraphNode).filter(
-        GraphNode.graph_type == "knowledge", GraphNode.course_id == course_id
-    ).all()
-    total_kp = max(len(set(r.kp_id for r in lp_rows)), len(graph_kps))
-    done_count = sum(1 for r in lp_rows if r.status == "done")
-    active_lps = [r for r in lp_rows if r.status != "todo" and (r.mastery or 0) > 0]
-    avg_completion = round(done_count / len(lp_rows) * 100, 1) if lp_rows else 0
-    avg_mastery = round(sum(r.mastery or 0 for r in active_lps) / len(active_lps), 1) if active_lps else 0
-
-    # 2. 真实统计：薄弱点 Top 3
-    kp_mastery = defaultdict(list)
-    for r in active_lps:
-        kp_mastery[r.kp_id].append(r.mastery or 0)
-    kp_id_name = {n.id: n.name for n in graph_kps}
-    weak_kps = sorted(
-        [(kid, round(sum(v) / len(v), 1)) for kid, v in kp_mastery.items()],
-        key=lambda x: x[1]
-    )[:3]
-
-    # 3. 真实统计：错题 Top 3（来自 answer_records）
-    wrong_rows = db.query(AnswerRecord).filter(
-        AnswerRecord.user_id.in_(student_ids),
-        AnswerRecord.course_id == course_id,
-        AnswerRecord.is_correct == False
-    ).all()
-    question_ids = {r.q_id for r in wrong_rows if r.q_id}
-    question_rows = db.query(Question).filter(Question.q_id.in_(question_ids)).all() if question_ids else []
-    question_kp_map = {}
-    for question in question_rows:
-        kp_ids = []
-        if question.kp_id:
-            kp_ids.append(question.kp_id)
-        kp_ids.extend(loads(question.kp_ids) or [])
-        kp_names = []
-        for kp_id in kp_ids:
-            if isinstance(kp_id, dict):
-                kp_id = kp_id.get("id") or kp_id.get("kpId") or kp_id.get("name")
-            if kp_id:
-                kp_names.append(kp_id_name.get(str(kp_id), str(kp_id)))
-        if not kp_names:
-            kp_path = loads(question.kp_path) or []
-            if isinstance(kp_path, list):
-                kp_names = [
-                    str(item.get("name") or item.get("label") or item)
-                    if isinstance(item, dict) else str(item)
-                    for item in kp_path if item
-                ]
-        if kp_names:
-            question_kp_map[question.q_id] = "、".join(dict.fromkeys(kp_names))
-
-    err_type_cnt = defaultdict(int)
-    for r in wrong_rows:
-        error_type = (r.error_type or "").strip() or "题目类型"
-        if error_type == "未分类" or error_type == "题目类型":
-            error_type = question_kp_map.get(r.q_id) or "题目知识点未关联"
-        err_type_cnt[error_type] += 1
-    top_errors = sorted(err_type_cnt.items(), key=lambda x: -x[1])[:3]
-
-    # 4. 真实统计：预警情况
-    alert_rows = db.query(Alert).filter(
-        Alert.user_id.in_(student_ids),
-        Alert.course_id == course_id,      # 课程隔离：报告只统计本课预警
-        Alert.status != "closed",
-    ).all()
-    red_cnt = sum(1 for a in alert_rows if a.level == "red")
-    yellow_cnt = sum(1 for a in alert_rows if a.level == "yellow")
-    alert_student_count = len({a.user_id for a in alert_rows if a.user_id})
-
-    intervention_rows = db.query(Intervention).filter(
-        Intervention.class_id == course_id
-    ).all()
-    effect_records = []
-    for intervention in intervention_rows:
-        execution = loads(intervention.execution_json) or {}
-        if not isinstance(execution, dict):
-            continue
-        before = execution.get("masteryBefore")
-        after = execution.get("masteryAfter")
-        if intervention.status == "done" and isinstance(before, (int, float)) and isinstance(after, (int, float)):
-            effect_records.append({"before": before, "after": after})
-
-    overview_paragraphs = [
-        f"{class_name} 学情分析报告共覆盖 {len(students)} 名学生，统计范围为 {req.chapter or '全课程'}。",
-        f"报告生成时间：{datetime.now().strftime('%Y-%m-%d %H:%M')}。当前课程知识点总数为 {total_kp} 个。",
-    ]
-    if not students or not lp_rows:
-        overview_paragraphs.append(
-            "当前暂无可用于统计的学生学习记录，本报告已按统一模板生成；学生加入课程并产生学习记录后，可重新生成以更新分析结果。"
-        )
-    section_overview = {
-        "title": "一、班级整体概况",
-        "paragraphs": overview_paragraphs,
-        "bullets": [
-            f"知识点完成率：{avg_completion}%（{done_count}/{len(lp_rows)}）",
-            f"平均掌握率：{avg_mastery}%",
-            f"达标知识点：{sum(1 for _, m in kp_mastery.items() if sum(m)/len(m) >= 60)} 个 / 共 {len(kp_mastery)} 个",
-            f"待加强知识点：{sum(1 for _, m in kp_mastery.items() if sum(m)/len(m) < 60)} 个",
-        ],
-    }
-    section_weakness = {
-        "title": "二、共性短板归因",
-        "paragraphs": [
-            "班级薄弱知识点按平均掌握率升序识别：" +
-            ("、".join([f"「{kp_id_name.get(kid, kid)}」" for kid, _ in weak_kps]) if weak_kps else "暂无可识别的共性薄弱点。"),
-            f"本统计阶段共收集 {len(wrong_rows)} 道错题记录，错误类型缺失时按题目知识点归因：" +
-            ("、".join([f"「{et}」（{cnt} 次）" for et, cnt in top_errors]) if top_errors else "暂无错题归因数据。"),
-        ],
-        "bullets": (
-            [f"「{kp_id_name.get(kid, kid)}」：平均掌握率 {m}%" for kid, m in weak_kps] +
-            [f"「{et}」：占错题 {cnt}/{len(wrong_rows)} 次" for et, cnt in top_errors]
-        ) or ["暂无学习记录，待后续数据积累后分析共性短板。"],
-    }
-    section_alerts = {
-        "title": "三、个体预警",
-        "paragraphs": [
-            f"当前活跃预警 {red_cnt + yellow_cnt} 条，涉及 {alert_student_count} 名学生（红色 {red_cnt} 条，黄色 {yellow_cnt} 条）。",
-        ],
-        "bullets": [
-            f"红色预警：{red_cnt} 条——建议优先进行人工介入",
-            f"黄色预警：{yellow_cnt} 条——建议持续观察并安排针对性练习",
-        ],
-    }
-    if effect_records:
-        before_avg = round(sum(item["before"] for item in effect_records) / len(effect_records), 1)
-        after_avg = round(sum(item["after"] for item in effect_records) / len(effect_records), 1)
-        effect_paragraphs = [f"已有 {len(effect_records)} 条已完成干预记录包含前后测数据，平均掌握率由 {before_avg}% 提升至 {after_avg}%。"]
-        effect_bullets = [f"平均掌握率变化：{after_avg - before_avg:+.1f} 个百分点"]
-    else:
-        effect_paragraphs = ["当前暂无完整的干预前后测数据，暂不能计算干预提升幅度；完成干预并录入复测结果后重新生成即可。"]
-        effect_bullets = ["建议对红色预警学生完成针对性练习后进行复测，并持续记录干预结果。"]
-    # 已按需求去除"四、干预效果"section（2026-09-24）
-    mastery_by_kp = {kid: round(sum(values) / len(values), 1) for kid, values in kp_mastery.items() if values}
-    achieved_kp_count = sum(1 for mastery in mastery_by_kp.values() if mastery >= 60)
-    goal_rate = round(achieved_kp_count / total_kp * 100, 1) if total_kp else 0
-    section_goal = {
-        "title": "四、目标达成度",
-        "paragraphs": [f"按平均掌握率达到 60% 作为阶段性达标线，当前 {achieved_kp_count}/{total_kp} 个知识点达到目标，目标达成度为 {goal_rate}%。"],
-        "bullets": [
-            f"阶段性目标：知识点掌握率达到 60%（当前达成 {achieved_kp_count} 个）",
-            f"后续重点：优先补强 {len(weak_kps)} 个低掌握知识点，并在下一统计周期复评。",
-        ],
-    }
-    section_map = {
-        "整体掌握度": section_overview,
-        "共性短板归因": section_weakness,
-        "个体预警": section_alerts,
-        "目标达成度": section_goal,
-    }
-    requested_sections = {str(section).strip() for section in (req.sections or []) if str(section).strip()}
-    # 老报告若仍携带"干预效果"选项，静默忽略（2026-09-24 已下线该 section）
-    requested_sections.discard("干预效果")
-    selected_sections = [section_map[name] for name in section_map if not requested_sections or name in requested_sections]
-    if not selected_sections:
-        selected_sections = list(section_map.values())
-
-    period_text = ""
-    if req.startDate or req.endDate:
-        period_text = f"{req.startDate or ''} ~ {req.endDate or ''}".strip(" ~")
-    default_title = f"{class_name} · 学情分析报告 {datetime.now().strftime('%Y-%m-%d')}"
-    custom_title = (req.title or "").strip()
-    if len(custom_title) > 256:
-        custom_title = custom_title[:256]
-    report_title = custom_title or default_title
-    detail = {
-        "title": report_title,
-        "sections": selected_sections,
-        "meta": {
-            "courseId": course_id,
-            "courseName": course_name,           # 2026-09-24：用课程名替代班级名
-            "chapter": req.chapter or "全课程",
-            "startDate": req.startDate or "",
-            "endDate": req.endDate or "",
-            "period": period_text,
-            "studentCount": len(students),       # 2026-09-24：人数即该课程学生人数
-            "className": class_name,             # 兼容旧导出模板（PDF/HTML 仍可能引用）
-            "generator": user.name or user.username or "教师",
-            "generatedAt": datetime.now().strftime("%Y-%m-%d %H:%M"),
-        },
-    }
-
-    # 写入真实 reports 表
     report = Report(
-        report_id="RP" + uuid.uuid4().hex[:12].upper(),
-        # 当前报告按课程上下文归属；旧表的 class_id 外键指向 classes，不能写入 course_id。
-        class_id=None,
-        title=detail["title"],
-        status="ready",
+        report_id="RP" + uuid.uuid4().hex[:12].upper(), class_id=None,
+        title=detail["title"], status="ready",
         detail_json=_json.dumps(detail, ensure_ascii=False),
     )
     db.add(report)
     db.commit()
-
-    return ok({
-        "reportId": report.report_id,
-        "status": "ready",
-        "detail": detail,
-    })
+    return ok({"reportId": report.report_id, "status": "ready", "detail": detail})
 
 
 def _get_class_info_for_report(db: Session, class_id: str):
@@ -748,6 +548,9 @@ def render_report_file(report, fmt: str):
     report_id = report.report_id
     sections = detail.get("sections", [])
 
+    def evidence_bullets(section):
+        return [f"分析依据：{text}" for text in (section.get("evidence") or [])]
+
     def _write_html():
         parts = [
             "<!DOCTYPE html><html><head><meta charset='utf-8'><title>",
@@ -761,7 +564,7 @@ def render_report_file(report, fmt: str):
             parts.append(f"<h2>{_html.escape(sec.get('title', ''))}</h2>")
             for p in sec.get("paragraphs", []):
                 parts.append(f"<p>{_html.escape(p)}</p>")
-            bullets = sec.get("bullets") or []
+            bullets = (sec.get("bullets") or []) + evidence_bullets(sec)
             if bullets:
                 parts.append("<ul>" + "".join(f"<li>{_html.escape(b)}</li>" for b in bullets) + "</ul>")
         parts.append("</body></html>")
@@ -831,7 +634,7 @@ def render_report_file(report, fmt: str):
             add_text(sec.get("title", ""), size=13, width=40, leading=21)
             for paragraph in sec.get("paragraphs", []) or []:
                 add_text(paragraph)
-            for bullet in sec.get("bullets", []) or []:
+            for bullet in (sec.get("bullets") or []) + evidence_bullets(sec):
                 add_text(f"- {bullet}")
             lines.append(("", 11, 10))
 
@@ -876,7 +679,7 @@ def render_report_file(report, fmt: str):
             doc.add_heading(sec.get("title", ""), level=1)
             for p in sec.get("paragraphs", []):
                 doc.add_paragraph(p)
-            for b in sec.get("bullets", []):
+            for b in (sec.get("bullets") or []) + evidence_bullets(sec):
                 doc.add_paragraph(b, style="List Bullet")
 
         buf = io.BytesIO()
@@ -931,7 +734,7 @@ def generate_my_report(
     user=Depends(get_current_user),
     course_id: str = Depends(get_current_course_id),
 ):
-    """生成当前登录学生本人的学情报告（全部真实统计，不调模型）。"""
+    """根据本人当前课程真实事实生成六部分 AI 学情报告，校验成功才保存。"""
     from ..services.student_report import build_student_report
 
     detail = build_student_report(db, user, course_id)

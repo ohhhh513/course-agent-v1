@@ -5,7 +5,7 @@
    生成 / 查看 / 导出**当前登录学生自己**的报告。
    接口走 /student/reports/*（与教师端的 /report/* 不是同一组；
    教师前缀对学生一律 403，归属校验在学生侧这组接口里做）。
-   报告正文由后端按真实学情统计拼装，前端只负责渲染与下载。
+   报告正文由 AI 根据当前课程真实事实分析生成，前端负责渲染与下载。
    ================================================================ */
 
 /** 把导出接口返回的 blob 存成文件（与教师端报告页同一实现） */
@@ -36,12 +36,15 @@ function _srHtml(raw) {
           <span>课程：${U.esc(meta.courseName || meta.className || '—')}</span>
           <span>学号：${U.esc(meta.studentNo || '—')}</span>
           <span>章节：${U.esc(meta.chapter || '全课程')}</span>
+          ${meta.period ? `<span>区间：${U.esc(meta.period)}</span>` : ''}
+          ${meta.generationMethod === 'ai' ? '<span>AI 学情分析</span>' : ''}
           <span>生成者：${U.esc(meta.generator || '系统')}</span>
           <span>${U.esc(meta.generatedAt || '—')}</span></div></div>
       ${sections.map(s => `
         <h3>${U.esc(s.title)}</h3>
         ${(s.paragraphs || []).map(p => `<p>${U.esc(p)}</p>`).join('')}
-        ${s.bullets && s.bullets.length ? `<ul>${s.bullets.map(b => `<li>${U.esc(b)}</li>`).join('')}</ul>` : ''}`).join('')}
+        ${s.bullets && s.bullets.length ? `<ul>${s.bullets.map(b => `<li>${U.esc(b)}</li>`).join('')}</ul>` : ''}
+        ${Array.isArray(s.evidence) && s.evidence.length ? `<details class="report__evidence"><summary>查看分析依据</summary><ul>${s.evidence.map(e => `<li>${U.esc(e)}</li>`).join('')}</ul></details>` : ''}`).join('')}
     </div>`
   };
 }
@@ -129,7 +132,7 @@ const MyReport = {
     box.innerHTML = `<div class="sr-empty">
       ${icon('file')}
       <b>还没有个人学情报告</b>
-      <p>${U.esc(msg || '生成后将按当前课程的真实学习记录汇总掌握情况、练习与预警，并给出学习建议。')}</p>
+      <p>${U.esc(msg || 'AI 将根据当前课程的学习进度、练习测验、互动疑惑与预警，分析薄弱点并给出行动建议。')}</p>
       ${showBtn !== false ? `<button class="btn btn--primary" type="button" id="srEmptyGen">${icon('sparkle')} 生成本次报告</button>` : ''}
     </div>`;
     const btn = U.$('#srEmptyGen');
@@ -154,7 +157,7 @@ const MyReport = {
       if (badge) badge.textContent = `${list.length} 份`;
       if (!list.length) {
         listEl.innerHTML = `<div class="empty" style="padding:30px;text-align:center">暂无报告</div>`;
-        if (!this._viewingId) this._paintEmpty('点击右上角「生成报告」，按当前课程真实学情汇总一份可导出的个人报告。', true);
+        if (!this._viewingId) this._paintEmpty('点击右上角「生成报告」，由 AI 分析当前课程真实学情，生成含六部分内容和分析依据的个人报告。', true);
         return;
       }
       listEl.innerHTML = list.map(rp => `
@@ -178,7 +181,7 @@ const MyReport = {
     const courseId = API.config.activeCourseId;
     const login = JSON.stringify(Auth.getSession());
     const isCurrent = () => courseId === API.config.activeCourseId && login === JSON.stringify(Auth.getSession()) && Router.current === 'report';
-    if (btn) { btn.disabled = true; btn.textContent = '生成中…'; }
+    if (btn) { btn.disabled = true; btn.innerHTML = '<span class="tools__spinner" aria-hidden="true"></span> AI 分析中…'; }
     this._generating = API.student.report.generate()
       .then(async r => {
         const reportId = r && r.reportId;
