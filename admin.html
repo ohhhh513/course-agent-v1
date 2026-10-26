@@ -6,7 +6,7 @@
   <title>管理员 · 课程智能体系统</title>
   <link rel="stylesheet" href="assets/css/base.css">
   <link rel="stylesheet" href="assets/css/refresh.css?v=20261019-blue">
-  <link rel="stylesheet" href="assets/css/app.css?v=20261022-teacher-avatar">
+  <link rel="stylesheet" href="assets/css/app.css?v=20261026-class-management">
   <script src="assets/js/ui-enhancements.js" defer></script>
 </head>
 <body>
@@ -42,7 +42,11 @@
 
       <!-- 账号管理（原单页逻辑整体迁入 views/users.js，行为不变） -->
       <section class="view fill" id="view-users">
-        <div class="card">
+        <div class="admin-user-tabs" role="tablist" aria-label="用户管理">
+          <button class="btn btn--sm is-active" id="accountsTab" type="button" role="tab" aria-selected="true" aria-controls="adminAccountsPanel" data-user-panel="accounts">账号管理</button>
+          <button class="btn btn--sm" id="classesTab" type="button" role="tab" aria-selected="false" aria-controls="adminClassesPanel" data-user-panel="classes">班级管理</button>
+        </div>
+        <div class="card admin-users-panel" id="adminAccountsPanel" role="tabpanel" aria-labelledby="accountsTab">
           <div class="card__head">
             <h3>教师 / 学生账号</h3>
             <span class="spacer"></span>
@@ -68,6 +72,7 @@
             </table>
           </div>
         </div>
+        <div class="card admin-users-panel" id="adminClassesPanel" role="tabpanel" aria-labelledby="classesTab" hidden></div>
       </section>
 
       <!-- 课程管理 -->
@@ -100,12 +105,13 @@
 </div>
 
 <script src="assets/js/common.js?v=20261019-sidepane-full1"></script>
-<script src="assets/js/api.js?v=20261022-ai-report"></script>
+<script src="assets/js/api.js?v=20261026-class-management"></script>
 <script src="assets/js/auth.js?v=20261022-avatar-name"></script>
 <script src="assets/js/shared/profile-center.js?v=20261016-avatar-sync"></script>
 <script src="assets/js/shared/agent-chat.js?v=20261022-no-oos-callout"></script>
   <script src="assets/js/shared/agent-ui.js?v=20261022-ai-report"></script>
-<script src="assets/js/admin/views/users.js?v=20261016-profile-center"></script>
+<script src="assets/js/admin/views/classes.js?v=20261026-class-management"></script>
+<script src="assets/js/admin/views/users.js?v=20261026-class-management"></script>
 <script src="assets/js/admin/views/courses.js?v=20261015-edit-backdrop"></script>
 <script src="assets/js/admin/views/assistant.js?v=20261013-composer"></script>
 <script src="assets/js/admin/app.js?v=20261013-assistant-mark"></script>

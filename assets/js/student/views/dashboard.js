@@ -160,7 +160,7 @@
           <div class="frontier-feed__head">
             <b>更多资源分享</b>
           </div>
-          <div class="frontier-feed__list" id="frontierFeedList">
+          <div class="frontier-feed__list" id="frontierFeedList" role="region" aria-label="更多资源分享，可左右滚动" tabindex="0">
             <p class="fz-12 t-dim">正在加载…</p>
           </div>
         </div>
@@ -288,7 +288,7 @@ function _loadFrontierFeed() {
       return;
     }
     box.innerHTML = list.map(item => `
-      <button type="button" class="frontier-feed__item ${item.read ? 'is-read' : ''}" data-share-id="${U.esc(item.shareId)}" data-url="${U.esc(item.url)}">
+      <button type="button" class="frontier-feed__item ${item.read ? 'is-read' : ''}" title="${U.esc(item.title)}" data-share-id="${U.esc(item.shareId)}" data-url="${U.esc(item.url)}">
         <b>${U.esc(item.title)}</b>
         <span>${U.esc(item.source || '教师推荐')}</span>
         ${item.publishedOn ? `<span class="frontier-feed__date">${U.esc(item.publishedOn)}</span>` : ''}

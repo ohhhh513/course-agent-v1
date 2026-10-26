@@ -12,6 +12,9 @@
 from __future__ import annotations
 
 import re
+import uuid
+
+from sqlalchemy import case, func, or_
 
 from app.middleware.auth import hash_password
 from app.models.agent_st import STQuestionDraft
@@ -20,6 +23,7 @@ from app.models.alert import Alert, Message
 from app.models.checkin import StudyCheckin
 from app.models.course import Course, ResourceProgress, ResourceStudyLog
 from app.models.graph import LearningPath
+from app.models.intervention import Report, TeacherClassDashboard
 from app.models.practice import AnswerRecord, PracticeSession
 from app.models.user import TeacherClass, User
 from app.models.user_course import UserCourse
@@ -239,14 +243,13 @@ def validate_records(records: list, role: str, default_password: str, db) -> Non
 def insert_user(db, role: str, username: str, name: str, password: str,
                 className: str, studentNo: str, dept: str, title: str) -> str:
     """复用 create_user 的落库逻辑：生成 user_id、哈希密码、avatar_char=姓名首字、按角色取字段。"""
-    if role == "teacher":
-        uid = "T" + username[:12]
-        while db.query(User).filter(User.user_id == uid).first():
-            uid = "T" + username[:8] + str(db.query(User).count())[-4:]
-    else:
-        uid = "S" + username[:12]
-        while db.query(User).filter(User.user_id == uid).first():
-            uid = "S" + username[:8] + str(db.query(User).count())[-4:]
+    prefix = "T" if role == "teacher" else "S"
+    uid = prefix + username[:12]
+    while db.query(User).filter(User.user_id == uid).first():
+        uid = prefix + uuid.uuid4().hex[:24]
+    if role == "student" and (className or "").strip():
+        from app.services.class_admin import ensure_class
+        className = ensure_class(db, className).name
     user = User(
         user_id=uid,
         username=username,
@@ -260,6 +263,9 @@ def insert_user(db, role: str, username: str, name: str, password: str,
         dept=(dept or "").strip() if role == "teacher" else "",
     )
     db.add(user)
+    if role == "student":
+        from app.services.class_admin import refresh_class_counts
+        refresh_class_counts(db)
     return uid
 
 
@@ -270,7 +276,7 @@ def insert_user(db, role: str, username: str, name: str, password: str,
 # ---------------------------------------------------------------------------
 # 级联范围（人话，删号确认卡片与页面提示共用同一句话）
 DELETION_SCOPE = ("删除 users 表账号，并级联清理其个人数据：练习与答题记录、资源进度与学习日志、"
-                  "学习路径、打卡、AI 会话与消息、预警与消息、出题草稿、课程成员关系与教师班级关联。"
+                  "学习路径、打卡、AI 会话与消息、预警与消息、出题草稿、课程成员关系、测验记录、个人报告与学情摘要。"
                   "不删课程、资源文件与题库。")
 
 
@@ -305,7 +311,7 @@ def delete_block_reason(db, user, actor_user_id: str) -> str:
     return ""
 
 
-def delete_user_cascade(db, user) -> dict:
+def delete_user_cascade(db, user, *, refresh_classes=True) -> dict:
     """删除用户及其个人关联数据（不动课程内容与资源文件），返回各表清理条数。
 
     调用方负责 **先** 用 `delete_block_reason` 判定能否删；本函数只做删除，
@@ -350,7 +356,23 @@ def delete_user_cascade(db, user) -> dict:
     stats["teacherClasses"] = db.query(TeacherClass).filter(TeacherClass.teacher_user_id == uid).delete(synchronize_session=False)
     stats["accountProfiles"] = delete_profile(db, uid)
 
+    # 个人测验、AI 摘要和报告复用 JSON 列；删除账号时同步清理，不能留下教师可读的个人快照。
+    snapshot = case((func.json_valid(TeacherClassDashboard.data_json), TeacherClassDashboard.data_json), else_="{}")
+    stats["personalSnapshots"] = db.query(TeacherClassDashboard).filter(
+        TeacherClassDashboard.data_type.in_(("exam_attempt", "ai_daily_analysis", "profile")),
+        or_(TeacherClassDashboard.data_key == uid,
+            func.json_extract(snapshot, "$.userId") == uid,
+            func.json_extract(snapshot, "$.studentId") == uid),
+    ).delete(synchronize_session=False)
+    report = case((func.json_valid(Report.detail_json), Report.detail_json), else_="{}")
+    stats["personalReports"] = db.query(Report).filter(
+        func.json_extract(report, "$.meta.userId") == uid,
+    ).delete(synchronize_session=False)
+
     db.delete(user)
+    if refresh_classes and user.role == "student":
+        from app.services.class_admin import refresh_class_counts
+        refresh_class_counts(db)
     return stats
 
 

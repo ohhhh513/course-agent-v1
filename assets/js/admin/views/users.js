@@ -252,7 +252,7 @@ const AdminUsers = {
   },
 
   /* ---------- 批量导入（xlsx / docx）---------- */
-  openImport() {
+  openImport(classMeta = null, onImported = null) {
     const S = { role: 'student', file: null, defaultPassword: '', preview: null };
 
     const _badge = (st) => st === 'valid'
@@ -307,7 +307,7 @@ const AdminUsers = {
         closeOnBackdrop: false,
         body: `
           <div class="stack" style="gap:14px">
-            <div class="callout callout--info">当前角色：<b>${S.role === 'student' ? '学生' : '教师'}</b>。将解析文件并预览，不会立即写入。</div>
+            <div class="callout callout--info">当前角色：<b>${S.role === 'student' ? '学生' : '教师'}</b>。${classMeta ? `学生将导入「${U.esc(classMeta.name)}」，文件中的班级列以此为准。` : ''}将解析文件并预览，不会立即写入。</div>
             <label class="stack" style="gap:4px"><span class="fz-12 t-dim">选择文件（.xlsx / .docx / .csv / .txt）</span>
               <input class="input" id="impFile" type="file" accept=".xlsx,.docx,.csv,.txt"></label>
             <label class="stack" style="gap:4px"><span class="fz-12 t-dim">统一初始密码（可选；填写后覆盖文件中的密码列，至少 6 位）</span>
@@ -315,6 +315,7 @@ const AdminUsers = {
           </div>`,
         footer: `<button class="btn btn--primary" id="parse" type="button">解析预览</button><button class="btn" id="back1" type="button">上一步</button><button class="btn" data-close>取消</button>`,
         onMount(ov, close) {
+          if (classMeta) U.$('#back1', ov).hidden = true;
           U.$('#back1', ov).addEventListener('click', () => { close(); step1(); });
           U.$('#parse', ov).addEventListener('click', () => {
             const f = U.$('#impFile', ov).files[0];
@@ -325,6 +326,7 @@ const AdminUsers = {
             fd.append('file', f);
             fd.append('role', S.role);
             fd.append('defaultPassword', S.defaultPassword);
+            if (classMeta) fd.append('classId', classMeta.classId);
             const btn = U.$('#parse', ov); btn.disabled = true; btn.textContent = '解析中…';
             API.admin.importPreview(fd).then(r => {
               S.preview = r; close(); step3();
@@ -378,8 +380,9 @@ const AdminUsers = {
             fd.append('file', S.file);
             fd.append('role', S.role);
             fd.append('defaultPassword', S.defaultPassword);
+            if (classMeta) fd.append('classId', classMeta.classId);
             const btn = U.$('#go', ov); btn.disabled = true; btn.textContent = '导入中…';
-            API.admin.importCommit(fd).then(r => { close(); step4(r); })
+            API.admin.importCommit(fd).then(r => { close(); if (onImported) onImported(); step4(r); })
               .catch(err => {
                 btn.disabled = false; btn.textContent = '导入 ' + (S.preview.valid || 0) + ' 条';
                 Toast.error('导入失败', (err && err.message) || '');
@@ -414,7 +417,8 @@ const AdminUsers = {
       });
     };
 
-    step1();
+    if (classMeta) step2();
+    else step1();
   },
 };
 
@@ -422,9 +426,10 @@ window.addEventListener('focus', () => AdminUsers.refreshProfiles());
 window.addEventListener('profileupdated', () => AdminUsers.refreshProfiles());
 
 Router.register('users', {
-  update: () => AdminUsers.load(),
-  title: '账号管理',
+  update: () => { AdminUsers.load(); if (AdminClasses.active) AdminClasses.load(); },
+  title: '用户管理',
   mount() {
+    AdminClasses.init();
     // 筛选与新建按钮：mount 只执行一次，事件不会重复绑定
     U.$('#fRole').addEventListener('change', () => AdminUsers.load());
     let tm;

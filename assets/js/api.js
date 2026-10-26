@@ -306,6 +306,16 @@ window.API = (function () {
     importPreview: (fd) => request('POST', '/admin/users/import/preview', fd),
     /** POST /admin/users/import/commit  真正落库（FormData: file, role, defaultPassword, rowIndexes?） */
     importCommit: (fd) => request('POST', '/admin/users/import/commit', fd),
+    /** 班级管理：成员归属与删除均由服务端按班级校验。 */
+    classes: {
+      list: (p) => request('GET', '/admin/classes', p),
+      create: (p) => request('POST', '/admin/classes', p),
+      students: (id) => request('GET', `/admin/classes/${encodeURIComponent(id)}/students`),
+      assign: (id, userIds) => request('POST', `/admin/classes/${encodeURIComponent(id)}/students`, { userIds }),
+      deleteStudents: (id, userIds) => request('POST', `/admin/classes/${encodeURIComponent(id)}/students/batch-delete`, { userIds }),
+      deletePreview: (id) => request('GET', `/admin/classes/${encodeURIComponent(id)}/delete-preview`),
+      remove: (id, revision) => request('DELETE', `/admin/classes/${encodeURIComponent(id)}`, { revision }),
+    },
     /** GET /admin/courses  课程列表（含成员数、邀请码、实时内容计数） */
     listCourses: () => request('GET', '/admin/courses'),
     /** POST /admin/courses  新建课程 {name, term?, code?, classNo?, teacherUserId} */

@@ -51,6 +51,17 @@ start.bat            REM 优先用 backend\.venv，没有就探测本机 Python 
 stop.bat             REM 按端口找 PID 并 taskkill
 ```
 
+使用 Conda 时，环境中的 Python 必须是 **3.11**。可以在 Anaconda Prompt 中先 `conda activate <环境名>`，再运行 `start.bat`。双击启动需要在项目根目录新建 `.env.start.bat`：
+
+```bat
+@echo off
+set "COURSE_AGENT_CONDA_ENV=course-agent-py311"
+```
+
+该本地配置已被 `.gitignore` 的 `.env.*` 规则忽略，不会影响协作者。启动时会先激活指定 Conda 环境；也可以改用 `set "COURSE_AGENT_PYTHON=D:\实际路径\python.exe"` 直接指定解释器（优先级高于环境名）。按环境名启动需要 `conda.bat` 在 PATH 中，否则从 Anaconda Prompt 运行，或使用完整解释器路径。
+
+`start.bat --check` 只检查解释器并显示路径、版本，不安装依赖、不清理端口、不启动服务。显式指定的环境不符合要求时会直接报错，不会静默换到其他环境。
+
 手动方式：
 
 ```bat

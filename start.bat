@@ -8,10 +8,11 @@ REM  Course Agent - One-click Start
 REM ============================================================
 
 set "PORT=8000"
-REM Python 解释器优先级：自定义路径、项目 venv、已激活 Conda、常用 stucourse 路径、PATH 与 py 启动器。
-REM 其他电脑可设置 COURSE_AGENT_PYTHON 指向自己的 python.exe，无需修改此脚本。
+REM Local settings are optional and ignored by Git (.env.*).
+REM Set COURSE_AGENT_CONDA_ENV or COURSE_AGENT_PYTHON in .env.start.bat.
 set "PROJECT=%~dp0"
 set "BACKEND=%PROJECT%backend"
+if exist "%PROJECT%.env.start.bat" call "%PROJECT%.env.start.bat"
 
 echo.
 echo  ================================================
@@ -24,11 +25,19 @@ echo  [1/5] Checking environment...
 
 set "PYTHON="
 
-REM 每个候选都检查 Python 版本，选中后再由依赖步骤检查或安装缺失包。
-if defined COURSE_AGENT_PYTHON call :TryPython "%COURSE_AGENT_PYTHON%" "COURSE_AGENT_PYTHON"
+REM Explicit settings must succeed; never silently use a different environment.
+if defined COURSE_AGENT_PYTHON (
+    call :TryPython "%COURSE_AGENT_PYTHON%" "COURSE_AGENT_PYTHON"
+    if not defined PYTHON goto ENVIRONMENT_NOT_FOUND
+    goto PYTHON_SELECTED
+)
+if defined COURSE_AGENT_CONDA_ENV (
+    call :UseConda
+    if not defined PYTHON goto ENVIRONMENT_NOT_FOUND
+    goto PYTHON_SELECTED
+)
 if not defined PYTHON call :TryPython "%BACKEND%\.venv\Scripts\python.exe" "project venv"
 if not defined PYTHON if defined CONDA_PREFIX call :TryPython "%CONDA_PREFIX%\python.exe" "active Conda environment"
-if not defined PYTHON call :TryPython "E:\anaconda\envs\stucourse\python.exe" "stucourse Conda environment"
 
 if not defined PYTHON (
     for /f "delims=" %%E in ('where python3.11 2^>nul') do if not defined PYTHON call :TryPython "%%E" "PATH python3.11"
@@ -40,14 +49,10 @@ if not defined PYTHON (
     for /f "delims=" %%E in ('where python 2^>nul') do if not defined PYTHON call :TryPython "%%E" "PATH Python"
 )
 
-if not defined PYTHON (
-    echo  [ERROR] A Python 3.11 environment was not found.
-    echo          Set COURSE_AGENT_PYTHON to the full path of python.exe and retry.
-    echo          Checked the project venv, active Conda environment, and PATH.
-    pause
-    exit /b 1
-)
+if not defined PYTHON goto ENVIRONMENT_NOT_FOUND
 
+:PYTHON_SELECTED
+echo        Executable: "%PYTHON%"
 "%PYTHON%" -c "import sys; print('       Python', sys.version.split()[0])"
 
 if not exist "%BACKEND%\requirements.txt" (
@@ -56,6 +61,8 @@ if not exist "%BACKEND%\requirements.txt" (
     exit /b 1
 )
 echo        Environment OK.
+REM Read-only diagnostic: do not install, kill processes, or start the server.
+if /i "%~1"=="--check" exit /b 0
 
 REM --- 2. Kill anything on the port ---
 echo.
@@ -72,7 +79,7 @@ ping -n 3 127.0.0.1 >nul
 REM --- 3. Ensure dependencies ---
 echo.
 echo  [3/5] Checking dependencies...
-REM openai 也在检查项里：缺了它智能答疑会静默退回演示模式（只检索、不调模型）
+REM Include openai so a missing SDK does not silently disable model calls.
 "%PYTHON%" -c "import fastapi, sqlalchemy, uvicorn, jose, passlib, openai" 2>nul
 if errorlevel 1 (
     echo  First run - installing dependencies, please wait...
@@ -124,8 +131,8 @@ echo  ================================================
 echo.
 echo   Frontend : http://127.0.0.1:%PORT%/
 echo   API Docs : http://127.0.0.1:%PORT%/docs
-echo   Login    : admin / admin   （首次启动用管理员建教师与课程）
-echo              （系统不再内置演示师生账号；演示库账号见 dev_tools 说明）
+echo   Login    : admin / admin - create teachers and courses on first run.
+echo              See dev_tools for demo accounts.
 echo.
 echo  ================================================
 echo.
@@ -143,7 +150,32 @@ exit /b 1
 :TryPython
 if not exist "%~1" exit /b 1
 "%~1" -c "import sys; sys.exit(0 if sys.version_info.major == 3 and sys.version_info.minor == 11 else 1)" >nul 2>nul
-if errorlevel 1 exit /b 1
+if errorlevel 1 (
+    echo  [SKIP] %~2: Python 3.11 is required.
+    "%~1" --version
+    exit /b 1
+)
 set "PYTHON=%~1"
 echo        Using %~2
 exit /b 0
+
+:UseConda
+where conda.bat >nul 2>nul
+if errorlevel 1 (
+    echo  [ERROR] conda.bat was not found. Run from Anaconda Prompt,
+    echo          or set COURSE_AGENT_PYTHON to the environment's python.exe.
+    exit /b 1
+)
+call conda.bat activate "%COURSE_AGENT_CONDA_ENV%"
+if errorlevel 1 exit /b 1
+call :TryPython "%CONDA_PREFIX%\python.exe" "Conda environment %COURSE_AGENT_CONDA_ENV%"
+exit /b
+
+:ENVIRONMENT_NOT_FOUND
+echo  [ERROR] A Python 3.11 environment was not found or the selected environment is incompatible.
+echo          Activate a Python 3.11 Conda environment, or create .env.start.bat with:
+echo          set "COURSE_AGENT_CONDA_ENV=your-env-name"
+echo          Alternatively set COURSE_AGENT_PYTHON to the full path of python.exe.
+if /i "%~1"=="--check" exit /b 1
+pause
+exit /b 1

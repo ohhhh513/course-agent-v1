@@ -104,6 +104,7 @@ app.add_middleware(NoCacheMiddleware)
 from .routers.auth import router as auth_router
 from .routers.admin import router as admin_router
 from .routers.admin_courses import router as admin_courses_router
+from .routers.admin_classes import router as admin_classes_router
 from .routers.course import router as course_router
 from .routers.graph import router as graph_router
 from .routers.student import router as student_router
@@ -119,6 +120,7 @@ from .routers.teacher_exams import router as teacher_exams_router
 app.include_router(auth_router)
 app.include_router(admin_router)
 app.include_router(admin_courses_router)
+app.include_router(admin_classes_router)
 app.include_router(course_router)
 app.include_router(graph_router)
 app.include_router(student_router)

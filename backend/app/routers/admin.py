@@ -115,28 +115,8 @@ def create_user(
     if db.query(User).filter(User.username == username).first():
         return fail("用户名已存在", 400)
 
-    if role == "teacher":
-        uid = "T" + username[:12]
-        while db.query(User).filter(User.user_id == uid).first():
-            uid = "T" + username[:8] + str(db.query(User).count())[-4:]
-    else:
-        uid = "S" + username[:12]
-        while db.query(User).filter(User.user_id == uid).first():
-            uid = "S" + username[:8] + str(db.query(User).count())[-4:]
-
-    user = User(
-        user_id=uid,
-        username=username,
-        password=hash_password(password),
-        name=name,
-        role=role,
-        avatar_char=name[0],
-        student_no=(body.studentNo or "").strip() if role == "student" else "",
-        class_name=(body.className or "").strip() if role == "student" else "",
-        title=(body.title or "").strip() if role == "teacher" else "",
-        dept=(body.dept or "").strip() if role == "teacher" else "",
-    )
-    db.add(user)
+    uid = _insert_user(db, role, username, name, password, body.className,
+                       body.studentNo, body.dept, body.title)
     db.commit()
     return ok({
         "userId": uid,
@@ -192,8 +172,11 @@ def update_user(
         user.password = hash_password(body.password)
 
     if user.role == "student":
-        user.class_name = (body.className or "").strip()
+        from ..services.class_admin import ensure_class, refresh_class_counts
+        class_name = (body.className or "").strip()
+        user.class_name = ensure_class(db, class_name).name if class_name else ""
         user.student_no = (body.studentNo or "").strip()
+        refresh_class_counts(db)
     else:
         user.dept = (body.dept or "").strip()
         user.title = (body.title or "").strip()
@@ -300,6 +283,17 @@ def batch_delete_users(
 
 
 # ===================== 批量导入端点 =====================
+def _apply_import_class(db, records, role, class_id):
+    if not class_id:
+        return
+    if role != "student":
+        raise HTTPException(400, "班级导入只支持学生账号")
+    from ..services.class_admin import get_class
+    name = get_class(db, class_id)["name"]
+    for record in records:
+        record["className"] = name
+
+
 @router.get("/users/import/template")
 def import_template(
     role: str = "student",
@@ -359,6 +353,7 @@ async def import_preview(
     file: UploadFile = File(...),
     role: str = Form("student"),
     defaultPassword: str = Form(""),
+    classId: str = Form(""),
     db: Session = Depends(get_db),
     admin: User = Depends(require_admin),
 ):
@@ -373,6 +368,7 @@ async def import_preview(
         return fail("文件中没有可解析的数据行", 400)
     if len(records) > MAX_IMPORT_ROWS:
         return fail(f"单次导入最多 {MAX_IMPORT_ROWS} 行", 400)
+    _apply_import_class(db, records, role, classId)
     _validate_records(records, role, defaultPassword, db)
     total = len(records)
     valid = sum(1 for r in records if r["status"] == "valid")
@@ -380,6 +376,7 @@ async def import_preview(
     err = sum(1 for r in records if r["status"] == "error")
     out = [
         {"rowIndex": r["rowIndex"], "username": r["username"], "name": r["name"],
+         "className": r["className"], "studentNo": r["studentNo"],
          "status": r["status"], "error": r["error"]}
         for r in records
     ]
@@ -393,6 +390,7 @@ async def import_commit(
     role: str = Form("student"),
     defaultPassword: str = Form(""),
     rowIndexes: str = Form(""),
+    classId: str = Form(""),
     db: Session = Depends(get_db),
     admin: User = Depends(require_admin),
 ):
@@ -407,6 +405,7 @@ async def import_commit(
         return fail("文件中没有可解析的数据行", 400)
     if len(records) > MAX_IMPORT_ROWS:
         return fail(f"单次导入最多 {MAX_IMPORT_ROWS} 行", 400)
+    _apply_import_class(db, records, role, classId)
     _validate_records(records, role, defaultPassword, db)
 
     want = None
