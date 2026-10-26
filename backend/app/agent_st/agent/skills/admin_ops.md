@@ -32,7 +32,7 @@
 | 把上一步的 `validAccounts` 提交为「待批准」的账号录入动作 | `import_accounts` |
 | 要删除账号 —— 先核对哪些能删、哪些会被拒（含原因） | `preview_account_delete` |
 | 把上一步的 `deletableAccounts` 提交为「待批准」的账号删除动作 | `delete_accounts` |
-| 要删除课程 —— 先核对课程能否删（是否还剩题目/章节/资源/试卷） | `preview_course_delete`（带 `courseId` 或 `courseName`） |
+| 要删除课程 —— 先核对课程能否删（是否还剩成员） | `preview_course_delete`（带 `courseId` 或 `courseName`） |
 | 把上一步的 `courseId` 提交为「待批准」的课程删除动作 | `delete_course` |
 
 一次回答**最多调用 2～3 个工具**：先 `system_overview` 拿全局，再按需下钻一个明细工具。不要为了"全面"把五个查询工具都调一遍。
@@ -76,8 +76,8 @@
 1. 先调 `preview_course_delete`：给 `courseId` 最好；只记得课名就给 `courseName`，
    工具会按「精确 → 包含」定位。若返回多个候选，把候选列表给管理员**让他指明**是哪门课。
 2. **必须先看 `deletable`**：
-   - `deletable=false` —— **不要**调 `delete_course`。把 `blockers` 里还剩的题目 / 章节 / 资源 /
-     试卷**逐项与数量**讲清楚，告诉管理员这些内容需先到教师端处理，课程才能删。
+   - `deletable=false` —— **不要**调 `delete_course`。说明课程里还剩多少名成员，
+     告诉管理员先到「课程管理 → 成员」把成员移出（负责人也可以移出），再来删除。
    - `deletable=true` —— 才进入下一步。
 3. 调 `delete_course`，`courseId` **原样**传上一步返回的值（不要自己拼改）。
 4. 它是**写操作**：会被拦成「待批准」，**不会立即删除**。回答里必须说明

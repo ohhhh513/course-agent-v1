@@ -492,21 +492,27 @@ def data_check(ctx: ToolContext):
         })
 
         # ③ 课程创建者缺失 / 不在成员里
+        #    注意（2026-10-26）：「无成员的课」按新口径本来就该是无负责人状态
+        #    （退绑到 0 人时 owner_id 会被清空），不算异常；
+        #    只有「有成员却没有有效负责人」才是真问题。
         owner_issues = []
         for c in db.query(P.Course).all():
+            member_ids = [
+                uid for (uid,) in db.query(P.UserCourse.user_id)
+                .filter(P.UserCourse.course_id == c.course_id).all()
+            ]
+            if not member_ids:
+                continue          # 无成员 = 无负责人，属正常状态
             if not (c.owner_id or "").strip():
-                owner_issues.append({"courseId": c.course_id, "issue": "未设置创建者 owner_id"})
+                owner_issues.append({"courseId": c.course_id, "issue": "课程有成员但未设置负责人 owner_id"})
                 continue
-            is_member = db.query(P.UserCourse.id).filter(
-                P.UserCourse.course_id == c.course_id, P.UserCourse.user_id == c.owner_id,
-            ).first()
-            if not is_member:
+            if c.owner_id not in member_ids:
                 owner_issues.append({"courseId": c.course_id, "ownerId": c.owner_id,
-                                     "issue": "创建者不是该课程成员"})
+                                     "issue": "负责人不是该课程成员"})
         checks.append({
-            "name": "课程创建者有效",
+            "name": "课程负责人有效",
             "ok": not owner_issues,
-            "detail": "owner_id 为空，或创建者不在课程成员关系里",
+            "detail": "课程有成员时，负责人应存在且是课程成员（无成员的课不要求负责人）",
             "items": owner_issues[:20],
         })
 

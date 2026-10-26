@@ -312,13 +312,15 @@ window.API = (function () {
     createCourse: (p) => request('POST', '/admin/courses', p),
     /** PUT /admin/courses/{courseId}  修改课程；未传的字段保持不变 */
     updateCourse: (courseId, p) => request('PUT', `/admin/courses/${courseId}`, p),
-    /** DELETE /admin/courses/{courseId}  删除空课程（仍有教学内容时拒绝） */
+    /** DELETE /admin/courses/{courseId}  删除课程（课程里还有成员时拒绝）。
+     *  删除会一并清掉该课程的题目 / 资源 / 图谱 / 学习记录 / 会话 / 报告，
+     *  以及磁盘资源文件与向量库切片，不可恢复。 */
     deleteCourse: (courseId) => request('DELETE', `/admin/courses/${courseId}`),
     /** GET /admin/courses/{courseId}/members  课程成员 */
     courseMembers: (courseId) => request('GET', `/admin/courses/${courseId}/members`),
     /** DELETE /admin/courses/{courseId}/members/{userId}  移出一名成员。
-     *  负责人也能移出（软退绑：保留 owner_id，课程进入「待指派负责人」，
-     *  之后即可直接删课）。 */
+     *  负责人也能移出；若退到课程一个成员都不剩，owner_id 会被置空，
+     *  课程变为「无负责人」，此时即可直接删课。 */
     unbindMember: (courseId, userId) => request('DELETE', `/admin/courses/${courseId}/members/${userId}`),
     /** POST /admin/courses/{courseId}/unbind-members  批量移出成员 {userIds:[]} */
     unbindMembers: (courseId, userIds) => request('POST', `/admin/courses/${courseId}/unbind-members`, { userIds }),

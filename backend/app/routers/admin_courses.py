@@ -20,11 +20,13 @@ from ..services.course_admin import (
     bind_classes,
     classify_roster,
     commit_roster,
+    course_resource_urls,
     create_course,
     delete_course,
     list_classes,
     list_courses,
     list_members,
+    purge_course_assets,
     read_roster_upload,
     unbind_classes,
     unbind_member,
@@ -134,16 +136,26 @@ def admin_update_course(course_id: str, body: CourseWrite, db: Session = Depends
 
 @router.delete("/courses/{course_id}")
 def admin_delete_course(course_id: str, db: Session = Depends(get_db)):
+    """删除课程及其全部关联数据（要求课程内已无成员）。
+
+    顺序很关键：先在库里取资源 URL（行删掉就查不到了）→ 删库并 commit →
+    再清磁盘文件与向量库切片。DB 事务不碰文件系统，回滚时不会出现
+    「数据还在、文件没了」。
+    """
     try:
+        urls = course_resource_urls(db, course_id)
         data = delete_course(db, course_id)
         db.commit()
-        return ok(data)
     except CourseAdminError as exc:
         db.rollback()
         return fail(exc.message, 400)
     except Exception as exc:  # noqa: BLE001
         db.rollback()
         return fail(f"删除失败：{exc}", 500)
+
+    # 库已提交；这一步失败只留孤儿文件，不回滚、不报删除失败。
+    data["assets"] = purge_course_assets(course_id, urls)
+    return ok(data)
 
 
 @router.get("/courses/{course_id}/members")

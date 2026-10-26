@@ -278,7 +278,7 @@ def _course_summary(args: dict) -> str:
     description=(
         "核对**待删除课程**（只读，不写库）：按课程 ID 或课程名在库里定位，"
         "返回该课程的基本信息、成员数量，以及**是否真的可以删除**"
-        "（有题目 / 章节 / 资源 / 试卷时不能删，会给出具体数量）。"
+        "（课程里还有成员时不能删，会给出成员数量）。"
         "当管理员要「删除 / 移除某门课」时先调用本工具；"
         "把返回的 courseId **原样**传给 delete_course（不要自己改动）。"
     ),
@@ -343,10 +343,11 @@ def preview_course_delete(ctx: ToolContext, courseId: str = "", courseName: str 
             "deletable": not blockers,
             "blockers": blockers,
             "hint": ("deletable=true 时把 courseId 原样传给 delete_course。"
-                     "deletable=false 时**不要**调用 delete_course —— 把有哪些教学内容、"
-                     "共多少条讲清楚，让管理员先自行处理课程内容。"),
+                     "deletable=false 表示课程里还有成员 —— **不要**调用 delete_course，"
+                     "请告诉管理员先到「课程管理 → 成员」把成员移出，然后再删除。"),
             "basis": ("与「课程管理 → 删除」完全同一套实现（services/course_admin）："
-                      "课程仍有题目 / 章节 / 资源 / 试卷时不允许删除。"),
+                      "课程内没有任何成员时才允许删除；删课时会一并清理该课程的"
+                      "题库 / 资源 / 图谱 / 学习记录 / 会话 / 报告等全部关联数据。"),
         }
     finally:
         db.close()
@@ -357,8 +358,8 @@ def preview_course_delete(ctx: ToolContext, courseId: str = "", courseName: str 
     description=(
         "删除**一门课程**（写操作：会先生成「待批准」确认卡片，管理员点确认后才真正删除）。"
         "只传 preview_course_delete 返回的 courseId（原样，不要自己改）。"
-        "执行时会重新核对一遍：期间若课程被新增了题目 / 资源，会被拒绝并在结果里说明，"
-        "不会误删。"
+        "执行时会重新核对一遍：课程里若还有成员会被拒绝并在结果里说明，不会误删。"
+        "删除会一并清掉该课程的题库 / 资源 / 图谱 / 学习记录 / 会话 / 报告等全部关联数据。"
     ),
     parameters={
         "type": "object",
@@ -374,8 +375,10 @@ def preview_course_delete(ctx: ToolContext, courseId: str = "", courseName: str 
     approval=ApprovalSpec(
         summarize=_course_summary,
         precheck=_course_precheck,
-        impact=("会删除 courses 里的该课程行，并移除其全部课程成员关系（user_courses）。"
-                "**该操作不可撤销**。课程内若仍有题目 / 章节 / 资源 / 试卷会被拒绝；"
+        impact=("会删除该课程行并清空其全部课程成员关系（user_courses），同时删除"
+                "该课程的题目、资源、图谱、学习路径、答题记录、练习会话、答疑会话、"
+                "预警、出题草稿、学情报告等关联数据，以及磁盘上的资源文件和向量库切片。"
+                "**该操作不可撤销**。课程里若还有成员会被拒绝；"
                 "师生账号本身不会被删除。"),
     ),
 )
@@ -384,12 +387,18 @@ def delete_course(ctx: ToolContext, courseId: str = "", courseName: str = ""):
     if not cid:
         return {"ok": False, "error": "courseId 不能为空"}
 
-    from app.services.course_admin import CourseAdminError, delete_course as svc_delete_course
+    from app.services.course_admin import (
+        CourseAdminError,
+        course_resource_urls,
+        delete_course as svc_delete_course,
+        purge_course_assets,
+    )
 
     db = persistence.SessionLocal()
     try:
         # 执行前重新核对（不信任入参，也不信任审批前的那份状态）：
-        # 期间课程可能被新增了教学内容 → 此时必须拒绝，而不是照删。
+        # 期间课程可能被加进了成员 → 此时必须拒绝，而不是照删。
+        urls = course_resource_urls(db, cid)
         try:
             data = svc_delete_course(db, cid)
             db.commit()
@@ -398,18 +407,25 @@ def delete_course(ctx: ToolContext, courseId: str = "", courseName: str = ""):
             return {
                 "ok": False,
                 "error": exc.message,
-                "hint": "课程没有被删除；请把拒绝原因如实转达给管理员。",
+                "hint": "课程没有被删除；请把拒绝原因如实转达给管理员"
+                        "（通常是要先把成员移出）。",
             }
         except Exception as exc:  # noqa: BLE001
             db.rollback()
             return {"ok": False, "error": f"删除失败：{exc}"}
+
+        # DB 已提交，再清磁盘与向量库；失败只留孤儿文件，不影响删除结果。
+        assets = purge_course_assets(cid, urls)
 
         return {
             "ok": True,
             "courseId": data.get("courseId", cid),
             "courseName": data.get("name", ""),
             "membersRemoved": data.get("membersRemoved", 0),
-            "hint": ("课程已删除（成员关系已一并移除，师生账号本身保留）。"
+            "purged": data.get("purged", {}),
+            "assets": assets,
+            "hint": ("课程已删除，其题目 / 资源 / 图谱 / 学习记录 / 会话 / 报告等"
+                     "关联数据已一并清理（师生账号本身保留）。"
                      "请如实汇报删除结果，不要夸大。"),
         }
     finally:

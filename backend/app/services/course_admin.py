@@ -1,12 +1,17 @@
-"""管理员课程治理：建课 / 改课 / 删空课，以及把学生绑进课程。
+"""管理员课程治理：建课 / 改课 / 删课，以及把学生绑进课程。
 
 只使用现有列，不改表结构：
 - 课程写 ``courses``（教学班号仍折进 ``code`` 的 ``代码||班号``）；
 - 成员写 ``user_courses``；
 - 学生入课后走与「凭邀请码加入」相同的 ``learning_path.sync_user``。
 
-删除只允许还没有教学内容的空课：有资源、题目、图谱、学习记录等外键数据时拒绝，
-避免误删教师已经在用的课。移出成员只删 ``user_courses`` 这一行，学习记录保留。
+删除口径（2026-10-26 变更）：**只要课程内没有任何成员就可以删除**，删课时
+一并清掉该课程的全部关联数据（题库 / 资源 / 图谱 / 学习记录 / 会话 / 报告等），
+磁盘资源文件与向量库切片由调用方在 commit 之后调用 :func:`purge_course_assets` 清理。
+课程里还有成员时拒绝删除，提示先移出成员。
+
+退绑成员只删 ``user_courses`` 这一行；当课程退到**一个成员都不剩**时，
+同时把 ``courses.owner_id`` 置空，课程回到「无负责人」状态（不再是「待指派原负责人」）。
 """
 from __future__ import annotations
 
@@ -18,15 +23,15 @@ from datetime import datetime
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from app.models.ai import ChatSession
+from app.models.ai import ChatMessage, ChatSession
 from app.models.agent_st import STQuestionDraft
 from app.models.alert import Alert
-from app.models.course import Course, Resource, pack_course_code, unpack_course_code
+from app.models.course import Course, Resource, ResourceProgress, pack_course_code, unpack_course_code
 from app.models.graph import GraphLink, GraphNode, KpDetail, LearningPath
-from app.models.intervention import TeacherClassDashboard
+from app.models.intervention import Report, TeacherClassDashboard
 from app.models.practice import AnswerRecord, PracticeSession
 from app.models.question import Question
-from app.models.tag import Tag
+from app.models.tag import QuestionTagLink, ResourceTagLink, Tag
 from app.models.user import User
 from app.models.user_course import UserCourse
 from app.services.account_import import norm_header, rows_from_upload
@@ -40,21 +45,29 @@ ROSTER_ALIASES = {
     "name": ["姓名", "名字", "name", "真实姓名"],
 }
 
-# 有外键指向 courses 的内容。有任意一条就不能删课（成员关系没有外键，删课时单独清掉）。
-_CONTENT_COUNTERS = (
-    ("资源", Resource, Resource.course_id),
-    ("题目", Question, Question.course_id),
-    ("图谱节点", GraphNode, GraphNode.course_id),
-    ("图谱连线", GraphLink, GraphLink.course_id),
-    ("知识点详情", KpDetail, KpDetail.course_id),
-    ("学习路径", LearningPath, LearningPath.course_id),
-    ("练习", PracticeSession, PracticeSession.course_id),
-    ("答题记录", AnswerRecord, AnswerRecord.course_id),
-    ("答疑会话", ChatSession, ChatSession.course_id),
-    ("出题草稿", STQuestionDraft, STQuestionDraft.course_id),
-    ("预警", Alert, Alert.course_id),
-    ("标签", Tag, Tag.course_id),
-)
+def _content_counters():
+    """按 course_id 直接归属该课程的表，**删除顺序即本元组顺序**（先子后父）。
+
+    - ``answer_records`` 同时引用 ``practice_sessions`` 与 ``questions``，必须先删；
+    - ``resource_progress`` / ``resource_tags`` / ``question_tags`` 属于第二级，
+      在 :func:`_purge_course_rows` 里按一级表的主键集合处理。
+
+    这个元组只用于「删除」，不再用于判定「能不能删」—— 判据已改为成员数量。
+    """
+    return (
+        ("答题记录", AnswerRecord, AnswerRecord.course_id),
+        ("学习路径", LearningPath, LearningPath.course_id),
+        ("练习", PracticeSession, PracticeSession.course_id),
+        ("答疑会话", ChatSession, ChatSession.course_id),
+        ("出题草稿", STQuestionDraft, STQuestionDraft.course_id),
+        ("预警", Alert, Alert.course_id),
+        ("资源", Resource, Resource.course_id),
+        ("题目", Question, Question.course_id),
+        ("图谱连线", GraphLink, GraphLink.course_id),
+        ("图谱节点", GraphNode, GraphNode.course_id),
+        ("知识点详情", KpDetail, KpDetail.course_id),
+        ("标签", Tag, Tag.course_id),
+    )
 
 
 class CourseAdminError(Exception):
@@ -110,18 +123,19 @@ def _count(db: Session, model, column, course_id: str) -> int:
     return int(db.query(func.count()).select_from(model).filter(column == course_id).scalar() or 0)
 
 
+def member_count(db: Session, course_id: str) -> int:
+    return int(db.query(func.count()).select_from(UserCourse)
+               .filter(UserCourse.course_id == course_id).scalar() or 0)
+
+
 def content_blockers(db: Session, course_id: str) -> list[tuple[str, int]]:
-    found = [(label, n) for label, model, col in _CONTENT_COUNTERS if (n := _count(db, model, col, course_id))]
-    papers = int(
-        db.query(func.count())
-        .select_from(TeacherClassDashboard)
-        .filter(func.json_extract(TeacherClassDashboard.data_json, "$.courseId") == course_id)
-        .scalar()
-        or 0
-    )
-    if papers:
-        found.append(("试卷或教师端记录", papers))
-    return found
+    """删除前的前置阻碍 —— 现在唯一的阻碍是「课程里还有成员」。
+
+    保留函数名与返回形状（[(说明, 数量)]），调用方（智能助手 preview 工具）
+    不用改契约；语义已从「有多少教学内容」变成「有多少成员」。
+    """
+    members = member_count(db, course_id)
+    return [("成员", members)] if members else []
 
 
 def _member_counts(db: Session) -> tuple[dict[str, int], dict[str, int]]:
@@ -277,6 +291,12 @@ def update_course(
             old_class if class_no is None else class_no,
         )
         course.code = pack_course_code(code, class_no)
+    # 负责人「更换 / 添加」都走这里：
+    # - 课程无负责人（owner_id 为空，通常是成员被清空后退绑）→ 这是「添加」；
+    # - 已有负责人且换了人 → 这是「更换」，旧负责人仍是成员（不会被自动移出）。
+    # 两种情况都保证新负责人是课程成员，教师端才能看到这门课
+    # （教师端权限校验按 user_courses.role_in_course == "teacher" 判定）。
+    # 传空字符串 == 不修改负责人；要清空负责人只能通过退绑全部成员。
     if teacher_user_id is not None and teacher_user_id.strip() and teacher_user_id.strip() != course.owner_id:
         teacher = _teacher(db, teacher_user_id)
         course.owner_id = teacher.user_id
@@ -285,15 +305,146 @@ def update_course(
     return _one(db, course)
 
 
+def _purge_course_rows(db: Session, course_id: str) -> dict[str, int]:
+    """删除该课程的全部关联行，返回 {中文表名: 删除条数}。
+
+    顺序严格「先子后父」，因为 ``PRAGMA foreign_keys = ON``：
+    1. 先取一级表（按 course_id 归属）的主键集合；
+    2. 删二级表（依赖一级主键的）：resource_progress / resource_tags / question_tags；
+    3. 删 chat_messages（依赖 chat_sessions）；
+    4. 删一级表本身；
+    5. courses 行由 :func:`delete_course` 删除。
+    """
+    stats: dict[str, int] = {}
+
+    # ① 一级表的主键集合（二级表删完前不能删它们）
+    res_ids = [rid for (rid,) in db.query(Resource.res_id).filter(Resource.course_id == course_id).all()]
+    q_ids = [qid for (qid,) in db.query(Question.q_id).filter(Question.course_id == course_id).all()]
+    tag_ids = [tid for (tid,) in db.query(Tag.tag_id).filter(Tag.course_id == course_id).all()]
+    session_ids = [sid for (sid,) in db.query(ChatSession.session_id)
+                   .filter(ChatSession.course_id == course_id).all()]
+
+    # ② 二级表：依赖 resources / questions / tags
+    def _del(Model, column, ids, label):
+        total = 0
+        for start in range(0, len(ids), 500):      # SQLite 绑定变量上限，分批
+            chunk = ids[start:start + 500]
+            total += int(db.query(Model).filter(column.in_(chunk))
+                         .delete(synchronize_session=False) or 0)
+        if total:
+            stats[label] = int(stats.get(label, 0)) + total
+
+    _del(ResourceProgress, ResourceProgress.res_id, res_ids, "资源学习进度")
+    _del(ResourceTagLink, ResourceTagLink.res_id, res_ids, "资源标签")
+    _del(QuestionTagLink, QuestionTagLink.q_id, q_ids, "题目标签")
+    # 反向：其它课程的资源/题目若挂了本课程的标签，也要先摘掉链接，标签才能删
+    _del(ResourceTagLink, ResourceTagLink.tag_id, tag_ids, "跨课资源标签")
+    _del(QuestionTagLink, QuestionTagLink.tag_id, tag_ids, "跨课题目标签")
+
+    # ③ 消息依赖会话
+    _del(ChatMessage, ChatMessage.session_id, session_ids, "会话消息")
+
+    # ④ 一级表
+    for label, model, column in _content_counters():
+        n = int(db.query(model).filter(column == course_id)
+                .delete(synchronize_session=False) or 0)
+        if n:
+            stats[label] = int(stats.get(label, 0)) + n
+
+    # ⑤ 教师端聚合数据与学情报告：无外键，靠 JSON 里的 courseId 关联
+    n = int(db.query(TeacherClassDashboard)
+            .filter(func.json_extract(TeacherClassDashboard.data_json, "$.courseId") == course_id)
+            .delete(synchronize_session=False) or 0)
+    if n:
+        stats["教师端记录"] = n
+
+    n = int(db.query(Report)
+            .filter(func.json_extract(Report.detail_json, "$.meta.courseId") == course_id)
+            .delete(synchronize_session=False) or 0)
+    if n:
+        stats["学情报告"] = n
+
+    return stats
+
+
 def delete_course(db: Session, course_id: str) -> dict:
+    """删除课程及其全部关联数据。
+
+    前置条件（2026-10-26 起的口径）：**课程内不能有任何成员**。
+    有成员时拒绝并提示先移出 —— 以前是「有教学内容就拒绝」，已反转。
+
+    磁盘资源文件与向量库切片不在这里删（DB 事务不该管文件系统）：
+    调用方在 commit 成功后调用 :func:`purge_course_assets`。
+    """
     course = _get_course(db, course_id)
-    blocked = content_blockers(db, course.course_id)
-    if blocked:
-        detail = "、".join(f"{label} {n}" for label, n in blocked)
-        raise CourseAdminError(f"课程仍有教学内容，不能删除（{detail}）。可以先移出学生；已有章节、资源和题目需由教师端处理。")
-    removed = db.query(UserCourse).filter(UserCourse.course_id == course.course_id).delete(synchronize_session=False)
+    members = member_count(db, course.course_id)
+    if members:
+        raise CourseAdminError(
+            f"课程里还有 {members} 名成员，不能删除。请先移出成员，再删除课程。"
+        )
+    data = {
+        "courseId": course.course_id,
+        "name": course.name,
+        "membersRemoved": 0,
+        "purged": _purge_course_rows(db, course.course_id),
+    }
+    # 兜底：正常情况下成员数已为 0，这里只清掉可能的并发残留。
+    removed = int(db.query(UserCourse).filter(UserCourse.course_id == course.course_id)
+                  .delete(synchronize_session=False) or 0)
+    if removed:
+        data["membersRemoved"] = removed
     db.delete(course)
-    return {"courseId": course.course_id, "name": course.name, "membersRemoved": int(removed or 0)}
+    db.flush()
+    return data
+
+
+def course_resource_urls(db: Session, course_id: str) -> dict[str, str]:
+    """取该课程资源的 ``{res_id: url}`` —— 必须在删库**之前**调用。
+
+    行删掉之后就查不到 URL，磁盘文件也就无法反解路径了，
+    所以删除流程是：先取 URL 表 → 删库并 commit → 用 URL 表清磁盘/向量库。
+    """
+    return {
+        rid: (url or "")
+        for rid, url in db.query(Resource.res_id, Resource.url)
+        .filter(Resource.course_id == course_id).all()
+    }
+
+
+def purge_course_assets(course_id: str, url_map: dict[str, str] | None = None) -> dict:
+    """清理课程在 **数据库之外** 的痕迹：磁盘资源文件 + 向量库切片。
+
+    必须在 :func:`delete_course` 的 DB commit **成功之后** 调用 ——
+    顺序反过来的话，DB 回滚会留下「数据还在、文件没了」的坏状态。
+    本函数自身失败不影响已提交的删除（只留孤儿文件，不破坏一致性），
+    但会把错误放进返回值供调用方记录。
+    """
+    from app import media_utils
+
+    out: dict = {"resourceFiles": 0, "ragChunks": 0, "errors": []}
+
+    # ① 磁盘资源文件
+    for url in (url_map or {}).values():
+        try:
+            path = media_utils.url_to_path(url)
+            if path is None:
+                continue
+            if path.is_file():
+                path.unlink(missing_ok=True)
+                out["resourceFiles"] += 1
+            media_utils.cleanup_empty_dirs(path)
+        except Exception as exc:  # noqa: BLE001 - 单个文件失败不影响其它
+            out["errors"].append(f"资源文件清理失败：{exc}")
+
+    # ② 向量库切片
+    try:
+        from app.agent_st.rag.store import ChunkStore
+
+        out["ragChunks"] = int(ChunkStore().delete_course(course_id) or 0)
+    except Exception as exc:  # noqa: BLE001
+        out["errors"].append(f"向量库清理失败：{exc}")
+
+    return out
 
 
 def list_members(db: Session, course_id: str) -> dict:
@@ -427,17 +578,14 @@ def unbind_classes(db: Session, course_id: str, class_keys: list[str]) -> dict:
 def unbind_member(db: Session, course_id: str, user_id: str) -> dict:
     """退绑一名成员。
 
-    负责人（owner）**可以退绑**，这是刻意放开的一条路：以前这里直接拒绝，
-    而 update_course 又只能「换成另一位教师」、无法设为「无负责人」，
-    于是出现死锁 —— 教师自己建的课（owner 就是他）既换不掉也移不出，
-    管理端永远删不掉这门课。
+    负责人（owner）**可以退绑**：以前这里直接拒绝，而 update_course 又只能
+    「换成另一位教师」、无法设为「无负责人」，于是出现死锁 —— 教师自己建的课
+    （owner 就是他）既换不掉也移不出，管理端永远删不掉这门课。
 
-    软退绑语义：只删 user_courses 这一行，courses.owner_id 保留原值。
-    课程因此处于「待指派负责人」状态：管理员仍能在编辑里改负责人，
-    也可以直接删课（delete_course 会清掉剩余成员关系）。
-    代价是该教师此刻已不再是该课成员，教师端权限校验
-    （teacher.py 按 user_courses.role_in_course == "teacher" 判定）会拒绝他 ——
-    这正是「退绑生效」的预期表现。
+    退绑只删 ``user_courses`` 这一行；**当课程退到没有任何成员时，
+    ``courses.owner_id`` 一并置空**（见 :func:`_unbind`），课程回到「无负责人」状态。
+    该教师此刻已不是该课成员，教师端权限校验（teacher.py 按
+    ``user_courses.role_in_course == "teacher"`` 判定）会拒绝他 —— 这正是退绑生效的表现。
     """
     course = _get_course(db, course_id)
     user = db.query(User).filter(User.user_id == user_id).first()
@@ -449,9 +597,11 @@ def unbind_member(db: Session, course_id: str, user_id: str) -> dict:
 def _unbind(db: Session, course: Course, users: list[User]) -> dict:
     """退绑一批成员，逐个删 user_courses 行。
 
-    负责人也照删（软退绑，见 unbind_member 的说明）——课程因此进入
-    「待指派负责人」状态，但 courses.owner_id 保留原值，管理员之后仍可改派。
-    ownerUnbound 单独回报，用来告诉调用方这次退绑里有没有动到负责人。
+    负责人也照删，并且**当课程退到没有任何成员时，把 ``courses.owner_id`` 一并置空**
+    （2026-10-26 起）：课程回到「无负责人」状态，而不再是「待指派原负责人」。
+    这样 admin 列表/编辑界面可以直接显示「无负责人」，教师端也不会再看到这门课。
+
+    ``ownerUnbound`` 报告这次是否动到了负责人；``ownerCleared`` 报告 owner_id 是否已置空。
     """
     removed = 0
     owner_unbound = False
@@ -464,10 +614,23 @@ def _unbind(db: Session, course: Course, users: list[User]) -> dict:
             removed += int(n)
         if user.user_id == course.owner_id:
             owner_unbound = True
+
+    # 删完这批之后课程里还剩几个人（autoflush 关闭，先 flush 让计数看到本次删除）
+    db.flush()
+    owner_cleared = False
+    remaining = member_count(db, course.course_id)
+    if remaining == 0 and (course.owner_id or "").strip():
+        course.owner_id = ""
+        course.teacher = ""
+        owner_cleared = True
+        db.flush()
+
     return {
         "courseId": course.course_id,
         "removed": removed,
         "ownerUnbound": owner_unbound,
+        "ownerCleared": owner_cleared,
+        "memberCount": remaining,
     }
 
 

@@ -40,9 +40,10 @@ const AdminCourses = {
       const content = (c.chapters || c.knowledgePoints || c.resources || c.questions)
         ? `${c.chapters || 0} 章 · ${c.knowledgePoints || 0} 知识点<br>${c.resources || 0} 资源 · ${c.questions || 0} 题`
         : '空课程';
-      // ownerId 还在但课程里已没有教师成员 —— 说明负责人已退绑（软退绑），
-      // 课程处于「待指派负责人」状态，此时可以直接删除。
-      const pendingOwner = c.ownerId && !(c.teacherCount || 0);
+      // 需求（2026-10-26）：课程没有任何成员时不再显示「原负责人 / 待指派」，
+      // 而是直接显示「无负责人」。后端在退绑到 0 人时已把 owner_id 置空，
+      // 这里再用 teacherCount 兜一次底（防止旧数据残留 owner_id）。
+      const noOwner = !(c.teacherCount || 0);
       return `<tr>
         <td>
           <b>${U.esc(c.name)}</b>
@@ -54,8 +55,9 @@ const AdminCourses = {
             <button class="btn btn--xs btn--danger" type="button" data-act="del" data-course="${U.esc(c.courseId)}">删除</button>
           </div>
         </td>
-        <td style="white-space:nowrap">${U.esc(c.teacher || '—')}<div class="mono fz-11 t-dim">${U.esc(c.ownerUsername || '')}</div>
-          ${pendingOwner ? '<div class="badge badge--warn" style="margin-top:4px">待指派负责人</div>' : ''}</td>
+        <td style="white-space:nowrap">${noOwner
+          ? '<span class="t-dim">无负责人</span>'
+          : `${U.esc(c.teacher || '—')}<div class="mono fz-11 t-dim">${U.esc(c.ownerUsername || '')}</div>`}</td>
         <td style="white-space:nowrap">学生 ${c.studentCount || 0}<div class="t-dim fz-12">教师 ${c.teacherCount || 0}</div></td>
         <td class="fz-12">${content}</td>
         <td style="white-space:nowrap"><span class="mono fz-11">${U.esc(c.inviteCode || '—')}</span>
@@ -125,7 +127,15 @@ const AdminCourses = {
         return;
       }
       const isEdit = !!course;
-      const options = teachers.map(t =>
+      // 需求（2026-10-26）：课程没有负责人时（成员被清空后 owner_id 已置空），
+      // 编辑界面显示「无负责人」，并允许在这里**添加**一位负责人；
+      // 已有负责人时选中即为「更换」。保存后新负责人会成为课程成员，
+      // 教师端登录即可在课程列表里看到这门课。
+      const hasOwner = !!(course && course.ownerId);
+      const ownerOptions = (isEdit && !hasOwner)
+        ? `<option value="" selected>无负责人（请选择教师以指派）</option>`
+        : '';
+      const options = ownerOptions + teachers.map(t =>
         `<option value="${U.esc(t.userId)}"${course && course.ownerId === t.userId ? ' selected' : ''}>${U.esc(t.name)}（${U.esc(t.username)}）</option>`
       ).join('');
       const classValues = AdminCourses.classChoices(students, course && course.classNo);
@@ -155,7 +165,9 @@ const AdminCourses = {
             </label>
             <label class="stack" style="gap:4px"><span class="fz-12 t-dim">课程负责人</span>
               <select class="select" id="cTeacher">${options}</select>
-              <span class="fz-12 t-dim">负责人会成为这门课的授课教师，并在教师端看到它。更换负责人只是新增一位授课教师，不会把原教师移出课程；要把原教师移出，请到「成员」里勾选后移出。</span>
+              <span class="fz-12 t-dim">${isEdit && !hasOwner
+                ? '这门课当前没有负责人。选择一位教师即可指派，保存后该教师登录教师端就能看到这门课。'
+                : '负责人会成为这门课的授课教师，并在教师端看到它。更换负责人只是新增一位授课教师，不会把原教师移出课程；要把原教师移出，请到「成员」里勾选后移出。'}</span>
             </label>
           </form>`,
         footer: `<button class="btn btn--primary" id="cGo" type="button">${isEdit ? '保存' : '创建'}</button><button class="btn" data-close>取消</button>`,
@@ -172,7 +184,9 @@ const AdminCourses = {
               Toast.warn('请填写课程名称');
               return;
             }
-            if (!payload.teacherUserId) {
+            // 新建课程必须指定负责人；编辑时允许留空（表示这门课暂无负责人，
+            // 不能因为下拉里选了「无负责人」就拦住保存）。
+            if (!payload.teacherUserId && !isEdit) {
               Toast.warn('请选择课程负责人');
               return;
             }
@@ -196,30 +210,24 @@ const AdminCourses = {
   },
 
   confirmDelete(course) {
-    const blocked = (course.chapters || 0) + (course.knowledgePoints || 0) + (course.resources || 0) + (course.questions || 0);
+    const memberCount = (course.studentCount || 0) + (course.teacherCount || 0);
+    // 需求（2026-10-26）：取消「输入课程名」二次确认，点删除直接删。
+    // 判断依据也从「有无教学内容」改为「有无成员」—— 有成员时后端会拒绝。
     Modal.open({
       title: '删除课程',
       closeOnBackdrop: false,
       body: `
         <div class="stack" style="gap:12px">
-          <div class="callout ${blocked ? 'callout--warn' : 'callout--danger'}">${icon('alert')}
-            <div>${blocked
-              ? '这门课已经有章节、资源或题目。系统会拒绝删除，避免清掉教师和学生正在使用的内容。'
-              : '只删除还没有教学内容的空课程，并同时移出全部成员。已有的练习、资源和题库不会被这步清掉；若库里仍有学习记录，删除会被拒绝。'}
+          <div class="callout ${memberCount ? 'callout--warn' : 'callout--danger'}">${icon('alert')}
+            <div>${memberCount
+              ? `这门课还有 ${memberCount} 名成员（学生 ${course.studentCount || 0} · 教师 ${course.teacherCount || 0}）。系统会拒绝删除，请先到「成员」里把成员移出。`
+              : '这门课已无任何成员。删除会一并清掉它的章节、资源、题目、学习记录、答疑会话与报告，<b>不可恢复</b>。'}
             </div>
           </div>
-          <label class="stack" style="gap:4px">
-            <span class="fz-12 t-dim">请输入课程名称「${U.esc(course.name)}」以确认</span>
-            <input class="input" id="cDelName" autocomplete="off">
-          </label>
         </div>`,
       footer: `<button class="btn btn--danger" id="cDelGo" type="button">删除</button><button class="btn" data-close>取消</button>`,
       onMount(ov, close) {
         U.$('#cDelGo', ov).addEventListener('click', () => {
-          if (U.$('#cDelName', ov).value.trim() !== course.name) {
-            Toast.warn('课程名称不一致');
-            return;
-          }
           const btn = U.$('#cDelGo', ov);
           btn.disabled = true;
           API.admin.deleteCourse(course.courseId).then(() => {
@@ -264,13 +272,14 @@ const AdminCourses = {
         const meta = () => {
           const latest = AdminCourses.find(course.courseId) || course;
           classNo = latest.classNo || '';
-          // ownerBound=false 说明负责人已退绑但课程还记着他（软退绑），提示管理员可以去删课了
-          const pending = meta2 && meta2.ownerBound === false && meta2.ownerId;
+          // 课程已无任何成员（退绑到 0 人时后端会把 owner_id 置空）→ 显示「无负责人」，
+          // 不再提示「原负责人已退绑」，也不再显示黄色待指派标记。
+          const noOwner = !(latest.teacherCount || 0);
           U.$('#courseBindMeta', ov).textContent =
             `${latest.name} · 学生 ${latest.studentCount || 0} 人 · 教师 ${latest.teacherCount || 0} 人` +
             (classNo ? ` · 教学班 ${classNo}` : ' · 未填教学班号') +
             (latest.inviteCode ? ` · 邀请码 ${latest.inviteCode}` : '') +
-            (pending ? ` · 待指派负责人（原负责人 ${meta2.ownerName || meta2.ownerId} 已退绑，可直接删除本课程）` : '');
+            (noOwner ? ' · 无负责人（可直接删除本课程，或到「编辑」里指派负责人）' : '');
         };
         const setTab = () => {
           U.$$('#courseBindTabs button', ov).forEach(btn => {
@@ -402,12 +411,13 @@ const AdminCourses = {
             const tip = `将移出 ${targets.length} 人：${names.join('、')}` +
               (targets.length > names.length ? ` 等 ${targets.length} 人` : '') +
               '。移出只取消成员关系，不删除学习记录。' +
-              (hasOwner ? '\n\n其中包含课程负责人。移出后这门课进入「待指派负责人」状态，可以直接删除课程。' : '');
+              (hasOwner ? '\n\n其中包含课程负责人。若移出后课程一个成员都不剩，负责人会被清空，课程变为「无负责人」，此时可以直接删除课程。' : '');
             if (!window.confirm(tip)) return;
             bulk.disabled = true;
             API.admin.unbindMembers(course.courseId, targets).then(res => {
               const n = (res && res.removed) || 0;
-              Toast.ok(`已移出 ${n} 人`, hasOwner ? '课程现为「待指派负责人」，可直接删除' : '');
+              const cleared = res && res.ownerCleared;
+              Toast.ok(`已移出 ${n} 人`, cleared ? '课程已无负责人，可直接删除' : '');
               picked = new Set();
               reload();
             }).catch(err => {
@@ -564,7 +574,7 @@ const AdminCourses = {
     const allPicked = members.length > 0 && members.every(m => picked.has(m.userId));
     return `
       <div class="stack" style="gap:12px">
-        <div class="callout callout--info">${icon('info')}<div>勾选若干成员后可一次移出课程。移出只取消成员关系，不删除已有的学习记录；勾选「负责人」也可以移出，移出后这门课进入「待指派负责人」状态，之后就能直接删除。</div></div>
+        <div class="callout callout--info">${icon('info')}<div>勾选若干成员后可一次移出课程。移出只取消成员关系，不删除已有的学习记录；勾选「负责人」也可以移出，若移出后课程一个成员都不剩，负责人会被清空、课程变为「无负责人」，之后就能直接删除（删除会连带清理该课程的全部数据）。</div></div>
         <div class="row" style="gap:8px;flex-wrap:wrap;align-items:center">
           <button class="btn btn--sm" id="memberPickAll" type="button">${allPicked ? '取消全选' : '全选'}</button>
           <span class="fz-12 t-dim" id="memberPickCount">已选 ${picked.size} 人</span>
