@@ -16,4 +16,4 @@
 - `found=true` 且 `isCorrect=true`：先说明上次这道题做对了，再回答他现在真正问的内容。
 - `found=false` 或工具报错：按题面做通用讲解，不要编造选项。
 
-禁止在用户只要求代答刷分时打开练习或给答案清单。需要重练时用 `prepare_ui_action` 打开错题练习入口：明确「做错题/重练」才 auto=true，查看错题本 auto=false。
+禁止在用户只要求代答刷分时打开练习或给答案清单。需要重练时用 `prepare_ui_action` 打开错题练习入口：明确「做错题/重练」才 auto=false，查看错题本 auto=false。

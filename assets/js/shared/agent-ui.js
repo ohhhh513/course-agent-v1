@@ -586,7 +586,7 @@ const AgentUI = (() => {
       if (!job) return false;
       if (job.status === 'running' || job.status === 'starting' || job.status === 'stopping') {
         if (job.status === 'running' || job.status === 'stopping') this.paintSlot(job);
-        else if (ctx && ctx.auto) this.beginGenerate(job);
+        else if (ctx && ctx.confirmed) this.beginGenerate(job);
         else {
           job.status = 'error';
           job.error = '没有找到这条出题操作对应的预览记录，为避免重复出题，本次没有重新生成。请到题目草稿箱查看已保存草稿；如需新题，请重新提出出题请求。';
@@ -986,26 +986,28 @@ const AgentUI = (() => {
 
   async function apply(plan, options = {}) {
     if (!plan || !plan.id || !plan.target) return false;
-    // 自动跳转只允许「用户本轮已确认打开该界面」的计划；未确认的入口只能靠点击按钮执行。
-    if (options.auto && plan.auto !== true) return false;
-    if (running || (options.auto && executed.has(plan.id))) return false;
+    // 只信任确认按钮调用方的标记，模型或历史计划中的 auto/confirmed 字段均不授权。
+    if (options.auto || options.confirmed !== true) return false;
+    if (running) return false;
     const snapshot = { role: role(), userId: userId(), course: currentCourse(), view: Router.current, login: loginId() };
     if (plan.role !== snapshot.role || plan.userId !== snapshot.userId || (plan.role !== 'admin' && plan.courseId !== snapshot.course)) {
       Toast.warn('操作属于其他账号或课程，请在当前上下文重新提问'); return false;
     }
-    if (options.auto && Router.current !== options.fromView) return false;
+    if (options.fromView && Router.current !== options.fromView) return false;
     if (document.querySelector('.overlay [data-agent-dirty="1"], .view.is-active form [data-agent-dirty="1"], .view.is-active .ge-detail.open [data-agent-dirty="1"]')) {
       Toast.warn('当前有未保存内容，请先保存或关闭，再点击操作入口'); return false;
     }
     running = true;
-    const ctx = { files: options.files || [], allowCourseChange: false, targetView: snapshot.view, auto: options.auto === true };
+    const ctx = { files: options.files || [], allowCourseChange: false, targetView: snapshot.view, confirmed: options.confirmed === true };
     ctx.guard = () => role() === snapshot.role && userId() === snapshot.userId && loginId() === snapshot.login &&
-      (ctx.allowCourseChange || currentCourse() === snapshot.course) && Router.current === ctx.targetView;
+      (ctx.allowCourseChange || currentCourse() === snapshot.course) && Router.current === ctx.targetView &&
+      (!options.confirmationGuard || options.confirmationGuard());
     try {
       const spec = (await load()).find(item => item.id === plan.target && item.role === snapshot.role);
+      if (!ctx.guard()) return false;
       if (!spec || Object.keys(plan.values || {}).some(key => !spec.fields[key])) throw new Error('此操作入口或字段不受支持');
       if (spec.entity && (!plan.object || !plan.object.id)) throw new Error('尚未确定目标对象');
-      if (spec.execute && (!reportExecutors[spec.execute] || plan.auto !== true)) throw new Error('生成内容需要明确的操作请求');
+      if (spec.execute && (!reportExecutors[spec.execute] || options.confirmed !== true)) throw new Error('生成内容需要点击确认');
       const isReport = spec.execute === 'student-report-create' || spec.execute === 'teacher-report-create';
       const reportKey = isReport ? 'agent-report:' + snapshot.login + ':' + snapshot.userId + ':' + plan.id : '';
       if (reportKey && (executed.has(plan.id) || sessionStorage.getItem(reportKey))) {

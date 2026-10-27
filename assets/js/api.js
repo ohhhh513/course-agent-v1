@@ -1071,5 +1071,21 @@ window.API = (function () {
     join: (p) => request('POST', '/course/join', p),
   };
 
-  return { config, request, download, setActiveCourse, course, auth, admin, adminAgent, graph, student: stu, ai, practice, teacher: tea, analysis, question, intervention, report };
+  const skills = {
+    list: courseId => request('GET', '/skills', null, null, { courseId }),
+    teacher: {
+      list: courseId => request('GET', '/teacher/skills', null, null, { courseId }),
+      create: (body, courseId) => request('POST', '/teacher/skills', body, null, { courseId }),
+      save: (id, body, courseId) => request('PUT', '/teacher/skills/' + encodeURIComponent(id), body, null, { courseId }),
+      trial: (id, body, courseId) => request('POST', '/teacher/skills/' + encodeURIComponent(id) + '/trial', body, null, { courseId }),
+      publish: (id, revision, courseId) => request('POST', '/teacher/skills/' + encodeURIComponent(id) + '/publish', { revision }, null, { courseId }),
+      disable: (id, revision, courseId) => request('POST', '/teacher/skills/' + encodeURIComponent(id) + '/disable', { revision }, null, { courseId }),
+    },
+    admin: {
+      list: () => request('GET', '/admin/skills'),
+      disable: (id, revision) => request('POST', '/admin/skills/' + encodeURIComponent(id) + '/disable', { revision }),
+    },
+  };
+
+  return { config, request, download, setActiveCourse, course, auth, admin, adminAgent, graph, student: stu, ai, practice, teacher: tea, analysis, question, intervention, report, skills };
 })();

@@ -35,7 +35,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--case', choices=CASES, default='teacher-file')
     args = parser.parse_args()
-    username, question, target, auto = CASES[args.case]
+    username, question, target, explicit_request = CASES[args.case]
     real = REPO / 'backend/app/data/course_agent.db'
     original = sha256(real.read_bytes()).hexdigest()
     with tempfile.TemporaryDirectory(prefix='ui-live-', ignore_cleanup_errors=True) as temp:
@@ -81,12 +81,14 @@ def main():
         print('操作调用：', json.dumps([c for c in calls if c['name'] == 'prepare_ui_action'], ensure_ascii=False))
         print('回答原文：\n' + ''.join(parts))
         assert not errors, errors
-        matching = [plan for plan in plans if plan['target'] == target and plan['auto'] == auto]
+        # 无论本轮是否明确要求打开，返回的入口都必须待用户点击确认。
+        assert all(plan['auto'] is False for plan in plans), '旧明确请求不能再触发自动跳转'
+        matching = [plan for plan in plans if plan['target'] == target]
         if target is None:
             assert not plans, ('不能为代答刷分请求创建界面操作计划', plans)
             assert all(c['name'] not in ('prepare_ui_action', 'suggest_action') for c in calls), calls
         else:
-            assert matching, (target, auto, plans)
+            assert matching, (target, explicit_request, plans)
         if attachment:
             assert matching[-1]['attachments'][0]['attachmentId'] == attachment['attachment_id']
         with p.SessionLocal() as db:
@@ -99,7 +101,7 @@ def main():
         from app.database import engine
         engine.dispose()
     assert sha256(real.read_bytes()).hexdigest() == original
-    print('PASS 正确入口、auto意图、历史持久化和业务库只读；真实数据库未改变')
+    print('PASS 正确入口、统一待确认、历史持久化和业务库只读；真实数据库未改变')
 
 
 if __name__ == '__main__':

@@ -78,6 +78,7 @@ def main():
         def ok(ctx, target, **kw):
             result = prepare_action(ctx, target, **kw)
             assert result.get('ok'), (target, result)
+            assert result['ui_action']['auto'] is False and '确认' in result['note'], '所有入口只准备确认，不授权自动执行'
             assert any(entry.get('kind') == 'ui_action' and entry['plan'] == result['ui_action'] for entry in ctx.tool_log)
             return result['ui_action']
         def denied(ctx, target, **kw):
@@ -86,7 +87,7 @@ def main():
             assert 'ui_action' not in result
 
         plan = ok(student, 'student.course.join', values={'inviteCode': 'TEST123'}, auto=True)
-        assert plan['values']['inviteCode'] == 'TEST123' and plan['auto']
+        assert plan['values']['inviteCode'] == 'TEST123'
         ok(student, 'student.messages')
         ok(student, 'student.practice.mode.order', auto=True)
         ok(student, 'student.practice.mode.wrong', auto=True)
@@ -96,9 +97,10 @@ def main():
             'kpIds': [knowledge.id], 'count': 6, 'types': ['单选', '填空'], 'difficulty': 3})
         assert created['label'] == '预览题目' and created['values']['types'] == ['single', 'blank']
         ok(student, 'student.practice.chapter', object_id=chapter.id, auto=True)
-        denied(student, 'student.report.create', auto=False)
-        denied(teacher, 'teacher.report.create', auto=False)
-        denied(teacher, 'teacher.question.create', auto=False, values={'kpIds': [knowledge.id]})
+        # 新策略：生成入口也能先准备确认卡；只准备不能写业务数据（末尾状态快照校验）。
+        ok(student, 'student.report.create', auto=False)
+        ok(teacher, 'teacher.report.create', auto=False)
+        ok(teacher, 'teacher.question.create', auto=False, values={'kpIds': [knowledge.id]})
         denied(teacher, 'teacher.question.create', auto=True)
         denied(student, 'teacher.question.create', auto=True, values={'kpIds': [knowledge.id]})
         denied(student, 'teacher.report.create', auto=True)

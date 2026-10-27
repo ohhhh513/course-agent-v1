@@ -25,6 +25,7 @@ const AdminChat = AgentChatView.create({
     { id: 'kb', label: '知识库体检', icon: 'network', hint: '想看索引是否可用，还是该不该重建？', desc: '检索索引状态与是否需要重建' },
     { id: 'runtime', label: '平台运行', icon: 'shield', hint: '想看运行状态，还是核对顺序？', desc: '运行模式、数据量与异常时先查哪' },
   ],
+  customSkills: 'admin',
   // 根据平台实时汇总和管理员近期提问生成，并按关注主题调整顺序。
   recommended: () => Promise.all([
     API.adminAgent.recommendationContext().catch(() => null),

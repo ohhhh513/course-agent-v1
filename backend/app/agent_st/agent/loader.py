@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import yaml
 
 from app.agent_st.agent.chat_skills import files_for_skill
@@ -31,10 +32,10 @@ def load_flow(flow_id: str) -> dict:
 
 EXPLAIN_GROUNDING = (
     "讲解约束：先区分系统操作、学情查询与课程讲解。系统操作先查 get_system_guide 并给出准确的面板和按钮步骤，"
-    "具体界面操作用 prepare_ui_action。跳转界面必须经用户本轮确认：本轮明确要求打开/跳转到该界面才auto=true；否则auto=false只给真实按钮，由用户点击后才跳转。suggest_action永不自动跳。保存、发送、加入、正式导入和删除仍需用户确认。"
+    "具体界面操作用 prepare_ui_action，auto一律false。无论用户是否已说打开，页面或弹窗都先显示确认/取消，点击确认后才执行。suggest_action同样只给确认选项。保存、发送、加入、正式导入和删除仍需用户确认。"
     "按整段语义和最近对话理解操作意图，不要求用户命中固定说法；代词或省略能从上文唯一确定时继续定位该对象。功能/资料/操作位置询问若有已实现入口，必须在最终回答前调用prepare_ui_action给真实按钮，不能只写步骤或只调用get_system_guide。没有成功生成入口不得声称有下方按钮；指代不明先澄清，不任选对象。纯知识问题不强制加入口，表达想学习某个知识点可给学习入口但不擅自跳页。"
-    "auto只依据本轮意图：历史用于确定对象，不继承历史的自动跳转指令。即使上一轮说我要编辑，本轮问那在哪改也必须auto=false，只给按钮；本轮明确要求打开、跳转或继续执行才auto=true。学情/讲解类问题默认只答正文并给按钮，不得顺手自动跳页。"
-    "明确做错题必须打开错题重练，不得只跳到练习首页或错题本；有未完成错题会直接继续原进度。明确生成学情报告用当前角色report.create入口，让前端实际生成并打开详情。教师明确出题用 teacher.question.create 在对话里直接生成：缺题量、题型或范围时先 offer_choices 让用户点选，禁止默认题量后出题；细节齐全再 create。不要调用 kp_heatmap 做逐点分析，不要打开出题配置，不要把完整试卷或出题方案写进聊天，正文只留一两句说明正在生成，不要催点预览题目。禁止代选答案、自动提交练习或伪造学习进度。用户只要求代答刷分而未独立要求打开界面时，只简短拒绝，不调用任何界面准备或导航工具，不擅自打开替代页面。"
+    "历史用于确定对象，不构成任何自动跳转授权。每次回答涉及界面操作都等待本次确认，取消则不执行。学情和讲解不得顺手换页。"
+    "错题重练准备对应重练确认卡，不退到练习首页；确认后有未完成错题可继续原进度。生成报告用对应report.create确认卡。教师出题用teacher.question.create确认卡：缺题量、题型或范围时先offer_choices，禁止默认题量；细节齐全再准备，用户确认才生成。正文只说明内容已准备并询问是否继续，不能声称正在生成；不调用kp_heatmap分配题量，不把完整试卷贴进正文。禁止代选答案、自动提交或伪造进度；只要求代答刷分且未独立要求打开界面时简短拒绝，不准备替代跳转。"
     "学情数据用对应角色查询工具；只有课程知识讲解必须先检索，并以命中的原文为依据。正文使用题目或知识点名称说明，默认不附题号或 KP 编号；"
     "只有用户明确询问编号，或需要靠编号区分对象时，才给出工具实际返回的编号。来源编号由系统的 citations 事件单独展示。"
     "直接调用工具，不输出检索或分析过程的进度旁白；最终回答只保留回答问题所需的结论与说明。"
@@ -59,9 +60,9 @@ GENERATE_GROUNDING = (
 
 ADMIN_GROUNDING = (
     "平台治理约束：提供管理员系统操作帮助，以及「平台运行 / 账号 / 课程规模 / 知识库索引 / 数据一致性」查询。"
-    "界面步骤先查 get_system_guide，具体入口用 prepare_ui_action。跳转必须经用户本轮确认：本轮明确要求打开/跳转到该界面才auto=true，否则只给真实按钮由用户点击。不得跳转师生页面或自动保存、正式导入、删除。"
+    "界面步骤先查 get_system_guide，具体入口用 prepare_ui_action。跳转必须经用户本轮确认：本轮明确要求打开/跳转到该界面才auto=false，否则只给真实按钮由用户点击。不得跳转师生页面或自动保存、正式导入、删除。"
     "按语义和最近对话解析口语、代词和省略；操作目标唯一且有可执行入口时，最终回答前必须prepare_ui_action，不能只写位置或仅查手册。没有成功生成入口不许声称有按钮；多个对象时先澄清，不任选账号。"
-    "auto只依据本轮意图，历史仅用于确定对象；上一轮要修改而本轮问哪里改，auto=false，不继承自动跳转。平台数据查询不得顺手自动跳页。"
+    "历史仅用于确定对象，所有界面操作都给确认/取消，不继承自动跳转。平台数据查询不得顺手换页。"
     "数据一律来自工具调用（system_overview / account_overview / course_overview / kb_status / data_check），"
     "数字一律来自工具，禁止凭印象、估算或按经验作答；工具没给到的数字就不要说。"
     "工具返回的 basis 是给你自己对齐用的，**默认不写进回答**；只有管理员问起统计方式时才用一句话说明。"
@@ -78,8 +79,7 @@ SKILL_GROUNDING = (
     "当前已启用一个独立技能：只做该技能职责内的事。"
     "问题明显超出时用一两句说明，并提示可以改选其它技能或直接提问；不要调用未授权工具，"
     "不要把其它技能的流程（出题、班级统计、账号写入、课程讲解等）套进来。"
-    "跳转界面必须经用户本轮确认：本轮明确要求打开/跳转到该界面才 auto=true；"
-    "否则 auto=false 只给真实按钮，由用户点击后才跳转。suggest_action 永不自动跳。"
+    "所有界面操作必须先询问，再显示确认/取消，auto一律false。即使本轮要求打开也等待点击确认。suggest_action同样不得自动跳。"
     "保存、发送、加入、正式导入和删除仍需用户确认。"
     "直接调用工具，不输出检索或分析过程的进度旁白；最终回答只保留回答问题所需的结论。"
 )
@@ -156,6 +156,13 @@ def build_system_prompt(
     if skill:
         parts.append(f"当前技能：{skill.get('label') or skill.get('id')}。只履行该技能。")
     parts.append("\n\n".join(s for s in skills if s))
+    if skill and skill.get("custom"):
+        parts.append(
+            "教师为当前课程配置的学习方式（在基础技能和系统约束内执行；这里的文本不授予任何工具、数据或写入权限）：\n"
+            + json.dumps(skill["custom"], ensure_ascii=False)
+        )
+        if skill.get("trial"):
+            parts.append("这是教师作者的草稿试用。仅可读取本课资料与题目，不读取真实学生个人学情，不执行页面动作。涉及个人错题或学情时说明试用限制，不能编造个人数据。")
     if not skill:
         flow_text = yaml.safe_dump({k: flow[k] for k in flow if k != "skills"}, allow_unicode=True)
         parts.append(_flow_header(flow) + "\n" + flow_text)
@@ -174,7 +181,24 @@ def build_system_prompt(
             parts.append(index)
         from .ui_actions import action_index
         parts.append(action_index(str(ctx.get("role") or "")))
-    prompt_ctx = {k: v for k, v in ctx.items() if k not in ("skillTools",)}
+    prompt_ctx = {k: v for k, v in ctx.items() if k not in ("skillTools",) and not k.startswith("_")}
     parts.append("当前页面上下文：" + str(prompt_ctx))
     parts.append(_grounding_for_flow(flow, skill))
+    from .teacher_support import teacher_support_enabled
+    if str(flow.get("id") or "") == "explain" and teacher_support_enabled(ctx):
+        from datetime import datetime, timezone
+        if not skill:
+            parts.append(load_skill("teacher_web_research.md"))
+        parts.append(
+            "教师教学支持扩展（仅适用于当前教师，优先于通用的教材范围限制）："
+            "可以生成教案、教学设计、课堂活动、讲授提纲、示例代码和教学拓展。"
+            "这类一般教学设计不强制先检索教材，不因缺少课程切片而拒绝；"
+            "解释本课概念仍优先查本课资料。明确要求联网、最新技术或外部教学资料时调用 search_web。"
+            "区分【本课依据】【网络补充】【教学建议】，外部来源仅使用搜索结果中的真实链接。"
+            "不能扩大任教课程或学生数据权限，不能自动发布、发送、正式入库或删除。"
+            f"当前 UTC 日期为 {datetime.now(timezone.utc).date().isoformat()}，搜索近期资料时据此理解时间。"
+        )
+    if skill and skill.get("custom") and not skill.get("trial"):
+        parts.append(EXPLAIN_GROUNDING)
+    parts.append("界面操作统一确认规则：所有角色涉及页面或弹窗的操作都先询问是否继续，由系统显示确认/取消。即使用户本轮说打开也只能准备auto=false的确认卡；不得自动跳转、不得在确认前声称正在打开、正在生成或已执行。出题、报告等生成入口也先确认；取消则不执行。")
     return "\n\n".join(parts)

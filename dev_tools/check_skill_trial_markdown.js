@@ -1,0 +1,26 @@
+/* 试用回答复用真实聊天 Markdown 渲染；检查结构与 HTML 转义。 */
+'use strict';
+const fs = require('node:fs'), vm = require('node:vm'), assert = require('node:assert/strict');
+const esc = value => String(value ?? '').replace(/[&<>"']/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
+const context = vm.createContext({window:{},console,U:{esc}});
+vm.runInContext(fs.readFileSync('assets/js/shared/agent-chat.js','utf8'),context);
+context.AgentChatView=context.window.AgentChatView;
+vm.runInContext(fs.readFileSync('assets/js/shared/skill-manager.js','utf8'),context);
+const render=vm.runInContext('CourseSkillManager.messageHtml',context);
+const sample='## 队列的基本概念\n\n1. **先进先出**，在队尾 `rear` 入队。\n2. 在队头 `front` 出队。\n\n## 例题\n\n> 数组 A[0…5]，rear = 1、front = 5。\n\n- 出队只改 front\n- 入队只改 rear\n\n```text\n(rear + 1) % MaxSize\n```\n\n| 操作 | 指针 |\n| --- | --- |\n| 入队 | rear |';
+const html=render({role:'assistant',content:sample});
+for(const expected of ['class="md-h md-h2"','<strong>先进先出</strong>','<ol class="md-list">','<ul class="md-list">','<blockquote class="md-quote">','<code>rear</code>','<pre class="md-pre">','<table class="md-table">'])assert(html.includes(expected),expected);
+assert(!html.includes('## 队列')&&!html.includes('**先进先出**'));
+assert(html.includes('队列的基本概念')&&!html.includes('\uFFFD'));
+const attack='<img src=x onerror="alert(1)">\n\n<script>alert(1)</script>\n\n```html\n<svg onload=alert(1)>\n```\n\n> <img src=x onerror=alert(1)>';
+const escaped=render({role:'assistant',content:attack});
+assert(!/<(?:script|img|svg)\b/i.test(escaped));
+assert(escaped.includes('&lt;img')&&escaped.includes('&lt;script')&&escaped.includes('&lt;svg'));
+assert(escaped.includes('<blockquote class="md-quote">'));
+assert(render({role:'assistant',content:'>无空格的引用'}).includes('<blockquote class="md-quote">无空格的引用'));
+const user=render({role:'user',content:'## 我的原文\n**保留符号** <img src=x>'});
+assert(user.includes('is-plain')&&user.includes('## 我的原文')&&user.includes('**保留符号**'));
+assert(user.includes('&lt;img')&&!user.includes('<strong>'));
+assert.equal(context.AgentChatView.mdToHtml('<b>旧 HTML 消息</b>'),'<p><b>旧 HTML 消息</b></p>');
+console.log('[ok] 试用回答的标题、加粗、列表、代码、引用和表格按 Markdown 渲染，中文保持原样');
+console.log('[ok] 模型 HTML 与代码中的标签只显示为文字，用户问题保持原文，原聊天兼容行为保留');

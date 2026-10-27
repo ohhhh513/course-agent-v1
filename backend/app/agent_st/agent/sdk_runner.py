@@ -38,7 +38,7 @@ Event = dict
 
 # 注册工具（与 runtime 保持一致： import 即注册，逐个显式列出）
 from .tools import (admin_ops, analytics, bank, batch_draft, draft, plan, rag,  # noqa: E402,F401
-                    teacher_analytics, topic, validate, ui_actions)
+                    teacher_analytics, topic, validate, ui_actions, web_search, web_questions)
 
 _SDK_ERROR: str = ""
 try:  # 依赖缺失时不炸 import，交给 available() 判断
@@ -150,7 +150,7 @@ async def _run_async(message: str, flow_id: str, session_id: str, context: dict 
     extra["message"] = message
     if store.course_id:
         extra.setdefault("courseId", store.course_id)
-    skill, skill_tools, skill_err = bind_skill(flow, extra)
+    skill, skill_tools, skill_err = bind_skill(flow, extra, user_id=user_id or store.user_id, course_id=store.course_id)
     if skill_err:
         emit({"type": "error", "message": skill_err})
         emit({"type": "done"})
@@ -195,7 +195,11 @@ async def _run_async(message: str, flow_id: str, session_id: str, context: dict 
     text_parts: list[str] = []
     event_stream = result.stream_events().__aiter__()
     stopped = False
+    question_exhausted = False
     while True:
+        if ctx.turn.get("web_question_exhausted"):
+            question_exhausted = True
+            break
         if cancel.is_requested(cancel_key):
             stopped = True
             break
@@ -207,9 +211,16 @@ async def _run_async(message: str, flow_id: str, session_id: str, context: dict 
                     ev = next_event.result()
                 except StopAsyncIteration:
                     ev = None
+                except Exception as exc:
+                    if type(exc).__name__ == "MaxTurnsExceeded" and ctx.turn.get("web_question_attempts"):
+                        question_exhausted = True
+                        ev = None
+                    else:
+                        raise
                 break
-            if cancel.is_requested(cancel_key):
-                stopped = True
+            if cancel.is_requested(cancel_key) or ctx.turn.get("web_question_exhausted"):
+                stopped = cancel.is_requested(cancel_key)
+                question_exhausted = bool(ctx.turn.get("web_question_exhausted"))
                 next_event.cancel()
                 await asyncio.gather(next_event, return_exceptions=True)
                 ev = None
@@ -220,7 +231,7 @@ async def _run_async(message: str, flow_id: str, session_id: str, context: dict 
         if data is not None:
             _map_raw_event(data, emit, text_parts)
 
-    if stopped:
+    if stopped or question_exhausted:
         cancel_runner = getattr(result, "cancel", None)
         if callable(cancel_runner):
             try:
@@ -235,6 +246,7 @@ async def _run_async(message: str, flow_id: str, session_id: str, context: dict 
                 await close_stream()
             except (Exception, asyncio.CancelledError):
                 pass
+    if stopped:
         partial = "".join(text_parts).strip()
         if partial:
             store.add_message(session_id, "assistant", partial)
@@ -242,11 +254,17 @@ async def _run_async(message: str, flow_id: str, session_id: str, context: dict 
         emit({"type": "done", "drafts": ctx.turn.get("drafts") or [], "out_of_scope": False})
         return
 
-    final_text = getattr(result, "final_output", "") or ""
+    if question_exhausted:
+        from .tools.web_questions import question_fallback
+        final_text = question_fallback(ctx.turn)
+        emit({"type": "text", "delta": final_text})
+    else:
+        final_text = getattr(result, "final_output", "") or ""
     if not isinstance(final_text, str):
         final_text = str(final_text)
     if not final_text:
-        final_text = "（模型没有返回文本）"
+        from .tools.web_questions import question_fallback
+        final_text = question_fallback(ctx.turn) or "（模型没有返回文本）"
         emit({"type": "text", "delta": final_text})
 
     emit({"type": "citations", "items": _citations_from_turn(ctx.turn)})
@@ -288,7 +306,7 @@ def run_turn_sdk(message: str, flow_id: str | None = None, session_id: str | Non
         yield {"type": "done"}
         return
     bound_context = dict(context or {})
-    _, _, skill_err = bind_skill(flow, bound_context)
+    _, _, skill_err = bind_skill(flow, bound_context, user_id=user_id, course_id=course_id)
     if skill_err:
         yield {"type": "error", "message": skill_err}
         yield {"type": "done"}

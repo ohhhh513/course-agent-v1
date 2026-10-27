@@ -100,6 +100,13 @@ SKILLS: dict[str, dict[str, Any]] = {
         file="teacher_question.md",
         tools=("resolve_topic",),
     ),
+    "web_research": _spec(
+        label="联网备课",
+        roles=("teacher",),
+        flow="explain",
+        file="teacher_web_research.md",
+        tools=("search_web", "read_web_page", "prepare_web_question", "resolve_topic", "retrieve_chunks", "get_question"),
+    ),
     "report": _spec(
         label="学情报告",
         roles=("teacher",),
@@ -155,12 +162,21 @@ def files_for_skill(spec: dict[str, Any]) -> list[str]:
     return [n for n in names if n]
 
 
-def resolve_chat_skill(flow_id: str, role: str, skill_id: str | None) -> tuple[dict[str, Any] | None, str]:
+def resolve_chat_skill(flow_id: str, role: str, skill_id: str | None, *, user_id="", course_id="", trial=False, revision=None) -> tuple[dict[str, Any] | None, str]:
     """返回 (技能规格, 错误文案)。未选技能时规格为 None、错误为空。"""
     sid = str(skill_id or "").strip()
     if not sid:
         return None, ""
     spec = SKILLS.get(sid)
+    if spec is None and sid.startswith("CS"):
+        from fastapi import HTTPException
+        from app.database import SessionLocal
+        from app.services.custom_skills import resolve
+        try:
+            with SessionLocal() as db:
+                spec = resolve(db, sid, user_id, course_id, role, trial=trial, revision=revision)
+        except HTTPException as error:
+            return None, str(error.detail)
     if spec is None:
         return None, "未知技能"
     labeled = spec["label"]
@@ -177,11 +193,21 @@ def skills_for_role(role: str) -> list[str]:
     return [sid for sid, spec in SKILLS.items() if role in spec["roles"]]
 
 
-def bind_skill(flow: dict, extra: dict) -> tuple[dict[str, Any] | None, list[str], str]:
+def bind_skill(flow: dict, extra: dict, *, user_id="", course_id="") -> tuple[dict[str, Any] | None, list[str], str]:
     """按本轮 extra['skillId'] 收窄工具。未选技能则返回任务流原白名单。"""
     flow_id = str(flow.get("id") or "")
     role = str(extra.get("role") or "").strip()
-    skill, err = resolve_chat_skill(flow_id, role, extra.get("skillId"))
+    sid = str(extra.get("skillId") or "").strip()
+    course_id = course_id or str(extra.get("courseId") or "")
+    # 该字段只由服务端运行层写入，SDK 的预检和工作线程复用同一轮快照。
+    snapshot = extra.get("_customSkillSnapshot")
+    if (isinstance(snapshot, dict) and snapshot.get("id") == sid
+            and snapshot.get("customActor") == user_id and snapshot.get("customCourse") == course_id
+            and snapshot.get("flow") == flow_id and role in snapshot.get("roles", ())):
+        skill, err = dict(snapshot), ""
+    else:
+        skill, err = resolve_chat_skill(flow_id, role, sid, user_id=user_id, course_id=course_id,
+                                        trial=bool(extra.get("_skillTrial")), revision=extra.get("_skillTrialRevision"))
     flow_tools = list(flow.get("tools") or [])
     if err:
         extra.pop("skillTools", None)
@@ -190,6 +216,8 @@ def bind_skill(flow: dict, extra: dict) -> tuple[dict[str, Any] | None, list[str
         extra.pop("skillTools", None)
         extra.pop("skillId", None)
         return None, flow_tools, ""
+    if skill.get("custom"):
+        extra["_customSkillSnapshot"] = dict(skill)
     allowed = [name for name in skill["tools"] if name in set(flow_tools)]
     extra["skillId"] = skill["id"]
     extra["skillTools"] = allowed

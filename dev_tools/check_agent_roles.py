@@ -35,7 +35,7 @@ from app.agent_st.agent.chat_skills import SKILLS, files_for_skill, resolve_chat
 from app.agent_st.agent.loader import load_flow, load_skill  # noqa: E402
 from app.agent_st.agent.tools import (admin_import, admin_ops, analytics,  # noqa: E402,F401
                                       bank, batch_draft, draft, plan, rag, teacher_analytics,
-                                      topic, validate, ui_actions)
+                                      topic, validate, ui_actions, web_search, web_questions)
 
 FAILS: list[str] = []
 

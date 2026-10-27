@@ -21,6 +21,7 @@ const Chat = AgentChatView.create({
     { id: 'practice', label: '练习教练', icon: 'target', hint: '想练薄弱点、指定知识还是错题？', desc: '安排练习入口，不代答、不刷分' },
     { id: 'resource', label: '资源导航', icon: 'folder', hint: '想找哪一部分的课件或材料？', desc: '按章节或知识点定位本课资料' },
   ],
+  customSkills: 'student',
   recommended: () => Promise.resolve([]),
 
   allowUpload: true,

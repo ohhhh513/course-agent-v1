@@ -102,11 +102,14 @@ window.AgentChatView = (function () {
    * 表格会渲染成真 `<table>`（不再是原始竖线文本），见下方 tableHtml()。
    * 旧版 mock 存量消息是 HTML，本渲染器对其原样放行，二者兼容。
    */
-  function mdToHtml(src) {
+  function mdToHtml(src, { escapeHtml = false } = {}) {
     if (src == null) return '';
     let text = String(src)
       .replace(/[；，]?\s*开始作答和提交由你自己完成。?/g, '')
       .replace(/[；，]?\s*作答和提交由你自己完成。?/g, '');
+    // 试用等外部纯文本来源先转义 HTML，只恢复行首的 Markdown 引用标记。
+    // 默认保持旧存量 HTML 消息的兼容行为。
+    if (escapeHtml) text = U.esc(text).replace(/^(\s*)&gt;/gm, '$1>');
     // 1) 先摘出 fenced 代码块，避免块内语法被二次转换
     const fences = [];
     text = text.replace(/```[a-zA-Z0-9_-]*\r?\n?([\s\S]*?)```/g, (_, code) => {
@@ -114,10 +117,28 @@ window.AgentChatView = (function () {
       return '\n\u0000F' + (fences.length - 1) + '\u0000\n';
     });
     // 2) 行内语法
-    const inline = (s) => s
-      .replace(/`([^`]+)`/g, '<code>$1</code>')
-      .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
-      .replace(/(^|[^*])\*([^*\n]+)\*/g, '$1<em>$2</em>');
+    const inline = (s) => {
+      const fragments = [];
+      const keep = html => '\u0000I' + (fragments.push(html) - 1) + '\u0000';
+      // 代码和链接先摘出，避免粗体等语法改写 URL，代码中的链接也不应变成按钮。
+      let value = s.replace(/`([^`]+)`/g, (_, code) => keep('<code>' + code + '</code>'));
+      value = value.replace(/\\(.)/g, (match, punctuation) =>
+        punctuation.charCodeAt(0) < 128 && /[^a-zA-Z0-9\s]/.test(punctuation) ? keep(punctuation) : match);
+      value = value.replace(/(?<!!)\[([^\]\n]+)\]\((https?:\/\/[^\s<>]+)\)/gi, (match, label, href) => {
+        const raw = escapeHtml ? href.replace(/&(amp|quot|#39|lt|gt);/g,
+          entity => ({ '&amp;': '&', '&quot;': '"', '&#39;': "'", '&lt;': '<', '&gt;': '>' }[entity])) : href;
+        try {
+          const url = new URL(raw);
+          if (!['http:', 'https:'].includes(url.protocol) || !url.hostname || url.username || url.password
+              || raw.length > 2048 || /[\s<>"'\\\x00-\x1f]/.test(raw)) return match;
+          return keep('<a class="md-link" href="' + U.esc(url.href) + '" target="_blank" rel="noopener noreferrer">'
+            + (escapeHtml ? label : U.esc(label)) + '</a>');
+        } catch (_) { return match; }
+      });
+      return value.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+        .replace(/(^|[^*])\*([^*\n]+)\*/g, '$1<em>$2</em>')
+        .replace(/\u0000I(\d+)\u0000/g, (_, index) => fragments[Number(index)]);
+    };
 
     // 2.5) 表格：先整体摘出「表头 + |---|---| 分隔行 + 数据行」的连续块，
     //      换成占位符，避免被下面的逐行逻辑当成普通段落（那样只会得到一排竖线）。
@@ -197,6 +218,133 @@ window.AgentChatView = (function () {
       return blocks.join('');
     }).join('');
     return html.replace(/(<br>\s*)+$/, '');   // 去掉末尾多余换行
+  }
+
+  function navigationChoiceHtml(value, attribute) {
+    const label = value.target === 'teacher.question.create' ? '生成题目草稿（完成后可预览）' : String(value.label || '打开操作界面');
+    return `<div class="agent-navigation-choice" role="group" aria-label="确认界面操作"><p>是否继续：${U.esc(label)}？</p><div class="row"><button type="button" class="btn btn--sm btn--primary" ${attribute}="${U.esc(JSON.stringify(value))}">确认${label.startsWith('打开') ? '打开' : '继续'}</button><button type="button" class="btn btn--sm btn--outline" data-agent-cancel>取消</button></div><span class="fz-12 t-dim" data-agent-choice-status>选择后才会执行，取消将留在当前界面。</span></div>`;
+  }
+
+  function questionImageControls(fullscreen = false) {
+    return `<div class="question-image-controls" role="group" aria-label="图片大小"><button type="button" class="btn btn--sm btn--outline" data-image-minus aria-label="缩小图片">−</button><label>缩放 <input type="range" min="50" max="${fullscreen ? '400' : '300'}" step="10" value="100" data-image-scale aria-label="图片缩放比例"></label><output data-image-percent>100%</output><button type="button" class="btn btn--sm btn--outline" data-image-plus aria-label="放大图片">＋</button><button type="button" class="btn btn--sm btn--outline" data-image-fit>${fullscreen ? '适应窗口' : '适应宽度'}</button>${fullscreen ? '' : '<button type="button" class="btn btn--sm btn--outline" data-image-open>查看大图</button>'}</div>`;
+  }
+
+  let questionImageSequence = 0;
+  function openQuestionImage(source) {
+    if (!source.complete || !source.naturalWidth) return;
+    const dialog = document.createElement('dialog');
+    const titleId = 'question-image-title-' + (++questionImageSequence);
+    dialog.className = 'question-image-dialog';
+    dialog.setAttribute('aria-labelledby', titleId);
+    dialog.innerHTML = `<header><h3 id="${titleId}"></h3><button type="button" class="btn btn--sm btn--outline" data-image-close aria-label="关闭大图">关闭 ✕</button></header>${questionImageControls(true)}<p class="question-image-dialog__hint">滚轮缩放 · 按住拖动查看 · 双击恢复适应窗口 · Esc 关闭</p><div class="question-image-dialog__stage" tabindex="0" aria-label="大图查看区域，可拖动或滚动查看"><img alt="" draggable="false"></div>`;
+    dialog.querySelector('h3').textContent = source.alt || '题目配图';
+    const image = dialog.querySelector('img'), stage = dialog.querySelector('.question-image-dialog__stage');
+    image.src = source.currentSrc || source.src;
+    image.alt = source.alt;
+    const slider = dialog.querySelector('[data-image-scale]'), percent = dialog.querySelector('[data-image-percent]');
+    const events = new AbortController(), options = { signal: events.signal };
+    const overflow = document.body.style.overflow;
+    document.body.append(dialog);
+    dialog.showModal();
+    document.body.style.overflow = 'hidden';
+    let zoom = 100, fittedWidth = 1;
+    const setZoom = (value, point) => {
+      const x = point?.x ?? stage.clientWidth / 2, y = point?.y ?? stage.clientHeight / 2;
+      const relativeX = (stage.scrollLeft + x - image.offsetLeft) / (image.offsetWidth || 1);
+      const relativeY = (stage.scrollTop + y - image.offsetTop) / (image.offsetHeight || 1);
+      zoom = Math.max(50, Math.min(400, Math.round(value / 10) * 10));
+      image.style.width = fittedWidth * zoom / 100 + 'px';
+      slider.value = String(zoom); percent.textContent = zoom + '%';
+      dialog.querySelector('[data-image-minus]').disabled = zoom <= 50;
+      dialog.querySelector('[data-image-plus]').disabled = zoom >= 400;
+      stage.scrollLeft = image.offsetLeft + relativeX * image.offsetWidth - x;
+      stage.scrollTop = image.offsetTop + relativeY * image.offsetHeight - y;
+    };
+    const fit = () => {
+      fittedWidth = Math.max(1, Math.min(stage.clientWidth - 32, (stage.clientHeight - 32) * source.naturalWidth / source.naturalHeight));
+      setZoom(zoom);
+    };
+    dialog.querySelector('[data-image-close]').addEventListener('click', () => dialog.close(), options);
+    slider.addEventListener('input', () => setZoom(Number(slider.value)), options);
+    dialog.querySelector('[data-image-minus]').addEventListener('click', () => setZoom(zoom - 10), options);
+    dialog.querySelector('[data-image-plus]').addEventListener('click', () => setZoom(zoom + 10), options);
+    dialog.querySelector('[data-image-fit]').addEventListener('click', () => { zoom = 100; fit(); stage.scrollTo(0, 0); }, options);
+    stage.addEventListener('dblclick', () => { zoom = 100; fit(); stage.scrollTo(0, 0); }, options);
+    stage.addEventListener('wheel', event => {
+      event.preventDefault();
+      const box = stage.getBoundingClientRect();
+      setZoom(zoom + (event.deltaY < 0 ? 10 : -10), { x: event.clientX - box.left, y: event.clientY - box.top });
+    }, { ...options, passive: false });
+    let drag;
+    stage.addEventListener('pointerdown', event => {
+      if (event.button !== 0 || event.pointerType === 'touch') return;
+      drag = { id: event.pointerId, x: event.clientX, y: event.clientY, left: stage.scrollLeft, top: stage.scrollTop };
+      stage.setPointerCapture(event.pointerId); stage.classList.add('is-dragging'); event.preventDefault();
+    }, options);
+    stage.addEventListener('pointermove', event => {
+      if (drag?.id !== event.pointerId) return;
+      stage.scrollLeft = drag.left + drag.x - event.clientX;
+      stage.scrollTop = drag.top + drag.y - event.clientY;
+    }, options);
+    const stopDrag = () => { drag = null; stage.classList.remove('is-dragging'); };
+    stage.addEventListener('pointerup', stopDrag, options);
+    stage.addEventListener('pointercancel', stopDrag, options);
+    stage.addEventListener('lostpointercapture', stopDrag, options);
+    dialog.addEventListener('click', event => {
+      const box = dialog.getBoundingClientRect();
+      if (event.target === dialog && (event.clientX < box.left || event.clientX > box.right || event.clientY < box.top || event.clientY > box.bottom)) dialog.close();
+    }, options);
+    const observer = new ResizeObserver(fit);
+    observer.observe(stage);
+    dialog.addEventListener('close', () => {
+      observer.disconnect(); events.abort(); dialog.remove(); document.body.style.overflow = overflow;
+      if (source.isConnected) source.focus({ preventScroll: true });
+    }, { once: true });
+    fit();
+    dialog.querySelector('[data-image-close]').focus();
+  }
+
+  function bindQuestionImage(figure, image) {
+    const slider = figure.querySelector('[data-image-scale]'), viewport = figure.querySelector('.web-question__image-viewport');
+    // 视口随可用宽度调整，但不随缩放后的图片增高，否则只会出现横向滚动。
+    viewport.style.aspectRatio = image.naturalWidth + ' / ' + image.naturalHeight;
+    const setScale = value => {
+      const zoom = Math.max(50, Math.min(300, value));
+      image.style.width = zoom + '%';
+      slider.value = String(zoom); figure.querySelector('[data-image-percent]').textContent = zoom + '%';
+      figure.querySelector('[data-image-minus]').disabled = zoom <= 50;
+      figure.querySelector('[data-image-plus]').disabled = zoom >= 300;
+    };
+    slider.addEventListener('input', () => setScale(Number(slider.value)));
+    figure.querySelector('[data-image-minus]').addEventListener('click', () => setScale(Number(slider.value) - 10));
+    figure.querySelector('[data-image-plus]').addEventListener('click', () => setScale(Number(slider.value) + 10));
+    figure.querySelector('[data-image-fit]').addEventListener('click', () => { setScale(100); viewport.scrollTo(0, 0); });
+    figure.querySelector('[data-image-open]').addEventListener('click', () => openQuestionImage(image));
+    image.addEventListener('dblclick', () => openQuestionImage(image));
+    image.addEventListener('keydown', event => {
+      if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); openQuestionImage(image); }
+    });
+    setScale(100);
+  }
+
+  function externalQuestionHtml(question) {
+    const safeUrl = value => {
+      try { const u = new URL(value); return ['http:', 'https:'].includes(u.protocol) && !u.username && !u.password ? u.href : ''; }
+      catch (_) { return ''; }
+    };
+    const source = safeUrl(question.sourceUrl);
+    if (!source || typeof question.stem !== 'string' || !question.stem.trim()) return '';
+    const safeImage = value => /^\/resources\/web-question-pdfs\/[a-f0-9]{64}\/(?:page-\d+|question-\d+-\d+)\.png$/.test(value || '') ? value : safeUrl(value);
+    const images = (question.images || []).map(item => ({ ...item, url: safeImage(item.url) })).filter(item => item.url);
+    if ((question.requiresImage && !images.length) || images.length !== (question.images || []).length) return '';
+    const md = text => mdToHtml(text || '', { escapeHtml: true });
+    const text = `<div class="web-question__stem">${md(question.stem)}</div>${question.options?.length ? `<ol class="web-question__options">${question.options.map(option => `<li><b>${U.esc(option.label)}.</b><div>${md(option.text)}</div></li>`).join('')}</ol>` : ''}`;
+    const pageNumber = Number.isSafeInteger(question.sourcePage) && question.sourcePage > 0 ? question.sourcePage : 0;
+    const pdf = pageNumber && images.length;
+    const pageSource = new URL(source);
+    if (pageNumber) pageSource.hash = 'page=' + pageNumber;
+    const figures = images.map(image => `<figure>${questionImageControls()}<div class="web-question__image-viewport"><img data-question-image-src="${U.esc(image.url)}" alt="${U.esc(image.alt || '题目配图')}" tabindex="0" role="button" title="双击查看大图，或按 Enter 打开" aria-label="${U.esc(image.alt || '题目配图')}，双击查看大图" draggable="false" referrerpolicy="no-referrer"></div><figcaption>${U.esc(image.alt || '题目配图')} · 双击查看大图</figcaption></figure>`).join('');
+    return `<div class="web-question-wrap" data-web-question-wrap><p class="web-question-state fz-12 t-dim" role="status" ${images.length ? '' : 'hidden'}>正在核对题目配图…</p><article class="web-question${pdf ? ' web-question--pdf' : ''}" ${images.length ? 'hidden' : ''}><header><span class="badge">${pdf ? 'PDF 原题' : '网络题目'}</span><h4>${U.esc(question.title || '练习题')}</h4></header>${pdf ? '' : text}${images.length ? `<div class="web-question__figures">${figures}</div>` : ''}${pdf ? `<details class="web-question__transcript"><summary>文字版题干与选项${question.extractionMethod === 'ocr' ? '（扫描识别，以原图为准）' : ''}</summary>${text}</details>` : ''}${question.answer ? `<details class="web-question__answer"><summary>参考答案与解析</summary>${md(question.answer)}</details>` : ''}<footer>来源：<a class="md-link" href="${U.esc(pageSource.href)}" target="_blank" rel="noopener noreferrer">${U.esc(question.sourceTitle || '查看原题')}${pageNumber ? ` · 第 ${pageNumber} 页` : ''}</a></footer></article></div>`;
   }
 
   /* ---------- 待批准写操作卡片（P2c）：答疑页与出题页共用同一套渲染与交互 ---------- */
@@ -389,6 +537,8 @@ window.AgentChatView = (function () {
       allowUpload: false,
       // 加号菜单中的技能。选中后随提问提交 skillId，由后端按角色加载。
       skills: [],
+      customSkills: '', // student 加载课程技能；teacher/admin 提供管理入口。
+      safeMarkdown: false, // 教师联网回答仅解析 Markdown，原始 HTML 显示为文字。
     }, config || {});
     const A = cfg.api || API.ai;   // 本实例使用的接口组（sessions / messages / chatStream / deleteSession）
 
@@ -454,9 +604,10 @@ window.AgentChatView = (function () {
                   <div class="composer-plus-menu" id="chatPlusMenu" hidden>
                     ${cfg.skills.length ? `<input class="composer-plus-menu__search" id="chatPlusSearch" type="search" placeholder="搜索技能…" aria-label="搜索技能" autocomplete="off">` : ''}
                     <div class="composer-plus-menu__list" id="chatSkillList" role="listbox" aria-label="技能">
-                      ${cfg.skills.map((s, i) => `<button class="composer-plus-menu__item" type="button" role="option" data-skill="${U.esc(s.id)}" data-tone="${(i % 5) + 1}">${icon(s.icon)}<span class="composer-plus-menu__name">${U.esc(s.label)}</span><span class="composer-plus-menu__desc">${U.esc(s.desc || s.hint || '')}</span></button>`).join('')}
+                      ${this._skillMenuHtml()}
                     </div>
                     ${cfg.skills.length && cfg.allowUpload ? '<div class="composer-plus-menu__rule"></div>' : ''}
+                    ${['teacher', 'admin'].includes(cfg.customSkills) ? `<button class="composer-plus-menu__item" id="chatManageSkills" type="button">${icon('sparkle')}<span class="composer-plus-menu__name">管理定制技能</span><span class="composer-plus-menu__desc">${cfg.customSkills === 'teacher' ? '创建、试用和发布本课程的学生技能' : '查看课程技能并停用'}</span></button>` : ''}
                     ${cfg.allowUpload ? `<button class="composer-plus-menu__item" id="chatUpload" type="button">${icon('paperclip')}<span class="composer-plus-menu__name">上传文件</span><span class="composer-plus-menu__desc">图片、文档随本轮问题发送</span></button>` : ''}
                   </div>
                 </div>
@@ -525,6 +676,7 @@ window.AgentChatView = (function () {
           if (e.target.closest('[data-skill-clear]')) this._clearSkill();
         });
         this._paintSkill();
+        this._loadCourseSkills(el);
 
         // 新建会话
         U.$('#newSessBtn')?.addEventListener('click', () => {
@@ -864,6 +1016,7 @@ window.AgentChatView = (function () {
         const trigger = root?.querySelector('#chatAdd');
         const search = menu?.querySelector('#chatPlusSearch');
         if (!menu || !trigger || !this._plusMenuOnAssistantPage()) return;
+        this._loadCourseSkills(root);
         menu.hidden = false;
         trigger.setAttribute('aria-expanded', 'true');
         this._positionPlusMenu();
@@ -883,7 +1036,7 @@ window.AgentChatView = (function () {
           if (show) visible += 1;
         });
         let empty = list.querySelector('.composer-plus-menu__empty');
-        if (!visible && (cfg.skills || []).length) {
+        if (!visible && this._availableSkills().length) {
           if (!empty) {
             empty = document.createElement('p');
             empty.className = 'composer-plus-menu__empty';
@@ -911,6 +1064,12 @@ window.AgentChatView = (function () {
         }, {signal});
         menu.addEventListener('click', e => {
           e.stopPropagation();
+          if (e.target.closest('#chatManageSkills')) {
+            this._closePlusMenu();
+            if (this._isWorking()) return Toast.info('请先等待当前回答完成，或停止生成');
+            if (typeof CourseSkillManager !== 'undefined') CourseSkillManager.open(cfg.customSkills);
+            return;
+          }
           if (e.target.closest('#chatUpload')) {
             this._closePlusMenu();
             file?.click();
@@ -1150,7 +1309,7 @@ window.AgentChatView = (function () {
        */
       toolsPanelHtml(entries, isOpen) {
         // meta 条目是随消息落库的内部标记（如越界判定），不是工具调用，不进面板
-        entries = (entries || []).filter(e => e && e.kind !== 'meta' && e.kind !== 'ui_action');
+        entries = (entries || []).filter(e => e && e.kind !== 'meta' && e.kind !== 'ui_action' && e.kind !== 'web_question');
         if (!entries.length) return '';
         const hasRunning = entries.some(e => (e.kind || (e.text ? 'think' : 'tool')) !== 'think' && (e.ok === undefined || e.ok === null));
         const heading = hasRunning
@@ -1229,7 +1388,7 @@ window.AgentChatView = (function () {
         const toolLogJson = U.esc(JSON.stringify(m.toolLog || []));
         return `<div class="msg msg--ai" data-tool-log="${toolLogJson}"><div class="msg__av msg__av--mark">${assistantMark()}</div>
           <div class="msg__wrap">
-            <div class="bubble">${this.toolsPanelHtml(m.toolLog, false)}<div class="bubble__body">${mdToHtml(m.content)}</div>
+            <div class="bubble">${this.toolsPanelHtml(m.toolLog, false)}<div class="bubble__body">${mdToHtml(m.content, { escapeHtml: !!cfg.safeMarkdown })}</div>
               ${cites.length ? `
               <div class="cite">
                 <button class="cite__head">${icon('shield')} 原文溯源（${cites.length} 处）<span class="caret" style="width:14px;height:14px">${icon('chevronDown')}</span></button>
@@ -1241,18 +1400,20 @@ window.AgentChatView = (function () {
                   </div>`).join('')}
                 </div>
               </div>` : ''}
+              ${this.webQuestionsOf(m).map(externalQuestionHtml).join('')}
               ${confirms.length ? `<div class="msg__confirms">${confirms.map(c => confirmCardHtml(c)).join('')}</div>` : ''}
-              ${uiPlans.map(plan => (typeof AgentUI !== 'undefined' && AgentUI.preview && AgentUI.preview.slotHtml)
+              ${uiPlans.map(plan => (this._confirmedUiPlans?.has(plan.id) && typeof AgentUI !== 'undefined' && AgentUI.preview && AgentUI.preview.slotHtml)
                 ? AgentUI.preview.slotHtml(plan)
-                : `<div class="msg__agent-acts"><button class="btn btn--sm btn--primary" data-agent-ui="${U.esc(JSON.stringify(plan))}">${U.esc(plan.label || '打开操作界面')}</button></div>`).join('')}
+                : (plan.target === 'teacher.question.create'
+                  ? `<div class="msg__preview-slot" data-preview-job="${U.esc(plan.id)}">${navigationChoiceHtml(plan, 'data-agent-ui')}</div>`
+                  : navigationChoiceHtml(plan, 'data-agent-ui'))).join('')}
               ${choices.length ? choices.map(group => `<div class="agent-choices">
                 <p class="agent-choices__prompt">${U.esc(group.prompt)}</p>
                 <div class="agent-choices__list">${group.options.map(option => `<button type="button" class="agent-choice" data-agent-choice="${U.esc(option.message)}">${U.esc(option.label)}</button>`).join('')}</div>
               </div>`).join('') : ''}
               ${suggests.length ? `
               <div class="msg__agent-acts">
-                ${suggests.map((a, i) => `<button class="btn btn--sm ${i === 0 ? 'btn--primary' : 'btn--outline'}"
-                  data-agent-action="${U.esc(JSON.stringify(a))}">${U.esc(a.label || '打开')}</button>`).join('')}
+                ${suggests.map(a => navigationChoiceHtml(a, 'data-agent-action')).join('')}
               </div>` : ''}
             </div>
             <div class="msg__meta">
@@ -1339,6 +1500,39 @@ window.AgentChatView = (function () {
         return Array.from(plans.values());
       },
 
+      webQuestionsOf(m) {
+        const questions = new Map();
+        (m.toolLog || []).forEach(entry => {
+          if (entry?.kind === 'web_question' && entry.question?.id) questions.set(entry.question.id, entry.question);
+        });
+        return Array.from(questions.values()).slice(0, 3);
+      },
+
+      bindQuestionImages() {
+        U.$$('[data-web-question-wrap]', U.$('#chatLog')).forEach(wrapper => {
+          if (wrapper.dataset.checked) return;
+          wrapper.dataset.checked = '1';
+          const images = Array.from(wrapper.querySelectorAll('[data-question-image-src]'));
+          if (!images.length) return;
+          let timer;
+          const timeout = new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('image timeout')), 12000); });
+          const loaded = Promise.all(images.map(img => new Promise((resolve, reject) => {
+            img.onload = () => img.naturalWidth > 0 ? resolve() : reject(new Error('empty image'));
+            img.onerror = () => reject(new Error('image unavailable'));
+            img.src = img.dataset.questionImageSrc;
+            if (img.complete && img.naturalWidth > 0) resolve();
+          })));
+          Promise.race([loaded, timeout]).then(() => {
+            wrapper.querySelector('.web-question').hidden = false;
+            wrapper.querySelector('.web-question-state').hidden = true;
+            images.forEach(image => bindQuestionImage(image.closest('figure'), image));
+          }).catch(() => {
+            wrapper.querySelector('.web-question')?.remove();
+            wrapper.querySelector('.web-question-state').textContent = '已跳过无法完整显示配图的题目。';
+          }).finally(() => { clearTimeout(timer); });
+        });
+      },
+
       choiceCardsOf(m) {
         const out = [];
         ((m && m.toolLog) || []).forEach(entry => {
@@ -1353,7 +1547,8 @@ window.AgentChatView = (function () {
         return out;
       },
 
-      async applyUiPlan(plan, auto = false, fromView = cfg.viewKey) {
+      async applyUiPlan(plan, auto = false, fromView = cfg.viewKey, confirmed = false, confirmationGuard = () => true) {
+        if (auto || !confirmed || !confirmationGuard()) return false;
         if (typeof AgentUI === 'undefined') return false;
         const origin = this._openSessionStorageInfo();
         const sourceSession = this.sessionId;
@@ -1369,19 +1564,42 @@ window.AgentChatView = (function () {
           }
         }
         const current = this._openSessionStorageInfo();
-        if (sourceSession !== this.sessionId || navigationRevision !== (this._uiNavigationRevision || 0) || (origin && (!current || origin.key !== current.key || origin.loginId !== current.loginId))) return false;
-        return AgentUI.apply(plan, { auto, fromView, files });
+        if (!confirmationGuard() || sourceSession !== this.sessionId || navigationRevision !== (this._uiNavigationRevision || 0) || (origin && (!current || origin.key !== current.key || origin.loginId !== current.loginId))) return false;
+        this._confirmedUiPlans ||= new Set();
+        this._confirmedUiPlans.add(plan.id);
+        return AgentUI.apply(plan, { confirmed: true, fromView, files, confirmationGuard });
       },
 
       bindCites() {
+        this.bindQuestionImages();
+        const confirmationSession = this.sessionId;
+        const confirmationOrigin = this._openSessionStorageInfo();
+        const stillCurrent = () => {
+          const current = this._openSessionStorageInfo();
+          return !this._isWorking() && Router.current === cfg.viewKey && this.sessionId === confirmationSession
+            && (!confirmationOrigin || (current && current.key === confirmationOrigin.key && current.loginId === confirmationOrigin.loginId));
+        };
+        U.$$('[data-agent-cancel]', U.$('#chatLog')).forEach(button => {
+          if (button.dataset.bound) return;
+          button.dataset.bound = '1';
+          button.addEventListener('click', () => {
+            const card = button.closest('.agent-navigation-choice');
+            if (card) card.dataset.cancelled = '1';
+            card?.querySelectorAll('button').forEach(item => { item.disabled = true; });
+            if (card) card.querySelector('[data-agent-choice-status]').textContent = '已取消，未执行界面操作。';
+          });
+        });
         U.$$('[data-agent-ui]', U.$('#chatLog')).forEach(button => {
           if (button.dataset.bound) return;
           button.dataset.bound = '1';
           button.addEventListener('click', async () => {
+            if (!stillCurrent()) return Toast.info('当前对话或账号已变化，请在当前界面重新确认。');
             let plan;
             try { plan = JSON.parse(button.dataset.agentUi); } catch (_) { return; }
+            const card = button.closest('.agent-navigation-choice');
             button.disabled = true;
-            try { await this.applyUiPlan(plan); } finally { button.disabled = false; }
+            try { await this.applyUiPlan(plan, false, cfg.viewKey, true, () => card?.dataset.cancelled !== '1'); }
+            finally { button.disabled = card?.dataset.cancelled === '1'; }
           });
         });
         U.$$('[data-agent-choice]', U.$('#chatLog')).forEach(button => {
@@ -1509,6 +1727,7 @@ window.AgentChatView = (function () {
           if (b.dataset.bound) return;
           b.dataset.bound = '1';
           b.addEventListener('click', () => {
+            if (!stillCurrent()) return Toast.info('当前对话或账号已变化，请在当前界面重新确认。');
             let act = null;
             try { act = JSON.parse(b.dataset.agentAction || 'null'); } catch (e) { act = null; }
             if (!cfg.applyAction(act)) {
@@ -1558,12 +1777,46 @@ window.AgentChatView = (function () {
         }
       },
 
+      _availableSkills() {
+        const custom = this._courseSkillCourse === API.config.activeCourseId ? this._courseSkills || [] : [];
+        return [...cfg.skills, ...custom];
+      },
+
+      _skillMenuHtml() {
+        return this._availableSkills().map((skill, index) => `<button class="composer-plus-menu__item" type="button" role="option" data-skill="${U.esc(skill.id)}" data-tone="${(index % 5) + 1}">${icon(skill.icon || 'sparkle')}<span class="composer-plus-menu__name">${U.esc(skill.label)}</span><span class="composer-plus-menu__desc">${U.esc(skill.desc || skill.hint || '')}</span></button>`).join('');
+      },
+
+      _loadCourseSkills(root) {
+        if (cfg.customSkills !== 'student' || !root || !API.config.activeCourseId) return;
+        const courseId = API.config.activeCourseId;
+        const revision = this._courseSkillRequest = (this._courseSkillRequest || 0) + 1;
+        API.skills.list(courseId).then(result => {
+          if (this._courseSkillRequest !== revision || API.config.activeCourseId !== courseId || U.$(cfg.containerId) !== root) return;
+          this._courseSkillCourse = courseId;
+          this._courseSkills = (result.list || []).map(skill => ({ ...skill, icon: 'sparkle' }));
+          const list = root.querySelector('#chatSkillList');
+          if (list) list.innerHTML = this._skillMenuHtml();
+          if (!this._isWorking() && !this._activeSkill()) this.activeSkillId = null;
+          this._paintSkill();
+          this._filterPlusMenu(this._plusMenu()?.querySelector('#chatPlusSearch')?.value || '');
+          this._positionPlusMenu();
+        }).catch(() => {
+          if (this._courseSkillRequest !== revision || API.config.activeCourseId !== courseId || U.$(cfg.containerId) !== root) return;
+          this._courseSkillCourse = courseId;
+          this._courseSkills = [];
+          const list = root.querySelector('#chatSkillList');
+          if (list) list.innerHTML = this._skillMenuHtml() + '<p class="composer-plus-menu__empty">课程定制技能加载失败，重开菜单可重试。</p>';
+          if (!this._isWorking() && !this._activeSkill()) this.activeSkillId = null;
+          this._paintSkill();
+        });
+      },
+
       _activeSkill() {
-        return (cfg.skills || []).find(s => s.id === this.activeSkillId) || null;
+        return this._availableSkills().find(s => s.id === this.activeSkillId) || null;
       },
 
       _selectSkill(id) {
-        const skill = (cfg.skills || []).find(s => s.id === id);
+        const skill = this._availableSkills().find(s => s.id === id);
         if (!skill) return;
         this.activeSkillId = skill.id;
         this._paintSkill();
@@ -1712,9 +1965,6 @@ window.AgentChatView = (function () {
         this._acc = ''; this._final = ''; this._cites = []; this._actions = [];
         this._tools = [];          // 思考/工具条目（{kind:'think'|'tool', ...}）
         this._uiPlans = [];
-        const uiOriginSession = this._openSessionStorageInfo();
-        let uiTurnSessionId = this.sessionId;
-        const uiOriginRevision = this._uiNavigationRevision || 0;
         this._toolsOpen = false;   // 流式期间面板折叠，可点击展开
         // 「停止生成」：本轮一个可中止的信号 + 收尾标记；按钮切成停止态
         this._stopped = false;
@@ -1760,7 +2010,7 @@ window.AgentChatView = (function () {
         const appendDelta = (delta) => {
           // Markdown 增量：按累积全文重渲染（约数百字，开销可忽略），保证半截语法也能正常显示
           this._acc += delta;
-          setText(mdToHtml(this._acc));
+          setText(mdToHtml(this._acc, { escapeHtml: !!cfg.safeMarkdown }));
           this.scroll();
         };
         // 编排轮的过渡文本 → 收进折叠面板的"思考"区（模仿智能体行为）
@@ -1770,16 +2020,13 @@ window.AgentChatView = (function () {
             this._tools.push({ kind: 'think', text });
             const i = this._acc.lastIndexOf(text);
             this._acc = i >= 0 ? this._acc.slice(0, i) + this._acc.slice(i + text.length) : '';
-            setText(mdToHtml(this._acc));
+            setText(mdToHtml(this._acc, { escapeHtml: !!cfg.safeMarkdown }));
           }
         };
 
         const finish = (payload) => {
           // 仅回放本轮用户已确认打开的入口（plan.auto）；建议按钮必须等点击。
-          const automatic = payload.stopped ? null : (this._uiPlans || []).filter(plan => plan.auto === true).slice(-1)[0];
-          if (typeof AgentUI !== 'undefined' && AgentUI.preview) {
-            (this._uiPlans || []).forEach(plan => AgentUI.preview.arm(plan));
-          }
+          // 所有界面计划只呈现确认/取消；旧 auto=true 也不自动执行或启动生成。
           const sm = $id('streamMsg');
           if (sm) sm.remove();
           const cites = (payload.citations || []).map(c => ({
@@ -1789,7 +2036,7 @@ window.AgentChatView = (function () {
             kp: c.kp || c.section || ''
           }));
           log.insertAdjacentHTML('beforeend', this.tpl({
-            role: 'ai', content: mdToHtml(this._final || ''),
+            role: 'ai', content: cfg.safeMarkdown ? (this._final || '') : mdToHtml(this._final || ''),
             citations: cites, outOfScope: payload.outOfScope,
             toolLog: this._tools,
             actions: this._actions || [],
@@ -1804,10 +2051,6 @@ window.AgentChatView = (function () {
           this._ctrl = null;
           this._setSendMode(false);
           this.refreshSessions();
-          const currentUiOrigin = this._openSessionStorageInfo();
-          if (automatic && uiOriginRevision === (this._uiNavigationRevision || 0) && this.sessionId === uiTurnSessionId && uiOriginSession && currentUiOrigin && uiOriginSession.key === currentUiOrigin.key && uiOriginSession.loginId === currentUiOrigin.loginId) {
-            this.applyUiPlan({ ...automatic, sessionId: this.sessionId }, true).catch(() => Toast.warn('界面准备失败，请点击回答中的入口重试'));
-          }
           this._uiPlans = [];
         };
         const fail = (msg) => {
@@ -1850,7 +2093,6 @@ window.AgentChatView = (function () {
           { question, sessionId: this.sessionId, files: files, skillId: this.activeSkillId || undefined },
           {
             onMeta: (d) => {
-              if (d.sessionId) uiTurnSessionId = d.sessionId;
               if (d.sessionId && d.sessionId !== this.sessionId) {
                 this.sessionId = d.sessionId;
                 this._rememberOpenSessionId();
@@ -1868,6 +2110,9 @@ window.AgentChatView = (function () {
             onToolEnd: (d) => {
               const entry = [...this._tools].reverse().find(x => x.kind === 'tool' && x.name === d.name && x.ok === null);
               if (entry) entry.ok = !(d.preview && (d.preview.error || d.preview.ok === false || d.preview.needsChoice));
+              if (d.name === 'prepare_web_question' && d.preview?.ok && d.preview.question) {
+                this._tools.push({ kind: 'web_question', question: d.preview.question });
+              }
               if (d.name === 'prepare_ui_action' && d.preview && d.preview.ok && d.preview.ui_action) {
                 const plan = d.preview.ui_action;
                 this._uiPlans.push(plan);

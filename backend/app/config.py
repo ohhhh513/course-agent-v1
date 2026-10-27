@@ -2,6 +2,7 @@
 应用配置
 """
 import os
+from typing import Literal
 import secrets
 from pydantic_settings import BaseSettings
 from pathlib import Path
@@ -47,6 +48,19 @@ class Settings(BaseSettings):
     # 对话运行层：legacy（现有手写工具循环）| sdk（OpenAI Agents SDK）
     # 默认沿用现有实现，切换成 sdk 后 /ai/chat/stream 的事件契约与前端完全不变。
     AGENT_RUNTIME: str = os.getenv("AGENT_RUNTIME", "legacy")
+    # 教师联网备课：自动复用官方 DeepSeek 配置，也可显式选择 Tavily。
+    TEACHER_WEB_SEARCH_ENABLED: bool = True
+    TEACHER_WEB_SEARCH_PROVIDER: Literal["auto", "deepseek", "tavily"] = "auto"
+    TAVILY_API_KEY: str = ""
+    TEACHER_WEB_SEARCH_TIMEOUT: int = 15
+    TEACHER_WEB_SEARCH_MAX_RESULTS: int = 5
+    TEACHER_WEB_SEARCH_MAX_CALLS: int = 2
+    TEACHER_WEB_READ_MAX_SOURCES: int = 6
+    TEACHER_WEB_READ_BUDGET_SECONDS: int = 90
+    TEACHER_WEB_PDF_ENABLED: bool = True
+    TEACHER_WEB_PDF_MAX_MB: int = 15
+    TEACHER_WEB_PDF_MAX_PAGES: int = 8
+    TEACHER_WEB_QUESTION_DEDUP_ENABLED: bool = True
     # Embeddings；留空 KEY 时用本地哈希向量（local-hash-256）
     EMBEDDING_BASE_URL: str = os.getenv("EMBEDDING_BASE_URL", "")
     EMBEDDING_API_KEY: str = os.getenv("EMBEDDING_API_KEY", "")

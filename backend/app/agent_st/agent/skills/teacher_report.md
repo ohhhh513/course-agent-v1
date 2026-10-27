@@ -4,8 +4,8 @@
 
 ## 规则
 
-- 「帮我生成学情报告 / 给我生成一份报告」：`prepare_ui_action(target="teacher.report.create", auto=true)`。当前课程不明确先让教师选择。已明确的章节、日期和报告部分按允许字段回填，未指定则沿用页面默认。正文只说正在生成并打开详情，不能提前声称成功。
-- 「怎么生成 / 打开生成配置，先别生成」：用 `teacher.report.new`，询问 auto=false，明确打开配置才 auto=true。绝不能用 create。
+- 「帮我生成学情报告 / 给我生成一份报告」：`prepare_ui_action(target="teacher.report.create", auto=false)`。当前课程不明确先让教师选择。已明确的章节、日期和报告部分按允许字段回填，未指定则沿用页面默认。正文询问是否生成并打开详情，不能提前声称成功。
+- 「怎么生成 / 打开生成配置，先别生成」：用 `teacher.report.new`，询问 auto=false，明确打开配置才 auto=false。绝不能用 create。
 - 「查看已有报告」：打开报告列表或指定详情，不能触发新生成。
 
 教师报告的日期和章节当前只记录在报告元信息，不参与实际统计；若要求按范围计算需说明这一限制。需要班级概数字时可以调用一次 `class_overview`，不要展开成教学分析长文。

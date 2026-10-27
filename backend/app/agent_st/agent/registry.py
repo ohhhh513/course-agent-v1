@@ -53,7 +53,7 @@ def tool(name: str, description: str, parameters: dict,
 def openai_tools(flow_id: str, names: list[str] | None = None,
                  role: str = "") -> list[dict]:
     """组装给模型的工具清单。role 非空时按角色过滤（空 = 不过滤，兼容旧调用方）。"""
-    wanted = names or [spec.name for spec in TOOLS.values() if flow_id in spec.flows]
+    wanted = names if names is not None else [spec.name for spec in TOOLS.values() if flow_id in spec.flows]
     specs = []
     for name in wanted:
         spec = TOOLS.get(name)

@@ -53,7 +53,7 @@ def check(cond: bool, label: str) -> None:
 def expected_tools(flow_id: str, role: str) -> set:
     from app.agent_st.agent import registry
     from app.agent_st.agent.tools import (analytics, bank, draft, plan, rag,  # noqa: F401
-                                          teacher_analytics, topic, validate, ui_actions)
+                                          teacher_analytics, topic, validate, ui_actions, web_search, web_questions)
     return {s.name for s in registry.TOOLS.values()
             if flow_id in s.flows and role in s.roles and s.approval is None}
 

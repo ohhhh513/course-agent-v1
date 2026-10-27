@@ -276,7 +276,7 @@ def insert_user(db, role: str, username: str, name: str, password: str,
 # ---------------------------------------------------------------------------
 # 级联范围（人话，删号确认卡片与页面提示共用同一句话）
 DELETION_SCOPE = ("删除 users 表账号，并级联清理其个人数据：练习与答题记录、资源进度与学习日志、"
-                  "学习路径、打卡、AI 会话与消息、预警与消息、出题草稿、课程成员关系、测验记录、个人报告与学情摘要。"
+                  "学习路径、打卡、AI 会话与消息、预警与消息、出题草稿、课程成员关系、测验记录、个人报告、学情摘要与本人创建的定制技能。"
                   "不删课程、资源文件与题库。")
 
 
@@ -355,6 +355,8 @@ def delete_user_cascade(db, user, *, refresh_classes=True) -> dict:
     stats["userCourses"] = db.query(UserCourse).filter(UserCourse.user_id == uid).delete(synchronize_session=False)
     stats["teacherClasses"] = db.query(TeacherClass).filter(TeacherClass.teacher_user_id == uid).delete(synchronize_session=False)
     stats["accountProfiles"] = delete_profile(db, uid)
+    from app.services.custom_skills import delete_owned
+    stats["customSkills"] = delete_owned(db, uid)
 
     # 个人测验、AI 摘要和报告复用 JSON 列；删除账号时同步清理，不能留下教师可读的个人快照。
     snapshot = case((func.json_valid(TeacherClassDashboard.data_json), TeacherClassDashboard.data_json), else_="{}")

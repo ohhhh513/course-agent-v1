@@ -186,8 +186,6 @@ def prepare_action(ctx, target, values=None, object_id="", keyword="", auto=Fals
                 raise ValueError("该页面已从当前角色的界面移除，请重新查询入口")
         if not isinstance(auto, bool) or not isinstance(use_attachments, bool):
             raise ValueError("执行方式必须是布尔值")
-        if spec.get('execute') and not auto:
-            raise ValueError("生成内容必须是明确请求；询问位置请选择对应配置或页面入口")
         if spec.get('execute') and not ctx.extra.get('courseId'):
             raise ValueError("请先选择课程再生成")
         if target == "teacher.question.create" and not ({} if values is None else values).get("kpIds"):
@@ -227,7 +225,7 @@ def prepare_action(ctx, target, values=None, object_id="", keyword="", auto=Fals
             if not attachments:
                 raise ValueError("本轮没有可用附件，请上传后重试")
         plan = {"id": uuid.uuid4().hex, "target": target, "label": ("" if spec.get('execute') else "打开") + spec["title"], "role": role,
-                "userId": ctx.user_id, "courseId": str(ctx.extra.get("courseId") or ""), "auto": bool(auto),
+                "userId": ctx.user_id, "courseId": str(ctx.extra.get("courseId") or ""), "auto": False,
                 "values": fields, "object": obj, "attachments": attachments}
         ctx.tool_log.append({"kind": "ui_action", "plan": plan})
         ctx.turn["system_guide"] = {"found": True}
@@ -237,6 +235,6 @@ def prepare_action(ctx, target, values=None, object_id="", keyword="", auto=Fals
             note = "前端收到后将生成当前课程的学情报告并打开详情；工具本身未生成报告，不能声称已成功。"
         else:
             note = "前端收到后才会打开或回填；保存、发送、加入和正式导入仍需用户在目标界面确认。练习只打开题目，不选择或提交答案。"
-        return {"ok": True, "ui_action": plan, "note": note}
+        return {"ok": True, "ui_action": plan, "note": "仅已准备确认卡，尚未执行。请询问用户是否继续；只有点击确认才会打开窗口或生成内容。不得声称正在跳转或已生成。"}
     except (ValueError, TypeError) as exc:
         return {"error": str(exc)}

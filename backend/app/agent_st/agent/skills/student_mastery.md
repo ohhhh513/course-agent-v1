@@ -12,8 +12,8 @@
 | 正确率/完成率/掌握率怎么算、为什么是 0% | `explain_metric` |
 | 这个知识点正确率是多少、要练哪几道才能补 | `breakdown`（kp_id 来自工具或 `resolve_topic`） |
 | 先补哪个、排个顺序 | `weak_ranking` |
-| 生成我的学情报告 | `prepare_ui_action(target="student.report.create", auto=true)` |
-| 怎么生成/看已有报告 | 生成配置或报告详情入口；询问 auto=false，明确打开 auto=true；查看已有报告不能触发新生成 |
+| 生成我的学情报告 | `prepare_ui_action(target="student.report.create", auto=false)` |
+| 怎么生成/看已有报告 | 生成配置或报告详情入口；询问 auto=false，明确打开 auto=false；查看已有报告不能触发新生成 |
 
 先取数再解释。`count=0` / `rate=null` 如实说没有预警或还没有作答，不要编百分比。
 

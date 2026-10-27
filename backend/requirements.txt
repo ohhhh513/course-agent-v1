@@ -14,8 +14,13 @@ bcrypt==4.0.1       # passlib[bcrypt] compat: keep the working bcrypt version
 # note: openai < 1.55.3 is incompatible with httpx >= 0.28 (proxies TypeError), pin lower bound
 openai>=1.55.3,<2
 httpx>=0.27,<0.29
+tavily-python==0.8.5  # 教师联网备课；独立搜索 SDK，不依赖模型供应商内置搜索
 PyYAML==6.0.2
 pypdf==5.1.0
+pypdfium2==4.30.0    # 联网 PDF 原页及矢量题图渲染（独立工作进程）
+rapidocr==3.4.1      # 扫描题目本地中文 OCR；模型随部署准备
+onnxruntime==1.20.1  # OCR CPU 推理，无需 GPU 或新的模型密钥
+httpcore==1.0.9      # 公开 PDF 下载使用受控网络后端，连接前验证并固定公网 IP
 reportlab>=4.0,<5
 # ===== MCP 导出（P4：把 registry 的工具挂成 MCP server 给 Claude Desktop / Cursor）=====
 # ⚠️ 版本必须钉在 1.12.x，不能随手上调：

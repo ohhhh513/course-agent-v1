@@ -743,53 +743,54 @@ button.opt .q-opt-fig { text-align: left; }
 /* ======================================================================
    答疑气泡 Markdown 渲染（chat.js mdToHtml）
    ====================================================================== */
-.bubble .md-h { font-weight: 700; margin: 10px 0 4px; color: var(--text); }
-.bubble .md-h1 { font-size: 17.5px; }
-.bubble .md-h2 { font-size: 16.5px; }
-.bubble .md-h3, .bubble .md-h4, .bubble .md-h5, .bubble .md-h6 { font-size: 15.5px; }
-.bubble ul.md-list, .bubble ol.md-list {
+:is(.bubble, .skill-trial__body) .md-h { font-weight: 700; margin: 10px 0 4px; color: var(--text); }
+:is(.bubble, .skill-trial__body) .md-h1 { font-size: 17.5px; }
+:is(.bubble, .skill-trial__body) .md-h2 { font-size: 16.5px; }
+:is(.bubble, .skill-trial__body) .md-h3, :is(.bubble, .skill-trial__body) .md-h4, :is(.bubble, .skill-trial__body) .md-h5, :is(.bubble, .skill-trial__body) .md-h6 { font-size: 15.5px; }
+:is(.bubble, .skill-trial__body) ul.md-list, :is(.bubble, .skill-trial__body) ol.md-list {
   margin: 6px 0; padding-left: 22px; display: block; list-style: revert;
 }
-.bubble ul.md-list li, .bubble ol.md-list li { margin: 3px 0; line-height: 1.75; list-style: revert; }
-.bubble ul.md-list { list-style: disc; }
-.bubble ol.md-list { list-style: decimal; }
+:is(.bubble, .skill-trial__body) ul.md-list li, :is(.bubble, .skill-trial__body) ol.md-list li { margin: 3px 0; line-height: 1.75; list-style: revert; }
+:is(.bubble, .skill-trial__body) ul.md-list { list-style: disc; }
+:is(.bubble, .skill-trial__body) ol.md-list { list-style: decimal; }
+:is(.bubble, .skill-trial__body) a.md-link { color: var(--brand-600); text-decoration: underline; text-underline-offset: 3px; overflow-wrap: anywhere; }
 /* Markdown 表格（模型输出的 | a | b | 表格 → 真表格）。窄屏可横向滚动。
    对齐口径：**同一列的表头与数据行永远同一种对齐**（默认居中，除非分隔行显式声明
    :--- / :---: / ---:）。列宽交给浏览器按内容自适应（table-layout: auto + min-width:100%）。 */
-.bubble .md-table-wrap { margin: 10px 0; overflow-x: auto; }
-.bubble table.md-table {
+:is(.bubble, .skill-trial__body) .md-table-wrap { margin: 10px 0; overflow-x: auto; }
+:is(.bubble, .skill-trial__body) table.md-table {
   border-collapse: collapse; table-layout: auto;
   width: auto; min-width: 100%;          /* 列宽随内容自适应，但至少占满气泡宽度 */
   background: var(--surface);
   border: 1px solid var(--border); border-radius: 8px; overflow: hidden;
 }
-.bubble table.md-table th,
-.bubble table.md-table td {
+:is(.bubble, .skill-trial__body) table.md-table th,
+:is(.bubble, .skill-trial__body) table.md-table td {
   padding: 8px 12px; text-align: center; vertical-align: middle;
   border-bottom: 1px solid var(--border-soft);
 }
-.bubble table.md-table thead th {
+:is(.bubble, .skill-trial__body) table.md-table thead th {
   background: var(--surface-2); color: var(--text-2); font-weight: 650;
   border-bottom: 1px solid var(--border);
 }
-.bubble table.md-table tbody tr:last-child td { border-bottom: none; }
+:is(.bubble, .skill-trial__body) table.md-table tbody tr:last-child td { border-bottom: none; }
 /* 显式声明的列对齐（未声明 = 居中，见 td/th 的默认值） */
-.bubble table.md-table .md-left { text-align: left; }
-.bubble table.md-table .md-center { text-align: center; }
-.bubble table.md-table .md-right { text-align: right; font-variant-numeric: tabular-nums; }
-.bubble .md-pre {
+:is(.bubble, .skill-trial__body) table.md-table .md-left { text-align: left; }
+:is(.bubble, .skill-trial__body) table.md-table .md-center { text-align: center; }
+:is(.bubble, .skill-trial__body) table.md-table .md-right { text-align: right; font-variant-numeric: tabular-nums; }
+:is(.bubble, .skill-trial__body) .md-pre {
   background: var(--surface-2, #f1f5f9); border: 1px solid var(--border);
   border-radius: 8px; padding: 10px 12px; margin: 8px 0; overflow-x: auto;
 }
-.bubble .md-pre code {
+:is(.bubble, .skill-trial__body) .md-pre code {
   background: transparent; padding: 0; font-size: 13.5px; color: var(--text);
   font-family: Consolas, Menlo, monospace; white-space: pre;
 }
-.bubble .md-quote {
+:is(.bubble, .skill-trial__body) .md-quote {
   margin: 8px 0; padding: 6px 12px; border-left: 3px solid var(--brand-300, #93c5fd);
   background: var(--surface-2, #f8fafc); color: var(--text-2); border-radius: 0 6px 6px 0;
 }
-.bubble code {
+:is(.bubble, .skill-trial__body) code {
   background: var(--surface-2, #f1f5f9); border-radius: 4px; padding: 1px 5px;
   font-family: Consolas, Menlo, monospace; font-size: 13.5px;
 }

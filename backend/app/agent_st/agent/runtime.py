@@ -21,7 +21,7 @@ from app.agent_st.rag.topic import looks_like_course_question
 # 注册工具（import 即注册；逐个显式列出，避免依赖 tools/__init__ 的副作用）
 from app.agent_st.agent.tools import (admin_delete, admin_import, admin_ops,  # noqa: F401
                                       analytics, bank, batch_draft, draft, plan, rag,
-                                      teacher_analytics, topic, validate, ui_actions)
+                                      teacher_analytics, topic, validate, ui_actions, web_search, web_questions)
 
 Event = dict  # run_turn 产出的事件统一为 dict：{"type": ...}
 
@@ -502,6 +502,16 @@ def _demo_admin_lines(name: str, r: dict) -> list[str]:
 
 
 def _demo_turn(flow_id: str, message: str, ctx: ToolContext) -> Iterator[Event]:
+    from .teacher_support import is_teaching_request, teacher_support_enabled
+    if flow_id == "explain" and teacher_support_enabled(ctx.extra) and (
+        ctx.extra.get("skillId") == "web_research" or is_teaching_request(message)
+    ):
+        text = "当前处于演示模式，联网备课与教学内容生成需要先配置可用的对话模型；仍可查询本课资料。"
+        for chunk in llm.chunk_text(text):
+            yield {"type": "text", "delta": chunk}
+        ctx.turn["final_text"] = text
+        yield {"type": "citations", "items": []}
+        return
     if flow_id == "admin_ops":
         # 平台治理流（管理员）：演示模式也跑真实工具查询；课程流的演示逻辑不适用
         yield from _demo_admin_turn(message, ctx)
@@ -628,7 +638,13 @@ def _explain_out_of_scope(ctx: ToolContext, message: str) -> bool:
     if (ctx.turn.get("system_guide") or {}).get("found"):
         return False
     used = {e.get("name") for e in (ctx.tool_log or []) if isinstance(e, dict)}
-    if used & analytics_tool_names():
+    # 联网工具虽是教师专用，但成功读取网页才构成外部依据，失败调用不能豁免。
+    if used & (analytics_tool_names() - {"search_web", "read_web_page", "prepare_web_question"}):
+        return False
+    from .teacher_support import is_teaching_request, teacher_support_enabled
+    if teacher_support_enabled(ctx.extra) and (
+        ctx.turn.get("web_search_succeeded") or is_teaching_request(message)
+    ):
         return False
     if used & _WORKFLOW_TOOLS:
         return False
@@ -752,7 +768,7 @@ def run_turn(
         yield {"type": "done"}
         return
     extra_for_skill = dict(context or {})
-    skill, skill_tools, skill_err = bind_skill(flow, extra_for_skill)
+    skill, skill_tools, skill_err = bind_skill(flow, extra_for_skill, user_id=user_id, course_id=course_id)
     if skill_err:
         yield {"type": "error", "message": skill_err}
         yield {"type": "done"}
@@ -863,6 +879,11 @@ def run_turn(
     final_text = ""
 
     for _ in range(max_steps):
+        if ctx.turn.get("web_question_exhausted"):
+            from .tools.web_questions import question_fallback
+            final_text = question_fallback(ctx.turn)
+            yield {"type": "text", "delta": final_text}
+            break
         # 真实 token 流式：complete_stream 在工作线程中生成，delta 经队列实时
         # 转发给 SSE 生成器——token 到一个发一个，不再等整轮生成完毕（修复
         # "一瞬间给出大段回复"的体验问题）。
@@ -1001,7 +1022,8 @@ def run_turn(
         final_text = _partial
 
     if not final_text:
-        final_text = "（模型没有返回文本）"
+        from .tools.web_questions import question_fallback
+        final_text = question_fallback(ctx.turn) or "（模型没有返回文本）"
         yield {"type": "text", "delta": final_text}
 
     yield {"type": "citations", "items": _citations_from_turn(ctx.turn)}

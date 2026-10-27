@@ -9,4 +9,4 @@
 3. 「做错题 / 错题重练」必须打开错题题目（`student.practice.mode.wrong`），不能只跳练习首页或错题本列表。「查看错题本」才用错题本入口。
 4. 顺序、随机用各自 mode。指定章节用 `student.practice.chapter`。
 
-明确要求开始练：auto=true。只是询问或建议：auto=false 或 `suggest_action` 等点击。没有题目时说明实际原因，不承诺一定有题。
+明确要求开始练：auto=false。只是询问或建议：auto=false 或 `suggest_action` 等点击。没有题目时说明实际原因，不承诺一定有题。
